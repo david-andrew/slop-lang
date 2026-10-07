@@ -28,6 +28,17 @@ const VK = 3          # integer constant: no defining instruction, value in IrFn
 const M_SIGNED = 16
 const M_FLOAT = 32
 
+# indexed access (set by the optimizer): address = a + (index << scale) + imm, where the index
+# vreg is in Ins.b for loads and Ins.dst for stores, and the scale in bits 8..9 of the mode
+const M_INDEX = 128
+
+fn mem_index(ins: Ins) -> int:
+    if int(ins.c) & M_INDEX == 0: return -1
+    if ins.op == .store: return int(ins.dst)
+    int(ins.b)
+
+fn mem_scale(ins: Ins) -> int: (int(ins.c) >> 8) & 3
+
 # facts for the optimizer (Op.assume)
 const A_RC1 = 1       # the array/string object a (if not null) has refcount 1
 

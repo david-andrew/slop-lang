@@ -57,6 +57,7 @@ fn remap(c0: Ins, callee: IrFn, vm: [int], sm: [int]) -> Ins:
         store, copy:
             c.a = i32(vm[a])
             c.b = i32(vm[bb])
+            if c.op == .store and int(c.c) & M_INDEX != 0: c.dst = i32(vm[int(c.dst)])
         memcpy, memset, select:
             c.a = i32(vm[a])
             c.b = i32(vm[bb])
@@ -68,12 +69,15 @@ fn remap(c0: Ins, callee: IrFn, vm: [int], sm: [int]) -> Ins:
                 if item & 1 == 1: ir.args.push(i32((vm[item >> 1] << 1) | 1))
                 else: ir.args.push(i32(sm[item >> 1] << 1))
             c.a = i32(s)
-        load, mov, neg, not_, fneg, fsqrt, fabs, ffloor, fceil, ftrunc, sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits:
+        load:
+            c.a = i32(vm[a])
+            if int(c.c) & M_INDEX != 0: c.b = i32(vm[bb])
+        mov, neg, not_, fneg, fsqrt, fabs, ffloor, fceil, ftrunc, sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits:
             c.a = i32(vm[a])
         _:
             c.a = i32(vm[a])
             c.b = i32(vm[bb])
-    if defines_value(c.op) and c.dst >= 0: c.dst = i32(vm[int(c.dst)])
+    if defines_value(c.op) and c.dst >= 0 and c.op != .store: c.dst = i32(vm[int(c.dst)])
     c
 
 # splice callee's body in place of `call` (appending to out)

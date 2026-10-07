@@ -44,19 +44,47 @@ fn patch32(pos: int, v: int):
     code[pos + 3] = u8((v >> 24) & 255)
 
 rip_kind := 0
+# index register for the next memory operand ([base + index << scale + disp]); -1: none
+cur_index := -1
+cur_scale := 0
+
+fn use_index(ix: int, scale: int):
+    cur_index = ix
+    cur_scale = scale
+
+# an indexed access needs a real base register (rip-relative addressing takes no index)
+fn indexed_base(base: int, disp: int, imm: int) -> (int, int):
+    if base != RIPREL: return (base, disp)
+    rel_fixup_lea(RCX, rip_kind, disp - imm)
+    (RCX, imm)
+
 fn rex(w: bool, r: int, x: int, bb0: int, force: bool):
     bb := bb0
     if bb == RIPREL: bb = 0
     v := 0x40
     if w: v |= 8
     if r & 8 != 0: v |= 4
-    if x & 8 != 0: v |= 2
+    if x & 8 != 0 or (cur_index >= 0 and cur_index & 8 != 0): v |= 2
     if bb & 8 != 0: v |= 1
     if v != 0x40 or force: b(v)
 
 # ModRM + optional SIB + displacement for [base + disp]
 fn mem(reg: int, base: int, disp: int):
     r := reg & 7
+    if cur_index >= 0:
+        sib := (cur_scale << 6) | ((cur_index & 7) << 3) | (base & 7)
+        if disp == 0 and base & 7 != 5:
+            b((r << 3) | 4)
+            b(sib)
+        else if disp >= -128 and disp <= 127:
+            b(0x40 | (r << 3) | 4)
+            b(sib)
+            b(disp)
+        else:
+            b(0x80 | (r << 3) | 4)
+            b(sib)
+            b32(disp)
+        return
     if base == RIPREL:
         b((r << 3) | 5)
         b32(0)
@@ -257,6 +285,7 @@ fn operands(ins: Ins) -> int:
         store, copy:
             use_buf.push(a)
             use_buf.push(bb)
+            if op == .store and int(ins.c) & M_INDEX != 0: use_buf.push(d)
             return -1
         zero:
             use_buf.push(a)
@@ -276,7 +305,11 @@ fn operands(ins: Ins) -> int:
             for k in 0..bb: use_buf.push(int(ir.args[a + k]))
             use_buf.push(int(ins.c))
             return d
-        load, mov, neg, not_, fneg, fsqrt, fabs, ffloor, fceil, ftrunc, sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits:
+        load:
+            use_buf.push(a)
+            if int(ins.c) & M_INDEX != 0: use_buf.push(bb)
+            return d
+        mov, neg, not_, fneg, fsqrt, fabs, ffloor, fceil, ftrunc, sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits:
             use_buf.push(a)
             return d
         _:
@@ -858,6 +891,17 @@ fn fpre(ty: int) -> int:
     if ty == VS: return 0xF3
     0xF2
 
+ro_consts: {int: int} = {}
+
+# offset of an 8-byte constant in read-only data (shared between uses)
+fn ro_const(bits: int) -> int:
+    if o := ro_consts.get(bits): return o
+    while rodata.len() % 8 != 0: rodata.push(0)
+    o := rodata.len()
+    for k in 0..8: rodata.push(u8((bits >> (8 * k)) & 255))
+    ro_consts[bits] = o
+    o
+
 fn rel_fixup_lea(r: int, kind: int, off: int):
     rex(true, r, 0, 0, false)
     b(0x8D)
@@ -984,9 +1028,16 @@ fn emit_ins(pos: int, ins: Ins):
             st(d, r)
         fconst:
             if vloc[d] == LOC_NONE: return
+            if vloc[d] >= XMM:
+                x := vloc[d] - XMM
+                if ins.imm == 0: xzero(x)
+                else:
+                    # float constants live in read-only data: one load, no integer register
+                    rip_kind = 0
+                    sse_rm(fpre(int(ins.ty)), 0x10, x, RIPREL, ro_const(ins.imm))
+                return
             mov_imm(RAX, ins.imm)
-            if vloc[d] >= XMM: movq_xr(vloc[d] - XMM, RAX)
-            else: st(d, RAX)
+            st(d, RAX)
         mov:
             if vloc[d] == LOC_NONE: return
             if vtype(d) == VI:
@@ -1207,32 +1258,48 @@ fn emit_ins(pos: int, ins: Ins):
             size := mode & 15
             base, disp := addr_of(a, RCX)
             disp += int(ins.imm)
+            ix := -1
+            if mode & M_INDEX != 0:
+                base, disp = indexed_base(base, disp, int(ins.imm))
+                ix = reg_of(int(ins.b), RDX)
             if mode & M_FLOAT != 0:
                 x := xdreg(d, 0)
+                use_index(ix, mem_scale(ins))
                 if size == 4: sse_rm(0xF3, 0x10, x, base, disp)
                 else: sse_rm(0xF2, 0x10, x, base, disp)
+                cur_index = -1
                 sts(d, x, vtype(d))
             else:
                 r := dreg(d, RAX)
+                use_index(ix, mem_scale(ins))
                 load_sized(r, base, disp, size, mode & M_SIGNED != 0)
+                cur_index = -1
                 st(d, r)
         store:
             mode := int(ins.c)
             size := mode & 15
             base, disp := addr_of(a, RCX)
             disp += int(ins.imm)
+            ix := -1
+            if mode & M_INDEX != 0:
+                base, disp = indexed_base(base, disp, int(ins.imm))
+                ix = reg_of(int(ins.dst), RDX)
             if vtype(bb) != VI:
                 xb := xreg_of(bb, 0, vtype(bb))
+                use_index(ix, mem_scale(ins))
                 if size == 4: sse_rm(0xF3, 0x11, xb, base, disp)
                 else: sse_rm(0xF2, 0x11, xb, base, disp)
             else if vloc[bb] == LOC_CONST and size >= 4 and base != RIPREL:
+                use_index(ix, mem_scale(ins))
                 rex(size == 8, 0, 0, base, false)
                 b(0xC7)
                 mem(0, base, disp)
                 b32(vcval[bb])
             else:
                 rb := reg_of(bb, RAX)
+                use_index(ix, mem_scale(ins))
                 store_sized(base, disp, rb, size)
+            cur_index = -1
         slot:
             if vloc[d] == LOC_SLOT or vloc[d] == LOC_NONE: return
             r := dreg(d, RAX)

@@ -40,7 +40,12 @@ fn o_operands(ins: Ins) -> int:
         ret:
             if a >= 0: o_buf.push(a)
             return -1
-        store, copy:
+        store:
+            o_buf.push(a)
+            o_buf.push(bb)
+            if int(ins.c) & M_INDEX != 0: o_buf.push(d)
+            return -1
+        copy:
             o_buf.push(a)
             o_buf.push(bb)
             return -1
@@ -57,7 +62,11 @@ fn o_operands(ins: Ins) -> int:
             o_buf.push(bb)
             o_buf.push(int(ins.c))
             return d
-        load, mov, neg, not_, fneg, fsqrt, fabs, ffloor, fceil, ftrunc, sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits:
+        load:
+            o_buf.push(a)
+            if int(ins.c) & M_INDEX != 0: o_buf.push(bb)
+            return d
+        mov, neg, not_, fneg, fsqrt, fabs, ffloor, fceil, ftrunc, sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits:
             o_buf.push(a)
             return d
         _:
@@ -84,7 +93,14 @@ fn o_rewrite(ins: mut Ins):
             ins.a = o_repl[a]
             ins.b = o_repl[bb]
             ins.c = o_repl[int(ins.c)]
-        load, mov, neg, not_, fneg, fsqrt, fabs, ffloor, fceil, ftrunc, sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits:
+        load:
+            ins.a = o_repl[a]
+            if int(ins.c) & M_INDEX != 0: ins.b = o_repl[bb]
+        store:
+            ins.a = o_repl[a]
+            ins.b = o_repl[bb]
+            if int(ins.c) & M_INDEX != 0: ins.dst = o_repl[int(ins.dst)]
+        mov, neg, not_, fneg, fsqrt, fabs, ffloor, fceil, ftrunc, sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits:
             ins.a = o_repl[a]
         _:
             ins.a = o_repl[a]
@@ -369,6 +385,21 @@ fn o_emit(ins0: Ins):
         while stable(a) and o_dop[a] == i32(int(Op.add)) and o_const[int(o_db[a])] and o_fits32(ins.imm + o_cval[int(o_db[a])]):
             ins.imm += o_cval[int(o_db[a])]
             a = int(o_da[a])
+        # [base + index << scale + imm] (x86 addressing; wasm computes it)
+        if int(ins.c) & M_INDEX == 0 and stable(a) and o_dop[a] == i32(int(Op.add)) and not o_const[int(o_db[a])] and not o_const[int(o_da[a])]:
+            base := int(o_da[a])
+            idx := int(o_db[a])
+            scale := 0
+            if stable(idx) and o_dop[idx] == i32(int(Op.shl)) and o_const[int(o_db[idx])] and o_cval[int(o_db[idx])] <= 3 and o_cval[int(o_db[idx])] >= 0:
+                scale = o_cval[int(o_db[idx])]
+                idx = int(o_da[idx])
+            while stable(base) and o_dop[base] == i32(int(Op.add)) and o_const[int(o_db[base])] and o_fits32(ins.imm + o_cval[int(o_db[base])]):
+                ins.imm += o_cval[int(o_db[base])]
+                base = int(o_da[base])
+            a = base
+            ins.c = i32(int(ins.c) | M_INDEX | (scale << 8))
+            if op == .store: ins.dst = i32(idx)
+            else: ins.b = i32(idx)
         ins.a = i32(a)
     if o_cse:
         if cse_op(op):
@@ -404,8 +435,10 @@ fn o_emit(ins0: Ins):
             # store-to-load forwarding for full-width values
             a := int(ins.a)
             v := int(ins.b)
-            if (mode & 15 == 8 or mode & M_FLOAT != 0) and stable(a) and stable(v):
-                ht_put_gen(load_key1(int(ins.ty), mode, a), 0, ins.imm, v, mem_gen(mode))
+            ix := 0
+            if mode & M_INDEX != 0: ix = int(ins.dst)
+            if (mode & 15 == 8 or mode & M_FLOAT != 0) and stable(a) and stable(v) and stable(ix):
+                ht_put_gen(load_key1(int(ins.ty), mode, a), ix, ins.imm, v, mem_gen(mode))
         else if op == .assume:
             a := int(ins.a)
             if ins.imm == A_RC1 and stable(a):
@@ -652,4 +685,52 @@ fn optimize():
     code.reserve(o_out.len())
     for j, ins in o_out:
         if keep[j]: code.push(ins)
-    ir.code = code
+    ir.code = o_cleanup(code)
+
+# Final tidying: drop unreachable code after unconditional jumps, branches to the very next
+# instruction, and copies of a value that was computed just for the copy (t = a + 1; x = t).
+fn o_cleanup(code: [Ins]) -> [Ins]:
+    out: [Ins]
+    out.reserve(code.len())
+    kinds: [Op]          # open constructs
+    dead := false
+    depth := 0
+    for ins in code:
+        op := ins.op
+        if dead:
+            if op == .block or op == .loop or op == .if_:
+                depth += 1
+                continue
+            if op == .end or op == .else_:
+                if depth > 0:
+                    if op == .end: depth -= 1
+                    continue
+                dead = false
+            else: continue
+        if op == .end and out.len() > 0:
+            last := out[out.len() - 1]
+            if last.op == .br and last.imm == 0 and kinds[kinds.len() - 1] != .loop: out.pop()
+        if op == .mov and out.len() > 0:
+            last := out[out.len() - 1]
+            t := int(ins.a)
+            d := int(ins.dst)
+            if t != d and int(last.dst) == t and o_nuse[t] == 1 and vtype(t) == vtype(d) and o_retargetable(last.op):
+                last.dst = i32(d)
+                out[out.len() - 1] = last
+                continue
+        out.push(ins)
+        if op == .block or op == .loop or op == .if_: kinds.push(op)
+        else if op == .end: kinds.pop()
+        else if op == .br or op == .ret or op == .trap or (op == .call and ins.c == 1):
+            dead = true
+            depth = 0
+    out
+
+# instructions whose result register may be renamed
+fn o_retargetable(op: Op) -> bool:
+    match op:
+        add, sub, mul, divs, divu, rems, remu, and_, or_, xor, shl, shrs, shru, neg, not_, load, mov: true
+        eq, ne, lts, les, gts, ges, ltu, leu, gtu, geu: true
+        fadd, fsub, fmul, fdiv, fneg, fsqrt, fmin, fmax, ffloor, fceil, fabs, ftrunc: true
+        sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits, fconst, iconst: true
+        _: false

@@ -144,6 +144,25 @@ fn i64c(v: int):
 fn i32c(v: int):
     op(0x41)
     sleb(wb, v)
+# push the i32 address of a load/store; returns the static offset for its memarg
+fn waddr(ins: Ins) -> int:
+    lget(int(ins.a))
+    ix := mem_index(ins)
+    if ix >= 0:
+        lget(ix)
+        sc := mem_scale(ins)
+        if sc > 0:
+            i64c(sc)
+            op(0x86)            # i64.shl
+        op(0x7C)                # i64.add
+    off := int(ins.imm)
+    if off < 0:
+        i64c(off)
+        op(0x7C)
+        off = 0
+    op(0xA7)                    # i32.wrap_i64
+    off
+
 fn addr32(v: int):
     lget(v)
     op(0xA7)              # i32.wrap_i64
@@ -348,8 +367,7 @@ fn emit_wins(ins: Ins):
         load:
             mode := int(ins.c)
             size := mode & 15
-            addr32(a)
-            off := int(ins.imm)
+            off := waddr(ins)
             if mode & M_FLOAT != 0:
                 if size == 4:
                     op(0x2A)
@@ -378,9 +396,8 @@ fn emit_wins(ins: Ins):
         store:
             mode := int(ins.c)
             size := mode & 15
-            addr32(a)
+            off := waddr(ins)
             lget(bb)
-            off := int(ins.imm)
             vt := vtype_of(bb)
             if vt == VF:
                 op(0x39)
