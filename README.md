@@ -1,0 +1,125 @@
+# Jot
+
+Jot is a small, compiled, statically typed language that feels like a scripting language,
+built for making games. `jot game.jot` compiles the whole program and runs it in a blink;
+`jot build game.jot` writes a fully static Linux executable, and with `target = wasm` a
+single self-contained `.html` file that runs in a browser straight from disk.
+
+```jot
+# hello.jot
+print("hello, world")
+
+fn fib(n: int) -> int:
+    if n < 2: return n
+    fib(n - 1) + fib(n - 2)
+
+nums := [5, 3, 9, 1]
+nums.sort()
+squares := nums.map(fn(x): x * x)
+inc := fn(a: int, b: int): a + b
+print(squares, inc(1, _)(41), fib(30))
+```
+
+A complete (tiny) game:
+
+```jot
+pos := vec2(400, 300)
+
+fn update(dt: float):
+    dir := vec2(0, 0)
+    if key_down(.left): dir.x -= 1
+    if key_down(.right): dir.x += 1
+    if key_down(.up): dir.y -= 1
+    if key_down(.down): dir.y += 1
+    pos += dir * f32(300 * dt)
+
+fn draw():
+    clear(rgb(0.08, 0.08, 0.12))
+    circle(pos, 24, rgb(1.0, 0.6, 0.2))
+    text("arrow keys", vec2(20, 20), 24, rgb(1, 1, 1))
+```
+
+## Highlights
+
+- **Fast compiles.** About 250,000 lines per second on one core (debug builds), roughly 20x
+  faster than `gcc -O0`. Hello world compiles and runs in ~10 ms. There are no incremental
+  builds and no build system: build options live in the source (`build:` block).
+- **Fast programs.** Release builds (`opt = release`) are within ~1.5x of `gcc -O2` on the
+  benchmark set (geometric mean), with bounds checks kept on. `parallel_map` and friends use
+  every core.
+- **Easy.** Type inference everywhere, Python-like indentation syntax, first-class functions,
+  closures, partial application (`f(1, _)`), generics without ceremony (untyped parameters),
+  uniform call syntax (`x.f(y)` is `f(x, y)`), optionals, tagged unions with `match`.
+- **Predictable.** Plain value semantics: arrays, strings and maps are reference counted with
+  copy-on-write, so there is no garbage collector, no reference cycles and no hidden aliasing.
+- **Batteries for games.** Windows and input, 2D drawing with SDF text, a 3D renderer with
+  sun/sky lighting, shadows, fog and bloom, GPU programs written in Jot itself (translated to
+  GLSL), PNG/WAV loading, a software audio mixer and synthesizer.
+- **Programs keep working.** Native executables are static (they talk to the kernel directly);
+  the GPU driver is loaded at run time when present. Web builds are one HTML file with the
+  WebAssembly embedded. The compiler needs no assembler, linker or C toolchain.
+- **Self-hosted.** The compiler is written in Jot (~13k lines) and compiles itself; a small
+  C compiler in `stage0/` bootstraps it.
+
+## Getting started
+
+Requirements: Linux x86-64; a C compiler is needed once, to build the bootstrap compiler.
+
+```
+tools/bootstrap.sh            # stage0 (C) -> jot1 -> jot2 -> jot3, checks jot2 == jot3, installs bin/jot
+bin/jot examples/shapes.jot   # compile and run
+bin/jot examples/lumen/lumen.jot          # the 2D demo game
+bin/jot examples/dunes/dunes.jot          # the 3D demo game
+bin/jot build examples/dunes/dunes.jot --target wasm -o dunes.html   # open dunes.html in a browser
+bin/jot test tests/unit/sample_test.jot  # run `test` blocks
+bin/jot check file.jot        # type check only
+```
+
+`bin/jot` finds the standard library in `lib/` next to its own directory (or `$JOT_LIB`).
+
+## Documentation
+
+- [docs/LANGUAGE.md](docs/LANGUAGE.md) — the language
+- [docs/API.md](docs/API.md) — the standard library (generated from `lib/`)
+- [docs/REPORT.md](docs/REPORT.md) — measured results for the design goals (`tools/report.py`)
+
+## Repository layout
+
+```
+compiler/      the Jot compiler, in Jot
+  lex, parse, ast        source -> syntax tree
+  check, expr, types     name resolution, type inference, overloading, generics
+  lower                  syntax tree -> IR (register based, structured control flow)
+  opt, inline            release builds: folding, CSE, check elimination, inlining
+  x64, elf               IR -> x86-64 machine code -> static ELF executable
+  wasm                   IR -> WebAssembly, packaged into one HTML file
+  glsl                   shader functions written in Jot -> GLSL ES 3.00
+stage0/        bootstrap compiler in C (compiles compiler/ once)
+lib/core/      runtime, strings, arrays, maps, math, files, formatting
+lib/std/       thread pool and parallel helpers
+lib/game/      windows, input, OpenGL ES / WebGL, 2D, 3D, images, audio
+lib/web/       JavaScript glue embedded into web builds
+examples/      demos: lumen (2D), dunes (3D), shapes, cube, scene3d
+tests/         test programs with expected output; tools/runtests.py
+bench/         benchmarks (Jot and equivalent C)
+tools/         bootstrap, test runner, report, profiler, instruction counter
+```
+
+## How it works
+
+The compiler parses and type-checks the whole program (the standard library is always
+included and only what is used gets compiled), lowers it to a compact IR, and generates
+machine code directly: a linear-scan register allocator and an x86-64 encoder write the ELF
+file in one pass. Release builds additionally run an IR optimizer — constant folding, copy
+propagation, common-subexpression and redundant-load elimination keyed by memory class,
+bounds-check and copy-on-write-check elimination, inlining of small functions, and folding of
+array indexing into x86 addressing modes.
+
+Native programs are static executables that make Linux system calls directly. Programs that
+open a window load the system's X11, EGL and OpenGL ES libraries at run time with a tiny
+in-process loader (the static binary maps the system dynamic linker and asks it for the
+libraries), so a missing driver produces a clear message instead of a load-time failure, and
+nothing is loaded at all by programs that do not use graphics.
+
+The web backend emits WebAssembly from the same IR; the HTML file contains the module (base64)
+and a small JavaScript runtime for WebGL 2, input and audio.

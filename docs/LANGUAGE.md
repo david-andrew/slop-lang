@@ -76,7 +76,7 @@ Top-level statements in the main file run in order, like a script.
 | `float` | 64-bit float (`f32`, `f64` also exist) |
 | `bool` | `true` / `false` |
 | `str` | immutable UTF-8 string (`+` concatenates, `*` repeats) |
-| `[T]` | growable array (value semantics) |
+| `[T]` | growable array (value semantics); `push pop insert remove extend len` ... |
 | `{K: V}` | hash map, insertion ordered (value semantics) |
 | `(A, B)` | tuple |
 | `T?` | optional: a `T` or `none` |
@@ -257,7 +257,21 @@ and bounds-check fast paths and runs the optimizer (constant folding, copy propa
 common subexpressions, redundant load and bounds-check elimination). Debug builds compile
 faster; both have identical behavior, including bounds checks.
 
-## 10. Programs and the game loop
+## 10. Parallelism
+
+Data-parallel helpers run a function over many elements on all CPU cores (fork-join):
+
+```jot
+lengths := parallel_map(words, fn(w): expensive(w))       # [f(x) for x in xs]
+parallel_update(particles, fn(p): step(p, dt))             # xs[i] = f(xs[i]) in place
+rows := parallel_range(height, fn(y): render_row(y))       # [f(i) for i in 0..n]
+```
+
+Because closures capture values (not references), the function can only read what it
+captured and return a result, so these calls cannot race. Do not assign to globals from inside
+them. Web builds run the same code on one thread.
+
+## 11. Programs and the game loop
 
 A program runs its top-level statements, then `main()` if defined.
 If the program defines `update(dt: float)` and/or `draw()`, a window opens and they are
@@ -274,7 +288,7 @@ fn draw():
     circle(pos, 20, rgb(1, 0.5, 0.2))
 ```
 
-## 11. Command line
+## 12. Command line
 
 ```
 jot file.jot [args]     compile and run (wasm target: opens the browser)
