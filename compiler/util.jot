@@ -23,21 +23,26 @@ fn mkpos(file: int, off: int) -> int: (file << 40) | off
 fn pos_file(p: int) -> int: p >> 40
 fn pos_off(p: int) -> int: p & 0xFFFFFFFFFF
 
+line_starts: [[int]]
+
 fn line_col(p: int) -> (int, int):
     f := pos_file(p)
     if f < 0 or f >= files.len(): return (0, 0)
-    src := files[f].src
+    while line_starts.len() <= f: line_starts.push([])
+    if line_starts[f].len() == 0:
+        ls := [0]
+        src := files[f].src
+        for i, c in src:
+            if c == '\n': ls.push(i + 1)
+        line_starts[f] = ls
     off := pos_off(p)
-    line := 1
-    col := 1
-    i := 0
-    while i < off and i < len(src):
-        if src[i] == '\n':
-            line += 1
-            col = 1
-        else: col += 1
-        i += 1
-    (line, col)
+    lo := 0
+    hi := line_starts[f].len() - 1
+    while lo < hi:
+        mid := (lo + hi + 1) / 2
+        if line_starts[f][mid] <= off: lo = mid
+        else: hi = mid - 1
+    (lo + 1, off - line_starts[f][lo] + 1)
 
 fn pos_str(p: int) -> str:
     f := pos_file(p)
