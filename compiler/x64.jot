@@ -1346,7 +1346,7 @@ fn emit_ins(pos: int, ins: Ins):
                 b32(0)
                 stub_fix.push((code.len() - 4, int(ins.imm)))
                 pop_call_stack()
-                if ins.imm == 2: st(d, RAX)
+                if d >= 0 and vloc[d] != LOC_NONE: st(d, RAX)
         block: xctl.push(XCtl(0, code.len(), [], []))
         loop: xctl.push(XCtl(1, code.len(), [], []))
         if_:
@@ -1500,7 +1500,7 @@ fn x64_entry(inits: [int], main_lf: int) -> int:
     start
 
 stub_fix: [(int, int)]
-stub_addr: [int] = [-1, -1, -1, -1, -1]
+stub_addr: [int] = [-1, -1, -1, -1, -1, -1, -1, -1, -1]
 
 # machine code stubs for non-local control transfer
 fn x64_stubs():
@@ -1531,6 +1531,42 @@ fn x64_stubs():
     rex(false, 0, 0, RDI, false)
     b(0xFF)
     modrr(4, RDI)                          # jmp rdi
+    # clone_thread(rdi = entry, rsi = arg, rdx = stack top): the child calls entry(arg) on the
+    # new stack, then exits the thread; the parent gets the thread id (or -errno)
+    while code.len() % 16 != 0: b(0xCC)
+    stub_addr[5] = code.len()
+    for x in [0x48, 0x83, 0xEA, 0x10,        # sub rdx, 16
+              0x48, 0x89, 0x3A,              # mov [rdx], rdi
+              0x48, 0x89, 0x72, 0x08,        # mov [rdx+8], rsi
+              0x48, 0x89, 0xD6,              # mov rsi, rdx
+              0xBF, 0x00, 0x0F, 0x05, 0x00,  # mov edi, CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM
+              0x31, 0xD2,                    # xor edx, edx
+              0x45, 0x31, 0xD2,              # xor r10d, r10d
+              0x45, 0x31, 0xC0,              # xor r8d, r8d
+              0xB8, 0x38, 0x00, 0x00, 0x00,  # mov eax, 56 (clone)
+              0x0F, 0x05,                    # syscall
+              0x48, 0x85, 0xC0,              # test rax, rax
+              0x74, 0x01,                    # jz child
+              0xC3,                          # ret
+              0x58,                          # child: pop rax
+              0x5F,                          # pop rdi
+              0xFF, 0xD0,                    # call rax
+              0xB8, 0x3C, 0x00, 0x00, 0x00,  # mov eax, 60 (exit this thread)
+              0x31, 0xFF,                    # xor edi, edi
+              0x0F, 0x05,                    # syscall
+              0x0F, 0x0B]: b(x)              # ud2
+    # atomic_add(rdi = p, rsi = v) -> old value
+    while code.len() % 16 != 0: b(0xCC)
+    stub_addr[6] = code.len()
+    for x in [0x48, 0x89, 0xF0, 0xF0, 0x48, 0x0F, 0xC1, 0x07, 0xC3]: b(x)     # mov rax, rsi; lock xadd [rdi], rax; ret
+    # atomic_cas(rdi = p, rsi = expected, rdx = desired) -> old value
+    while code.len() % 16 != 0: b(0xCC)
+    stub_addr[7] = code.len()
+    for x in [0x48, 0x89, 0xF0, 0xF0, 0x48, 0x0F, 0xB1, 0x17, 0xC3]: b(x)     # mov rax, rsi; lock cmpxchg [rdi], rdx; ret
+    # stack_ptr() -> the caller's stack pointer
+    while code.len() % 16 != 0: b(0xCC)
+    stub_addr[8] = code.len()
+    for x in [0x48, 0x8D, 0x44, 0x24, 0x08, 0xC3]: b(x)                        # lea rax, [rsp+8]; ret
 
 fn x64_resolve(text_addr: int, ro_addr: int, data_addr: int):
     if stub_fix.len() > 0 and stub_addr[2] < 0: ice("stubs not emitted")

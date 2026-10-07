@@ -774,6 +774,17 @@ static Val gen_intrinsic(Node *e) {
     E("syscall");
     return V(false);
   }
+  case IN_ATOMIC_ADD:
+    gen_expr(a[0]); push_rax(); gen_expr(a[1]);
+    pop_reg("rcx"); E("lock xadd qword ptr [rcx], rax");
+    return V(false);
+  case IN_ATOMIC_CAS:
+    gen_expr(a[0]); push_rax(); gen_expr(a[1]); push_rax(); gen_expr(a[2]);
+    E("mov rdx, rax"); pop_reg("rax"); pop_reg("rcx"); E("lock cmpxchg qword ptr [rcx], rdx");
+    return V(false);
+  case IN_STACK_PTR:
+    E("mov rax, rsp");
+    return V(false);
   case IN_MEMCPY:
     gen_expr(a[0]); push_rax(); gen_expr(a[1]); push_rax(); gen_expr(a[2]);
     E("mov rcx, rax"); pop_reg("rsi"); pop_reg("rdi"); E("rep movsb");

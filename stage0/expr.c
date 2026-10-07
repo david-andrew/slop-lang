@@ -32,6 +32,8 @@ static struct { const char *name; int id; bool arr_domain; } intrinsics[] = {
   {"str_from_bytes", IN_FROM_BYTES, false}, {"bytes", IN_TO_BYTES, false}, {"__argv", IN_ARGV, false},
   {"unreachable", IN_UNREACHABLE, false}, {"sqrt", IN_SQRT, false}, {"__fmt_fields", IN_FMT_STRUCT, false},
   {"__hash_value", IN_HASH, false}, {"__set_len", IN_SETLEN, false},
+  {"__atomic_add", IN_ATOMIC_ADD, false}, {"__atomic_cas", IN_ATOMIC_CAS, false},
+  {"__stack_ptr", IN_STACK_PTR, false},
 };
 
 void register_intrinsics(Scope *s) {
@@ -1048,6 +1050,19 @@ static Type *check_intrinsic(FnCtx *c, Node **pn, int id, Node **args, int nargs
     r = t_int;
     break;
   }
+  case IN_ATOMIC_ADD: case IN_ATOMIC_CAS: {
+    int na = id == IN_ATOMIC_ADD ? 2 : 3;
+    nargs_check(n, nargs, na, na, id == IN_ATOMIC_ADD ? "__atomic_add" : "__atomic_cas");
+    Type *t0 = arg_type(c, args, 0, NULL);
+    if (t0->kind != TY_PTR) fatal(args[0]->pos, "expected a pointer");
+    for (int i = 1; i < na; i++) arg_type(c, args, i, t_int);
+    r = t_int;
+    break;
+  }
+  case IN_STACK_PTR:
+    nargs_check(n, nargs, 0, 0, "__stack_ptr");
+    r = t_rawptr;
+    break;
   case IN_MEMCPY: case IN_MEMSET: {
     nargs_check(n, nargs, 3, 3, id == IN_MEMCPY ? "mem_copy" : "mem_set");
     Type *t0 = arg_type(c, args, 0, NULL);

@@ -60,6 +60,12 @@ fn lf_helper(hk: HK, t: int, p: int) -> int:
 
 fn rt(name: str) -> int: lf_of_inst(runtime_fn(name))
 
+# value of a runtime global (by name, from the prelude)
+fn rt_global(name: str) -> int:
+    s := prelude.get(intern(name)) ?? 0
+    if s == 0 or syms[s].kind != .global: ice("missing runtime global {name}")
+    e_load(VI, e_gaddr(global_addr_off(int(syms[s].ref))), 0, 1)
+
 # call to a function that never returns (panics): registers need not survive it
 fn e_call_nr(f: int, args: [int], rtype: int) -> int:
     start := ir.args.len()
@@ -197,19 +203,35 @@ fn retain(v: int, t: int):
     if not opt_release:
         e_call(rt("__rc_inc"), [v], -1)
         return
+    # during a parallel job refcounts must be updated atomically (out of line)
+    blk()
+    done := ctl
+    iff(rt_global("__mt_active"))
+    e_call(rt("__rc_inc"), [v], -1)
+    br_to(done)
+    endc()
     iff(e_bin(.ne, VI, v, e_iconst(0)))
     rc := e_load(VI, v, 0, 8)
     iff(e_bin(.gts, VI, rc, e_iconst(0)))
     e_store(v, 0, e_addi(rc, 1), 8)
     endc()
     endc()
+    endc()
 
 fn release(v: int, t0: int):
     t := prune(t0)
+    managed_arr := types[t].kind == .array and is_managed(int(types[t].elem))
     if not opt_release:
-        if types[t].kind == .array and is_managed(int(types[t].elem)): e_call(lf_helper(.arrrel, t, 0), [v], -1)
+        if managed_arr: e_call(lf_helper(.arrrel, t, 0), [v], -1)
         else: e_call(rt("__rc_dec"), [v], -1)
         return
+    blk()
+    done := ctl
+    iff(rt_global("__mt_active"))
+    if managed_arr: e_call(lf_helper(.arrrel, t, 0), [v], -1)
+    else: e_call(rt("__rc_dec"), [v], -1)
+    br_to(done)
+    endc()
     iff(e_bin(.ne, VI, v, e_iconst(0)))
     rc := e_load(VI, v, 0, 8)
     iff(e_bin(.gts, VI, rc, e_iconst(1)))
@@ -217,8 +239,9 @@ fn release(v: int, t0: int):
     els()
     # last reference: the out-of-line path frees (and releases elements)
     iff(e_bin(.eq, VI, rc, e_iconst(1)))
-    if types[t].kind == .array and is_managed(int(types[t].elem)): e_call(lf_helper(.arrrel, t, 0), [v], -1)
+    if managed_arr: e_call(lf_helper(.arrrel, t, 0), [v], -1)
     else: e_call(rt("__rc_dec"), [v], -1)
+    endc()
     endc()
     endc()
     endc()
@@ -1479,7 +1502,7 @@ fn gen_intrinsic(e: int) -> Val:
         d := vreg(VI)
         emit(.intr, VI, d, 0, 0, 0, 1)
         return V(d, false)
-    if id == .setjmp or id == .longjmp or id == .jump:
+    if id == .setjmp or id == .longjmp or id == .jump or id == .clone_thread or id == .atomic_add or id == .atomic_cas or id == .stack_ptr:
         vs: [int]
         for a in args: vs.push(gen_expr(a).v)
         start := ir.args.len()
@@ -1488,6 +1511,10 @@ fn gen_intrinsic(e: int) -> Val:
         code := 2
         if id == .longjmp: code = 3
         if id == .jump: code = 4
+        if id == .clone_thread: code = 5
+        if id == .atomic_add: code = 6
+        if id == .atomic_cas: code = 7
+        if id == .stack_ptr: code = 8
         emit(.intr, VI, d, i32(start), i32(vs.len()), 0, code)
         return V(d, false)
     if id == .sqrt:
@@ -2538,16 +2565,9 @@ fn helper_drop(t: int, copy: bool):
         env := e_load(VI, a, ptr_size, ptr_size)
         if copy: retain(env, T_STR)
         else:
-            iff(e_bin(.ne, VI, env, e_iconst(0)))
-            rc := e_load(VI, env, 0, 8)
-            iff(e_bin(.gts, VI, rc, e_iconst(0)))
-            nrc := e_bin(.sub, VI, rc, e_iconst(1))
-            e_store(env, 0, nrc, 8)
-            iff(e_bin(.eq, VI, nrc, e_iconst(0)))
+            iff(e_call(rt("__rc_dec_test"), [env], VI))
             df := e_load(VI, env, 8, ptr_size)
             e_calli(df, [env], -1, false)
-            endc()
-            endc()
             endc()
     else if k == .opt:
         inner := int(types[t].elem)
@@ -2583,12 +2603,7 @@ fn helper_arrrel(t: int):
     ps := helper_params(1)
     p := ps[0]
     et := int(types[t].elem)
-    iff(e_bin(.ne, VI, p, e_iconst(0)))
-    rc := e_load(VI, p, 0, 8)
-    iff(e_bin(.gts, VI, rc, e_iconst(0)))
-    nrc := e_bin(.sub, VI, rc, e_iconst(1))
-    e_store(p, 0, nrc, 8)
-    iff(e_bin(.eq, VI, nrc, e_iconst(0)))
+    iff(e_call(rt("__rc_dec_test"), [p], VI))
     n := e_load(VI, p, 8, 8)
     i := vreg(VI)
     e_mov(i, e_iconst(0))
@@ -2601,8 +2616,6 @@ fn helper_arrrel(t: int):
     endc()
     endc()
     e_call(rt("__free_obj"), [p], -1)
-    endc()
-    endc()
     endc()
     e_ret(-1)
 

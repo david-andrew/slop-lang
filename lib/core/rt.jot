@@ -8,14 +8,36 @@ when TARGET == "wasm":
     extern fn __wasm_exit(code: int)
     extern fn __wasm_now() -> float
 
+# ---------------- threads (see lib/std/thread.jot) ----------------
+# Worker threads run on stacks carved out of one reserved region, so a thread's index can be
+# derived from its stack pointer: index 0 is the main thread. While a parallel job runs,
+# reference counts are updated with atomic instructions.
+const __MAX_THREADS = 64
+const __TSTACK_SHIFT = 23              # 8 MB per worker stack
+__tstack_base: *u8 = null
+__mt_active := false                   # a parallel job is running: refcounts are atomic
+
+fn __tid() -> int:
+    if __tstack_base == null: return 0
+    sp := __stack_ptr()
+    if sp < __tstack_base or sp >= __tstack_base + (__MAX_THREADS << __TSTACK_SHIFT): return 0
+    ((sp - __tstack_base) >> __TSTACK_SHIFT) + 1
+
 # ---------------- low level memory ----------------
-__heap_cur: *u8 = null
-__heap_end: *u8 = null
-__free_lists: **u8 = null
-__live_allocs := 0
+# per-thread allocator state: [heap_cur, heap_end, live count, free list heads (64 size classes)]
+const __TS_WORDS = 72
+__tstate: *int = null
+
+fn __ts() -> *int:
+    if __tstate == null: __tstate = __os_pages((__MAX_THREADS + 1) * __TS_WORDS * 8) as *int
+    __tstate + __tid() * __TS_WORDS
 
 # number of live heap allocations (useful for leak tests)
-fn alloc_count() -> int: __live_allocs
+fn alloc_count() -> int:
+    if __tstate == null: return 0
+    n := 0
+    for t in 0..__MAX_THREADS + 1: n += __tstate[t * __TS_WORDS + 2]
+    n
 
 fn __os_pages(size: int) -> *u8:
     when TARGET == "wasm":
@@ -48,7 +70,8 @@ fn __size_class(n: int) -> int:
 
 # Allocate `size` zeroed bytes (16-byte aligned).
 fn __alloc(size: int) -> *u8:
-    __live_allocs += 1
+    t := __ts()
+    t[2] += 1
     n := size + 16
     if n > 262144:
         total := (n + 65535) & ~65535
@@ -56,35 +79,37 @@ fn __alloc(size: int) -> *u8:
         h[0] = total
         h[1] = -1
         return (h as *u8) + 16
-    if __free_lists == null: __free_lists = __os_pages(65536) as **u8
     c := __size_class(n)
     csize := 32 << c
-    head := __free_lists[c]
+    lists := (t + 3) as **u8
+    head := lists[c]
     if head != null:
-        __free_lists[c] = (head as **u8)[0]
+        lists[c] = (head as **u8)[0]
         mem_set(head, 0, csize)
         h := head as *int
         h[0] = c
         return head + 16
-    if __heap_cur == null or __heap_cur + csize > __heap_end:
+    cur := t[0] as *u8
+    if cur == null or cur + csize > t[1] as *u8:
         chunk := 4 << 20
-        __heap_cur = __os_pages(chunk)
-        __heap_end = __heap_cur + chunk
-    p := __heap_cur
-    __heap_cur = __heap_cur + csize
-    (p as *int)[0] = c
-    p + 16
+        cur = __os_pages(chunk)
+        t[1] = (cur + chunk) as int
+    t[0] = (cur + csize) as int
+    (cur as *int)[0] = c
+    cur + 16
 
 fn __free(p: *u8):
     if p == null: return
-    __live_allocs -= 1
+    t := __ts()
+    t[2] -= 1
     h := (p - 16) as *int
     if h[1] == -1:
         __os_free_pages(h as *u8, h[0])
         return
     c := h[0]
-    (h as **u8)[0] = __free_lists[c]
-    __free_lists[c] = h as *u8
+    lists := (t + 3) as **u8
+    (h as **u8)[0] = lists[c]
+    lists[c] = h as *u8
 
 # Grow an allocation to at least `size` bytes, keeping the first `used` bytes. Large blocks are
 # remapped in place (no copy); small ones stay put if their size class has room.
@@ -118,15 +143,22 @@ fn __free_obj(p: *u8):
 fn __rc_inc(p: *u8):
     if p == null: return
     h := p as *int
-    if h[0] > 0: h[0] += 1
+    if h[0] > 0:
+        if __mt_active: __atomic_add(h, 1)
+        else: h[0] += 1
+
+# drop one reference; true when it was the last one (the caller frees)
+fn __rc_dec_test(p: *u8) -> bool:
+    if p == null: return false
+    h := p as *int
+    if h[0] <= 0: return false
+    if __mt_active: return __atomic_add(h, -1) == 1
+    h[0] -= 1
+    h[0] == 0
 
 # release a plain object (string or array of plain values)
 fn __rc_dec(p: *u8):
-    if p == null: return
-    h := p as *int
-    if h[0] <= 0: return
-    h[0] -= 1
-    if h[0] == 0: __free(p)
+    if __rc_dec_test(p): __free(p)
 
 fn __mem_move(dst: *u8, src: *u8, n: int):
     if n <= 0: return
@@ -210,7 +242,9 @@ fn __arr_clone(p: *u8, es: int) -> *u8:
     q := __arr_new_raw(n, es)
     (q as *int)[1] = n
     mem_copy(q + 24, p + 24, n * es)
-    if h[0] > 0: h[0] -= 1
+    if h[0] > 0:
+        if __mt_active: __atomic_add(h, -1)
+        else: h[0] -= 1
     q
 
 fn __arr_make_unique(slot: **u8, es: int):
