@@ -5,3 +5,4 @@ bin/
 tools/prof
 bench/
 tools/icount
+build/

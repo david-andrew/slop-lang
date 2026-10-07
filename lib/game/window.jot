@@ -398,20 +398,27 @@ fn __run_frame(dt: float, update: fn(float), draw: fn()):
         __fps = float(__fps_n) / __fps_acc
         __fps_acc = 0.0
         __fps_n = 0
+    t0 := time()
     __gfx_begin_frame()
     update(dt)
     draw()
     __gfx_end_frame()
     __audio_update()
+    __frame_cpu += time() - t0
     __maybe_screenshot()
     __input_end_frame()
     __frame_count += 1
 
+__frame_cpu := 0.0
+
 # testing aid: JOT_SCREENSHOT=out.png [JOT_FRAMES=n] saves frame n and exits
+# (JOT_FRAME_STATS=1 also reports the average CPU time of a frame: update + draw + submit)
 fn __maybe_screenshot():
     when TARGET != "wasm":
         if path := env("JOT_SCREENSHOT"):
             n := to_int(env("JOT_FRAMES") ?? "5") ?? 5
             if __frame_count == n:
                 save_png(screenshot(), path)
+                if env("JOT_FRAME_STATS") != none:
+                    eprint("frame cpu: {__frame_cpu * 1000.0 / float(n + 1):.2} ms average over {n + 1} frames")
                 exit(0)

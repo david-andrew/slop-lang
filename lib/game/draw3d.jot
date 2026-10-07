@@ -359,6 +359,7 @@ fn __render3d():
         for mut d in __draws:
             if not d.shadow or d.has_custom: continue
             p := __params(d, vp)
+            p.shadow_map = Texture(0, 1, 1)          # never sample the target being rendered
             if d.instanced: draw_instanced(__shadow_sh_inst, d.mesh, d.instances, p)
             else: draw(__shadow_sh, d.mesh, p)
         glColorMask(1, 1, 1, 1)
@@ -449,7 +450,8 @@ fn __post_end():
     bw := __bloom_a.texture.width
     bh := __bloom_a.texture.height
     texel := vec2(1.0 / f32(bw), 1.0 / f32(bh))
-    p := PostParams(__scene_rt.texture, __bloom_b.texture, texel, f32(__bloom_threshold), f32(__bloom_strength), f32(__vignette), vec2(1, 0), f32(__saturation), __tint)
+    # (`bloom` must not alias a pass's render target: WebGL rejects feedback loops)
+    p := PostParams(__scene_rt.texture, __scene_rt.texture, texel, f32(__bloom_threshold), f32(__bloom_strength), f32(__vignette), vec2(1, 0), f32(__saturation), __tint)
     __post_pass(__bright_sh, __bloom_a, p)
     for k in 0..2:
         p.src = __bloom_a.texture
