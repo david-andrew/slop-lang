@@ -1,0 +1,15 @@
+import game.dl
+ok := dl.dl_init()
+print("dl_init:", ok)
+if ok:
+    libc := dl.dl_open("libc.so.6")
+    print("libc handle nonzero:", libc != null)
+    getpid := dl.dl_sym(libc, "getpid") as cfn() -> i32
+    print("getpid via libc == syscall:", int(getpid()) == syscall(39))
+    strlen := dl.dl_sym(libc, "strlen") as cfn(*u8) -> int
+    print("strlen:", strlen(data("hello dlopen")))
+    egl := dl.dl_open("libEGL.so.1")
+    print("libEGL loaded:", egl != null)
+    if egl != null:
+        f := dl.dl_sym(egl, "eglGetProcAddress")
+        print("eglGetProcAddress found:", f != null)

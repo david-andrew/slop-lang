@@ -329,6 +329,7 @@ fn resolve_type(tn: int) -> int:
             if has_flag(kid(tn, i), NF_MUT): mm |= 1 << i
         ret := T_VOID
         if nodes[tn].a != 0: ret = resolve_type(int(nodes[tn].a))
+        if has_flag(tn, NF_CABI): return mk_cfn(ps, ret)
         return mk_fn(ps, ret, mm)
     fatal(nodes[tn].pos, "invalid type")
     0

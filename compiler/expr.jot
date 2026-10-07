@@ -11,7 +11,7 @@ enum IN:
     none_, len, push, pop, insert, remove, clear, reserve, slice, syscall, memcpy, memset, sizeof,
     arrdata, panic, assert, print, embed, from_bytes, to_bytes, argv, setlen, truncate, resize,
     hash, alignof, unreachable, arrcap, fmt_struct, sqrt, vec_ctor, cfn_cast, wasm_call, callc, floor_,
-    ceil_, fabs, fmin, fmax
+    ceil_, fabs, fmin, fmax, setjmp, longjmp, jump
 
 enum CV: none_, int_, int2float, float2int, float_, opt, ptr, bits, fn2clos
 
@@ -31,6 +31,7 @@ intrinsics := [
     Intrinsic("str_from_bytes", .from_bytes, false), Intrinsic("bytes", .to_bytes, false), Intrinsic("__argv", .argv, false),
     Intrinsic("unreachable", .unreachable, false), Intrinsic("sqrt", .sqrt, false), Intrinsic("__fmt_fields", .fmt_struct, false),
     Intrinsic("__hash_value", .hash, false), Intrinsic("__set_len", .setlen, false), Intrinsic("__call_c", .callc, false),
+    Intrinsic("__setjmp", .setjmp, false), Intrinsic("__longjmp", .longjmp, false), Intrinsic("__jump", .jump, false),
 ]
 
 last_checked := 0
@@ -1198,6 +1199,20 @@ fn check_intrinsic(n: int, id: IN, args: [int], expected: int) -> int:
         nargs_check(n, nargs, 1, 1, "__hash_value")
         arg_type(args, 0, 0)
         r = T_U64
+    else if id == .setjmp:
+        nargs_check(n, nargs, 1, 1, "__setjmp")
+        arg_type(args, 0, T_RAWPTR)
+        r = T_INT
+    else if id == .longjmp:
+        nargs_check(n, nargs, 2, 2, "__longjmp")
+        arg_type(args, 0, T_RAWPTR)
+        arg_type(args, 1, T_INT)
+        r = T_NEVER
+    else if id == .jump:
+        nargs_check(n, nargs, 2, 2, "__jump")
+        arg_type(args, 0, T_RAWPTR)
+        arg_type(args, 1, T_RAWPTR)
+        r = T_NEVER
     else if id == .callc:
         # __call_c(fnptr, args...) : call a C function pointer (rarely needed; cfn types are preferred)
         fatal(nodes[n].pos, "__call_c is not supported")

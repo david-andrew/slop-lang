@@ -212,6 +212,7 @@ use_buf: [int]
 
 fn call_like(ins: Ins) -> bool:
     op := ins.op
+    if op == .intr and ins.imm >= 2: return true
     if op == .call or op == .calli or op == .callc or op == .syscall or op == .memcpy or op == .memset: return true
     if op == .copy or op == .zero: return not (ins.imm <= 64 and ins.imm % 8 == 0)
     false
@@ -225,7 +226,10 @@ fn operands(ins: Ins) -> int:
     d := int(ins.dst)
     match op:
         nop, block, loop, end, else_, br, trap: return -1
-        iconst, fconst, slot, gaddr, daddr, faddr, intr: return d
+        iconst, fconst, slot, gaddr, daddr, faddr: return d
+        intr:
+            for k in 0..bb: use_buf.push(int(ir.args[a + k]))
+            return d
         if_, brif:
             use_buf.push(a)
             return -1
@@ -1222,6 +1226,14 @@ fn emit_ins(pos: int, ins: Ins):
                 rel_fixup_lea(r, 1, 0)
                 mov_rm(r, r, 0)
                 st(d, r)
+            else:
+                # setjmp / longjmp / jump: arguments in rdi, rsi then a call to a machine-code stub
+                emit_call_args(a, bb, -1, 0)
+                b(0xE8)
+                b32(0)
+                stub_fix.push((code.len() - 4, int(ins.imm)))
+                pop_call_stack()
+                if ins.imm == 2: st(d, RAX)
         block: xctl.push(XCtl(0, code.len(), [], []))
         loop: xctl.push(XCtl(1, code.len(), [], []))
         if_:
@@ -1327,7 +1339,42 @@ fn x64_entry(inits: [int], main_lf: int) -> int:
     b(0x0F); b(0x05)                          # exit_group
     start
 
+stub_fix: [(int, int)]
+stub_addr: [int] = [-1, -1, -1, -1, -1]
+
+# machine code stubs for non-local control transfer
+fn x64_stubs():
+    while code.len() % 16 != 0: b(0xCC)
+    # setjmp(rdi = buf): save callee-saved registers, stack pointer and return address
+    stub_addr[2] = code.len()
+    for i, r in [RBX, RBP, 12, 13, 14, 15]: mov_mr(RDI, 8 * i, r)
+    lea(RAX, RSP, 8)
+    mov_mr(RDI, 48, RAX)
+    mov_rm(RAX, RSP, 0)
+    mov_mr(RDI, 56, RAX)
+    b(0x31); b(0xC0)                     # xor eax, eax
+    b(0xC3)
+    # longjmp(rdi = buf, rsi = value)
+    while code.len() % 16 != 0: b(0xCC)
+    stub_addr[3] = code.len()
+    for i, r in [RBX, RBP, 12, 13, 14, 15]: mov_rm(r, RDI, 8 * i)
+    mov_rm(RSP, RDI, 48)
+    mov_rr(RAX, RSI)
+    rex(false, 0, 0, RDI, false)
+    b(0xFF)
+    mem(4, RDI, 56)                       # jmp [rdi+56]
+    # jump(rdi = entry, rsi = stack): switch stacks and jump (rdx = 0 for ld.so)
+    while code.len() % 16 != 0: b(0xCC)
+    stub_addr[4] = code.len()
+    mov_rr(RSP, RSI)
+    b(0x31); b(0xD2)                     # xor edx, edx
+    rex(false, 0, 0, RDI, false)
+    b(0xFF)
+    modrr(4, RDI)                          # jmp rdi
+
 fn x64_resolve(text_addr: int, ro_addr: int, data_addr: int):
+    if stub_fix.len() > 0 and stub_addr[2] < 0: ice("stubs not emitted")
+    for f in stub_fix: patch32(f.0, stub_addr[f.1] - (f.0 + 4))
     for f in call_fix:
         target := fn_addr[f.1]
         if target < 0: ice("unresolved function {lfuncs[f.1].name}")

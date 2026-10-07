@@ -45,6 +45,20 @@ fn skip_newlines():
 fn parse_type_primary() -> int:
     pos := cur_pos()
     k := pk()
+    if k == .ident and pkn(1) == .lparen and tok_src(ti) == "cfn":
+        # C function pointer type: cfn(int, *u8) -> int
+        advance()
+        n := mk(.tfn, pos)
+        add_flag(n, NF_CABI)
+        expect(.lparen, "")
+        ps: [int]
+        while pk() != .rparen:
+            ps.push(parse_type())
+            if not accept(.comma): break
+        expect(.rparen, "")
+        set_list(n, ps)
+        if accept(.arrow): nodes[n].a = i32(parse_type())
+        return n
     if k == .ident:
         n := mk(.tname, pos)
         nodes[n].name = i32(expect_ident(""))
@@ -106,7 +120,6 @@ fn parse_type_primary() -> int:
         set_list(n, ps)
         if accept(.arrow): nodes[n].a = i32(parse_type())
         return n
-    if k == .ident and tok_src(ti) == "cfn": pass
     fatal(pos, "expected a type, found {tok_name(k)}")
     0
 

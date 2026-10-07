@@ -101,6 +101,7 @@ fn compile(path: str, out0: str) -> str:
         if s >= 0: title = title[s + 1..]
         ok = write_html(out, mod, title)
     else:
+        x64_stubs()
         entry := x64_entry(roots, main_lf)
         text_off, ro_off, data_off := elf_layout(code.len(), rodata.len())
         x64_resolve(ELF_BASE + text_off, ELF_BASE + ro_off, ELF_BASE + data_off)

@@ -1291,6 +1291,17 @@ fn gen_intrinsic(e: int) -> Val:
         d := vreg(VI)
         emit(.intr, VI, d, 0, 0, 0, 1)
         return V(d, false)
+    if id == .setjmp or id == .longjmp or id == .jump:
+        vs: [int]
+        for a in args: vs.push(gen_expr(a).v)
+        start := ir.args.len()
+        for v in vs: ir.args.push(i32(v))
+        d := vreg(VI)
+        code := 2
+        if id == .longjmp: code = 3
+        if id == .jump: code = 4
+        emit(.intr, VI, d, i32(start), i32(vs.len()), 0, code)
+        return V(d, false)
     if id == .sqrt:
         v := gen_expr(args[0]).v
         return V(e_un(.fsqrt, vt_of(ntype(args[0])), v), false)
