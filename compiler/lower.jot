@@ -60,6 +60,11 @@ fn lf_helper(hk: HK, t: int, p: int) -> int:
 
 fn rt(name: str) -> int: lf_of_inst(runtime_fn(name))
 
+# object header words (refcount, length, capacity, closure drop function): a memory class of
+# their own, so stores to elements do not invalidate what the optimizer knows about them
+fn hdr_load(p: int, off: int) -> int: e_load(VI, p, off, 8 | M_HDR)
+fn hdr_store(p: int, off: int, v: int): e_store(p, off, v, 8 | M_HDR)
+
 # value of a runtime global (by name, from the prelude)
 fn rt_global(name: str) -> int:
     s := prelude.get(intern(name)) ?? 0
@@ -211,9 +216,9 @@ fn retain(v: int, t: int):
     br_to(done)
     endc()
     iff(e_bin(.ne, VI, v, e_iconst(0)))
-    rc := e_load(VI, v, 0, 8)
+    rc := hdr_load(v, 0)
     iff(e_bin(.gts, VI, rc, e_iconst(0)))
-    e_store(v, 0, e_addi(rc, 1), 8)
+    hdr_store(v, 0, e_addi(rc, 1))
     endc()
     endc()
     endc()
@@ -233,9 +238,9 @@ fn release(v: int, t0: int):
     br_to(done)
     endc()
     iff(e_bin(.ne, VI, v, e_iconst(0)))
-    rc := e_load(VI, v, 0, 8)
+    rc := hdr_load(v, 0)
     iff(e_bin(.gts, VI, rc, e_iconst(1)))
-    e_store(v, 0, e_addi(rc, -1), 8)
+    hdr_store(v, 0, e_addi(rc, -1))
     els()
     # last reference: the out-of-line path frees (and releases elements)
     iff(e_bin(.eq, VI, rc, e_iconst(1)))
@@ -438,7 +443,7 @@ fn bounds_check(arr: int, idx: int, pos: int):
     iff(e_bin(.eq, VI, arr, e_iconst(0)))
     e_call_nr(rt("__panic_bounds"), [idx, e_iconst(0), e_daddr(loc)], -1)
     endc()
-    n := e_load(VI, arr, 8, 8)
+    n := hdr_load(arr, 8)
     iff(e_bin(.geu, VI, idx, n))
     e_call_nr(rt("__panic_bounds"), [idx, n, e_daddr(loc)], -1)
     endc()
@@ -471,7 +476,7 @@ fn arr_len(p: int) -> int:
     r := vreg(VI)
     emit(.iconst, VI, r, 0, 0, 0, 0)
     iff(e_bin(.ne, VI, p, e_iconst(0)))
-    e_mov(r, e_load(VI, p, 8, 8))
+    e_mov(r, hdr_load(p, 8))
     endc()
     r
 
@@ -483,7 +488,7 @@ fn arr_unique(slot_addr_or_place: Place, at: int):
         write_place(slot_addr_or_place, at, e_call(lf_helper(.arruniq, at, 0), [p], VI))
         return
     iff(e_bin(.ne, VI, p, e_iconst(0)))
-    iff(e_bin(.ne, VI, e_load(VI, p, 0, 8), e_iconst(1)))
+    iff(e_bin(.ne, VI, hdr_load(p, 0), e_iconst(1)))
     np := e_call(lf_helper(.arruniq, at, 0), [p], VI)
     write_place(slot_addr_or_place, at, np)
     endc()
@@ -536,7 +541,7 @@ fn gen_place(e: int, write: bool) -> Place:
             idx := 0
             if write:
                 base := gen_place(a, true)
-                arr_unique(base, bt)
+                if not is_uniq_local(a): arr_unique(base, bt)
                 idx = gen_expr(int(nodes[e].b)).v
                 arr = read_place(base, bt)
                 # re-read: evaluating the index cannot change the array place
@@ -689,8 +694,8 @@ fn gen_lambda(e: int) -> Val:
         return Val(a, true, s)
     env := e_call(rt("__alloc"), [e_iconst(int(fns[f].env_size))], VI)
     e_store(a, ptr_size, env, ptr_size)
-    e_store(env, 0, e_iconst(1), 8)
-    e_store(env, 8, e_faddr(lf_helper(.envdrop, 0, f)), ptr_size)
+    hdr_store(env, 0, e_iconst(1))
+    hdr_store(env, 8, e_faddr(lf_helper(.envdrop, 0, f)))
     for cap in fns[f].caps:
         outer := int(cap.outer)
         inn := int(cap.inner)
@@ -739,8 +744,8 @@ fn gen_partial(e: int) -> Val:
     e_store(a, 0, e_faddr(lf_helper(.partial, 0, th)), ptr_size)
     env := e_call(rt("__alloc"), [e_iconst(size)], VI)
     e_store(a, ptr_size, env, ptr_size)
-    e_store(env, 0, e_iconst(1), 8)
-    e_store(env, 8, e_faddr(lf_helper(.envdrop, 0, th)), ptr_size)
+    hdr_store(env, 0, e_iconst(1))
+    hdr_store(env, 8, e_faddr(lf_helper(.envdrop, 0, th)))
     target := int(nodes[e].sym)
     if nodes[e].aux == 1:
         cv := gen_owned(int(nodes[e].a))
@@ -1266,10 +1271,10 @@ fn gen_intrinsic(e: int) -> Val:
         fast := vreg(VI)
         e_mov(fast, e_iconst(0))
         iff(e_bin(.ne, VI, p, e_iconst(0)))
-        iff(e_bin(.eq, VI, e_load(VI, p, 0, 8), e_iconst(1)))
-        n := e_load(VI, p, 8, 8)
-        iff(e_bin(.lts, VI, n, e_load(VI, p, 16, 8)))
-        e_store(p, 8, e_addi(n, 1), 8)
+        iff(e_bin(.eq, VI, hdr_load(p, 0), e_iconst(1)))
+        n := hdr_load(p, 8)
+        iff(e_bin(.lts, VI, n, hdr_load(p, 16)))
+        hdr_store(p, 8, e_addi(n, 1))
         e_mov(slotp, e_bin(.add, VI, e_addi(p, 24), e_bin(.mul, VI, n, e_iconst(esz))))
         e_mov(fast, e_iconst(1))
         endc()
@@ -1307,7 +1312,7 @@ fn gen_intrinsic(e: int) -> Val:
         e_call_nr(rt("__panic"), [e_daddr(str_data("pop() from an empty array"))], -1)
         endc()
         nn := e_bin(.sub, VI, n, e_iconst(1))
-        e_store(p, 8, nn, 8)
+        hdr_store(p, 8, nn)
         sz := tsize(et)
         ea := e_bin(.add, VI, e_addi(p, 24), e_bin(.mul, VI, nn, e_iconst(sz)))
         if vc(et) == VC_AGG:
@@ -1354,10 +1359,10 @@ fn gen_intrinsic(e: int) -> Val:
         pl := gen_place(args[0], true)
         p := read_place(pl, at)
         iff(e_bin(.ne, VI, p, e_iconst(0)))
-        iff(e_bin(.eq, VI, e_load(VI, p, 0, 8), e_iconst(1)))
+        iff(e_bin(.eq, VI, hdr_load(p, 0), e_iconst(1)))
         # unique: drop the elements but keep the storage
         if is_managed(et):
-            n := e_load(VI, p, 8, 8)
+            n := hdr_load(p, 8)
             i := vreg(VI)
             e_mov(i, e_iconst(0))
             blk()
@@ -1370,7 +1375,7 @@ fn gen_intrinsic(e: int) -> Val:
             br_to(ctl)
             endc()
             endc()
-        e_store(p, 8, e_iconst(0), 8)
+        hdr_store(p, 8, e_iconst(0))
         els()
         release(p, at)
         write_place(pl, at, e_iconst(0))
@@ -1419,7 +1424,7 @@ fn gen_intrinsic(e: int) -> Val:
         arr_unique(pl, at)
         if id == .setlen:
             p := read_place(pl, at)
-            e_store(p, 8, n, 8)
+            hdr_store(p, 8, n)
             return V(-1, false)
         if is_managed(et):
             # drop elements beyond the new length
@@ -1429,7 +1434,7 @@ fn gen_intrinsic(e: int) -> Val:
             cur := arr_len(p)
             brif_to(e_bin(.les, VI, cur, n), ctl - 1)
             last := e_bin(.sub, VI, cur, e_iconst(1))
-            e_store(p, 8, last, 8)
+            hdr_store(p, 8, last)
             ea := e_bin(.add, VI, e_addi(p, 24), e_bin(.mul, VI, last, e_iconst(tsize(et))))
             drop_at(ea, et)
             e_zero(ea, tsize(et))
@@ -1439,8 +1444,8 @@ fn gen_intrinsic(e: int) -> Val:
         if id == .truncate:
             p := read_place(pl, at)
             iff(e_bin(.ne, VI, p, e_iconst(0)))
-            iff(e_bin(.lts, VI, n, e_load(VI, p, 8, 8)))
-            e_store(p, 8, n, 8)
+            iff(e_bin(.lts, VI, n, hdr_load(p, 8)))
+            hdr_store(p, 8, n)
             endc()
             endc()
             return V(-1, false)
@@ -2346,6 +2351,88 @@ fn gen_for(s: int):
     endc()
     scope_pop()
 
+# ---------------- uniqueness hoisting ----------------
+# A loop that writes elements of a local array but never lets the array escape (it is only
+# indexed, measured or changed in place) keeps the array uniquely owned, so one copy-on-write
+# check before the loop replaces the check at every element write (release builds).
+uq_written: [int]
+uq_escaped: [int]
+uq_lambda := false
+uniq_locals: [int]          # locals known to be unique while lowering the current loop
+
+fn uq_scan(n: int, ctx: int):
+    # ctx: 0 = the value escapes (copied, passed, captured), 1 = indexed read, 2 = indexed write
+    if n == 0: return
+    k := nodes[n].kind
+    if k == .lambda:
+        uq_lambda = true
+        return
+    if k == .ident:
+        if nodes[n].aux == i32(int(SK.local)):
+            if ctx == 2: uq_written.push(int(nodes[n].sym))
+            else if ctx == 0: uq_escaped.push(int(nodes[n].sym))
+        return
+    if k == .index:
+        uq_scan(int(nodes[n].a), 1)
+        uq_scan(int(nodes[n].b), 0)
+        return
+    if k == .field:
+        uq_scan(int(nodes[n].a), 1)
+        return
+    if k == .assign:
+        uq_target(int(nodes[n].a))
+        uq_scan(int(nodes[n].b), 0)
+        return
+    if k == .intrinsic:
+        id := nodes[n].aux as IN
+        if nkids(n) > 0 and (id == .len or id == .arrcap or id == .push or id == .pop or id == .insert or id == .remove or id == .clear or id == .reserve or id == .resize or id == .truncate or id == .extend):
+            uq_scan(kid(n, 0), 1)
+            for i in 1..nkids(n): uq_scan(kid(n, i), 0)
+            return
+    uq_scan(int(nodes[n].a), 0)
+    uq_scan(int(nodes[n].b), 0)
+    if k != .for_:
+        uq_scan(int(nodes[n].c), 0)
+        if k != .partial: uq_scan(int(nodes[n].d), 0)
+    for i in 0..nkids(n): uq_scan(kid(n, i), 0)
+    for i in 0..nkids2(n): uq_scan(kid2(n, i), 0)
+
+# assignment target: elements of an indexed array (possibly a field of one) are writes
+fn uq_target(t: int):
+    k := nodes[t].kind
+    if k == .index:
+        uq_scan(int(nodes[t].a), 2)
+        uq_scan(int(nodes[t].b), 0)
+    else if k == .field: uq_target(int(nodes[t].a))
+    else: uq_scan(t, 0)
+
+# hoist the uniqueness checks of a loop's arrays in front of it; returns how many were added
+fn uq_begin(s: int) -> int:
+    if not opt_release: return 0
+    uq_written.clear()
+    uq_escaped.clear()
+    uq_lambda = false
+    uq_scan(s, 1)
+    if uq_lambda: return 0
+    added := 0
+    for l in uq_written:
+        if uq_escaped.contains(l) or uniq_locals.contains(l): continue
+        t := prune(int(locals[l].type))
+        if types[t].kind != .array: continue
+        fl := int(locals[l].flags)
+        if fl & (LF_ALIAS | LF_CAPTURE | LF_BYREF) != 0: continue
+        if fl & LF_PARAM != 0 and fl & LF_MUTPARAM == 0: continue
+        arr_unique(local_place(l, true), t)
+        uniq_locals.push(l)
+        added += 1
+    added
+
+fn uq_end(n: int):
+    for _ in 0..n: uniq_locals.pop()
+
+fn is_uniq_local(e: int) -> bool:
+    nodes[e].kind == .ident and nodes[e].aux == i32(int(SK.local)) and uniq_locals.contains(int(nodes[e].sym))
+
 fn gen_while(s: int):
     scope_push()
     blk()
@@ -2415,8 +2502,11 @@ fn gen_stmt(s: int):
         borrow(val, ntype(a))
         stmt_end()
     else if k == .if_ or k == .iflet: gen_expr(s)
-    else if k == .while_: gen_while(s)
-    else if k == .for_: gen_for(s)
+    else if k == .while_ or k == .for_:
+        n := uq_begin(s)
+        if k == .while_: gen_while(s)
+        else: gen_for(s)
+        uq_end(n)
     else if k == .return_: gen_return(s)
     else if k == .break_ or k == .continue_:
         lp := loops[loops.len() - 1]
@@ -2604,7 +2694,7 @@ fn helper_arrrel(t: int):
     p := ps[0]
     et := int(types[t].elem)
     iff(e_call(rt("__rc_dec_test"), [p], VI))
-    n := e_load(VI, p, 8, 8)
+    n := hdr_load(p, 8)
     i := vreg(VI)
     e_mov(i, e_iconst(0))
     blk()
@@ -2628,7 +2718,7 @@ fn helper_arruniq(t: int):
     r := vreg(VI)
     e_mov(r, p)
     iff(e_bin(.ne, VI, p, e_iconst(0)))
-    iff(e_bin(.ne, VI, e_load(VI, p, 0, 8), e_iconst(1)))
+    iff(e_bin(.ne, VI, hdr_load(p, 0), e_iconst(1)))
     e_mov(r, e_call(rt("__arr_clone"), [p, e_iconst(tsize(et))], VI))
     if is_managed(et): retain_elems(r, et)
     endc()

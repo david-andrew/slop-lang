@@ -31,6 +31,7 @@ const M_FLOAT = 32
 # indexed access (set by the optimizer): address = a + (index << scale) + imm, where the index
 # vreg is in Ins.b for loads and Ins.dst for stores, and the scale in bits 8..9 of the mode
 const M_INDEX = 128
+const M_HDR = 64          # access to an object header word (refcount / length / capacity)
 
 fn mem_index(ins: Ins) -> int:
     if int(ins.c) & M_INDEX == 0: return -1
