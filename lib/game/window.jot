@@ -383,6 +383,7 @@ fn __run_frame(dt: float, update: fn(float), draw: fn()):
     update(dt)
     draw()
     __gfx_end_frame()
+    __audio_update()
     __maybe_screenshot()
     __input_end_frame()
     __frame_count += 1
