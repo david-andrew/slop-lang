@@ -61,7 +61,11 @@ fn source_line(p: int) -> str:
     while b < len(src) and src[b] != '\n': b += 1
     src[a..b]
 
+# p < 0: no source position
 fn fatal(p: int, msg: str):
+    if p < 0:
+        eprint("error: {msg}")
+        exit(1)
     eprint("{pos_str(p)}: error: {msg}")
     line := source_line(p)
     if len(line) > 0:

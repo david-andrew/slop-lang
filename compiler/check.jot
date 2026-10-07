@@ -129,6 +129,8 @@ inst_counter := 0
 lib_dir := ""
 target_wasm := false
 main_fn := 0
+test_mode := false        # `jot test`: run the main file's test blocks instead of main()
+test_decls: [int]
 update_fn := 0
 draw_fn := 0
 init_fns: [int]
@@ -261,7 +263,8 @@ fn register_decls(m: int, decls: [int]):
         else if k == .when_: eval_when_toplevel(m, d)
         else if k == .build_:
             if modules[m].is_main: build_node = d
-        else if k == .test_: pass
+        else if k == .test_:
+            if test_mode and modules[m].is_main: test_decls.push(d)
         else if k == .vardecl:
             if nodes[d].nlist > 0:
                 for i in 0..nkids(d):
@@ -1323,7 +1326,7 @@ fn load_prelude():
         names_ := list_dir("{lib_dir}/{sub}")
         names_.sort()
         for n in names_:
-            if ends_with(n, ".jot"): load_module("{lib_dir}/{sub}/{n}", true, 0)
+            if ends_with(n, ".jot"): load_module("{lib_dir}/{sub}/{n}", true, -1)
 
 dfs_state: [bool]
 skip_main := false
@@ -1340,10 +1343,26 @@ fn order_modules(m: int, out: mut [int]):
                 if syms[s].kind == .module: order_modules(int(syms[s].ref), out)
     out.push(m)
 
+# statement calling a prelude function with the given argument nodes
+fn synth_call(name: str, args: [int], pos: int) -> int:
+    c := mk(.call, pos)
+    id := mk(.ident, pos)
+    nodes[id].name = i32(intern(name))
+    nodes[c].a = i32(id)
+    set_list(c, args)
+    st := mk(.exprstmt, pos)
+    nodes[st].a = i32(c)
+    st
+
+fn synth_str(s: str, pos: int) -> int:
+    n := mk(.str_lit, pos)
+    nodes[n].sval = i32(intern(s))
+    n
+
 fn check_program(main_path: str):
     add_universe()
     load_prelude()
-    mainm := load_module(main_path, false, 0)
+    mainm := load_module(main_path, false, -1)
     modules[mainm].is_main = true
     i := 0
     while i < modules.len():
@@ -1352,7 +1371,19 @@ fn check_program(main_path: str):
     # programs with update()/draw() run the game loop after main()
     has_upd := modules[mainm].names.get(intern("update")) != none
     has_drw := modules[mainm].names.get(intern("draw")) != none
-    if has_upd or has_drw:
+    if test_mode:
+        # top-level code runs first (it may set up globals), then each test in order
+        skip_main = true
+        for d in test_decls:
+            nm := name_of(int(nodes[d].sval))
+            if len(nm) >= 2 and nm[0] == '"': nm = nm[1..len(nm) - 1]
+            modules[mainm].inits.push(synth_call("__test_begin", [synth_str(nm, nodes[d].pos)], nodes[d].pos))
+            modules[mainm].inits.push(int(nodes[d].b))
+            modules[mainm].inits.push(synth_call("__test_end", [], nodes[d].pos))
+        cnt := mk(.int_lit, 0)
+        nodes[cnt].ival = test_decls.len()
+        modules[mainm].inits.push(synth_call("__test_done", [cnt], 0))
+    else if has_upd or has_drw:
         if s := modules[mainm].names.get(intern("main")):
             mc := mk(.call, 0)
             mid := mk(.ident, 0)

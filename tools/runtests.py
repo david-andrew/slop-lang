@@ -25,6 +25,8 @@ for t in tests:
     exp_path = t[:-4] + ".out"
     expected = open(exp_path).read() if os.path.exists(exp_path) else None
     exe = f"/tmp/jot-tests/{name}"
+    if compiler == "jot0" and "# requires: jot" in open(t).read(2000):
+        continue
     if compiler == "jot0":
         cmd = [os.path.join(root, "stage0", "jot0"), t, "-o", exe]
     else:
@@ -65,5 +67,17 @@ for t in tests:
         failed += 1
     else:
         passed += 1
+# `test` blocks in tests/unit, run with `jot test` (native, self-hosted compiler only)
+if compiler != "jot0" and target == "native":
+    jot = os.path.join(root, "bin", "jot") if compiler == "jot" else os.path.abspath(compiler)
+    for t in sorted(glob.glob(os.path.join(root, "tests", "unit", "*.jot"))):
+        name = "unit/" + os.path.basename(t)[:-4]
+        if pattern not in name: continue
+        r = subprocess.run([jot, "test", t], capture_output=True, text=True,
+                           env=dict(os.environ, JOT_LIB=os.path.join(root, "lib")), timeout=60)
+        if r.returncode == 0 and "tests passed" in r.stdout: passed += 1
+        else:
+            print(f"FAIL {name}\n{r.stdout}{r.stderr}")
+            failed += 1
 print(f"{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

@@ -194,3 +194,17 @@ fn mkdir(path: str) -> bool:
     else:
         r := syscall(83, data(__zstr(path)), 0x1ED)
         r == 0 or r == -17
+
+# ---------------- `jot test` support ----------------
+__tests_run := 0
+__test_t0 := 0.0
+
+fn __test_begin(name: str):
+    write("test {name} ... ")
+    __test_t0 = time()
+
+fn __test_end():
+    __tests_run += 1
+    print("ok ({(time() - __test_t0) * 1000:.1} ms)")
+
+fn __test_done(n: int): print("{n} tests passed")

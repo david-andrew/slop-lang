@@ -20,17 +20,21 @@ use elf
 use wasm
 
 fn usage():
-    eprint("usage: jot file.jot [args...]\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
+    eprint("usage: jot file.jot [args...]\n       jot test file.jot\n       jot check file.jot\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
     exit(2)
 
 fn find_lib_dir() -> str:
-    if e := env("JOT_LIB"): return e
+    if e := env("JOT_LIB"):
+        if len(e) > 0: return e
     exe := exe_path()
     d := exe
     s := rfind(d, "/")
     if s >= 0: d = d[..s]
     s = rfind(d, "/")
     if s >= 0: d = d[..s]
+    if not file_exists("{d}/lib/core/rt.jot"):
+        eprint("jot: cannot find the standard library next to {exe} (expected {d}/lib); set JOT_LIB to its location")
+        exit(2)
     "{d}/lib"
 
 dump := false
@@ -200,11 +204,27 @@ fn main():
             if ends_with(out, ".jot"): out = out[..len(out) - 4]
         if len(compile(path, out)) == 0: exit(1)
         return
-    path := a[1]
+    if a[1] == "check":
+        # type check only
+        if a.len() < 3: usage()
+        scan_build_block(a[2])
+        target_wasm = build_target == "wasm"
+        if target_wasm: ptr_size = 4
+        init_types()
+        check_program(a[2])
+        return
+    first := 1
+    if a[1] == "test":
+        if a.len() < 3: usage()
+        test_mode = true
+        cli_target = "native"         # tests run natively even for web games
+        first = 2
+    path := a[first]
     mkdir("/tmp/jot-cache")
     base := path
     s := rfind(base, "/")
     if s >= 0: base = base[s + 1..]
+    if test_mode: base = base + ".test"
     built := compile(path, "/tmp/jot-cache/{base}.bin")
     if len(built) == 0: exit(1)
     if target_wasm:
@@ -213,7 +233,7 @@ fn main():
         eprint("jot: built {built}; open it in a browser")
         exit(0)
     run_args := [built]
-    for i in 2..a.len(): run_args.push(a[i])
+    for i in first + 1..a.len(): run_args.push(a[i])
     exec(built, run_args)
     eprint("jot: failed to run {built}")
     exit(1)

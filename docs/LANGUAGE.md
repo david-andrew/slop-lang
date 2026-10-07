@@ -75,7 +75,7 @@ Top-level statements in the main file run in order, like a script.
 | `int` | 64-bit signed integer (`i8 i16 i32 i64 u8 u16 u32 u64` also exist, `byte` = `u8`) |
 | `float` | 64-bit float (`f32`, `f64` also exist) |
 | `bool` | `true` / `false` |
-| `str` | immutable UTF-8 string |
+| `str` | immutable UTF-8 string (`+` concatenates, `*` repeats) |
 | `[T]` | growable array (value semantics) |
 | `{K: V}` | hash map, insertion ordered (value semantics) |
 | `(A, B)` | tuple |
@@ -137,7 +137,8 @@ area(2, 3); area(h = 3, w = 2)                   # named arguments
 * Explicit generics: `fn first[T](xs: [T]) -> T: xs[0]`.
 * **Uniform call syntax**: `x.f(a)` is the same as `f(x, a)`. There are no methods,
   only functions; any function can be called with dot syntax on its first argument.
-* Functions may be **overloaded** by parameter types.
+* Functions may be **overloaded** by parameter types. A program's own definitions take
+  precedence over standard-library functions with the same signature.
 * **Operators** can be overloaded by defining `fn +(a: T, b: T) -> T`.
 
 ### Functions as values, closures, partial application
@@ -155,7 +156,8 @@ half := scale(0.5, _)           # partial application: `_` marks missing argumen
 print(half(10))                 # 5
 ```
 
-Closures capture variables **by value** at creation time; captured values are read-only.
+Closures capture local variables **by value** at creation time; captured values are
+read-only. Globals are not captured: a closure sees their current value.
 
 ## 6. Control flow
 
@@ -245,6 +247,15 @@ logo := embed("logo.png")       # file contents baked into the program as [u8]
 test "math works":
     assert(1 + 1 == 2)
 ```
+
+`jot test file.jot` runs the file's top-level code, then each `test` block in order,
+reporting `test name ... ok` per block; the first failing `assert` stops the run with its
+message and location.
+
+**Release builds.** `opt = release` (or `jot build --release`) inlines refcount, uniqueness
+and bounds-check fast paths and runs the optimizer (constant folding, copy propagation,
+common subexpressions, redundant load and bounds-check elimination). Debug builds compile
+faster; both have identical behavior, including bounds checks.
 
 ## 10. Programs and the game loop
 

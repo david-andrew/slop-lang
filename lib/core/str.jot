@@ -135,6 +135,8 @@ fn repeat(s: str, n: int) -> str:
     for i in 0..n: __buf_append_str(buf, s)
     str_from_bytes(buf)
 
+fn *(s: str, n: int) -> str: repeat(s, n)
+
 fn upper(s: str) -> str:
     b := bytes(s)
     for mut c in b:

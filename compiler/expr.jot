@@ -616,12 +616,17 @@ fn resolve_fn_call(n: int, name: int, decls: [int], args: [int], expected: int) 
         cd.ok = true
         cd.cost = cost
         cands.push(cd)
-    # pick the cheapest candidate; prefer non-generic ones; report real ties
+    # pick the cheapest candidate; prefer non-generic ones, then the program's own definitions
+    # over the standard library's; report real ties
     for ci, cd in cands:
-        if best < 0 or cd.cost < cands[best].cost or (cd.cost == cands[best].cost and cands[best].sig.generic and not cd.sig.generic): best = ci
+        if best < 0 or cd.cost < cands[best].cost: best = ci
+        else if cd.cost == cands[best].cost:
+            bc := cands[best]
+            if bc.sig.generic and not cd.sig.generic: best = ci
+            else if bc.sig.generic == cd.sig.generic and decl_in_prelude(bc.decl) and not decl_in_prelude(cd.decl): best = ci
     if best >= 0:
         for ci, cd in cands:
-            if ci != best and cd.cost == cands[best].cost and cd.sig.generic == cands[best].sig.generic:
+            if ci != best and cd.cost == cands[best].cost and cd.sig.generic == cands[best].sig.generic and decl_in_prelude(cd.decl) == decl_in_prelude(cands[best].decl):
                 ats := ""
                 for ai, a0 in args:
                     if ai > 0: ats += ", "
@@ -1288,6 +1293,8 @@ fn swizzle_index(c: u8) -> int:
     i % 4
 
 # ---------------- operators ----------------
+fn decl_in_prelude(d: int) -> bool: d != 0 and modules[int(nodes[d].mod)].is_prelude
+
 fn op_overload(n: int, opname: str) -> int:
     decls: [int]
     nm := intern(opname)
@@ -1436,6 +1443,8 @@ fn check_binary(n: int, expected: int) -> int:
             nodes[n].type = i32(T_BOOL)
             return T_BOOL
     if not is_numeric(ta) or not is_numeric(tb):
+        r := op_overload(n, tok_text(op))
+        if r != 0: return r
         if tka == .opt and is_numeric(int(types[ta].elem)): fatal(nodes[n].pos, "operator {tok_text(op)} on an optional value: unwrap it first with `x!` or `x ?? default`")
         fatal(nodes[n].pos, "operator {tok_text(op)} is not defined for {type_str(ta)} and {type_str(tb)}")
     if is_lit(a) and is_lit(b) and not is_cmp:
