@@ -1,0 +1,75 @@
+# Shared compiler utilities: string interning, source files, diagnostics.
+
+struct SrcFile:
+    path: str
+    dir: str
+    src: str
+
+files: [SrcFile]
+names: [str]
+name_ids: {str: int} = {}
+
+fn intern(s: str) -> int:
+    if id := name_ids.get(s): return id
+    id := names.len()
+    names.push(s)
+    name_ids[s] = id
+    id
+
+fn name_of(id: int) -> str: names[id]
+
+# position encoding: file index in the high bits, byte offset in the low 40 bits
+fn mkpos(file: int, off: int) -> int: (file << 40) | off
+fn pos_file(p: int) -> int: p >> 40
+fn pos_off(p: int) -> int: p & 0xFFFFFFFFFF
+
+fn line_col(p: int) -> (int, int):
+    f := pos_file(p)
+    if f < 0 or f >= files.len(): return (0, 0)
+    src := files[f].src
+    off := pos_off(p)
+    line := 1
+    col := 1
+    i := 0
+    while i < off and i < len(src):
+        if src[i] == '\n':
+            line += 1
+            col = 1
+        else: col += 1
+        i += 1
+    (line, col)
+
+fn pos_str(p: int) -> str:
+    f := pos_file(p)
+    if f < 0 or f >= files.len(): return "<unknown>"
+    l, c := line_col(p)
+    "{files[f].path}:{l}:{c}"
+
+fn source_line(p: int) -> str:
+    f := pos_file(p)
+    if f < 0 or f >= files.len(): return ""
+    src := files[f].src
+    off := pos_off(p)
+    a := off
+    while a > 0 and src[a - 1] != '\n': a -= 1
+    b := off
+    while b < len(src) and src[b] != '\n': b += 1
+    src[a..b]
+
+fn fatal(p: int, msg: str):
+    eprint("{pos_str(p)}: error: {msg}")
+    line := source_line(p)
+    if len(line) > 0:
+        l, c := line_col(p)
+        caret := ""
+        for i in 0..c - 1:
+            if i < len(line) and line[i] == '\t': caret += "\t"
+            else: caret += " "
+        eprint("    {line}\n    {caret}^")
+    exit(1)
+
+fn warn(p: int, msg: str): eprint("{pos_str(p)}: warning: {msg}")
+
+fn ice(msg: str):
+    eprint("internal compiler error: {msg}")
+    exit(2)

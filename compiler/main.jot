@@ -1,0 +1,97 @@
+# The Jot compiler.
+#   jot file.jot [args]     compile and run
+#   jot build file.jot [-o out] [--target wasm]
+
+use util
+use lex
+use ast
+use parse
+use types
+use check
+use expr
+use ir
+use lower
+use x64
+use elf
+
+fn usage():
+    eprint("usage: jot file.jot [args...]\n       jot build file.jot [-o output] [--target native|wasm] [--ir]")
+    exit(2)
+
+fn find_lib_dir() -> str:
+    if e := env("JOT_LIB"): return e
+    exe := exe_path()
+    d := exe
+    s := rfind(d, "/")
+    if s >= 0: d = d[..s]
+    s = rfind(d, "/")
+    if s >= 0: d = d[..s]
+    "{d}/lib"
+
+dump := false
+timing := false
+
+fn compile(path: str, out: str) -> bool:
+    t0 := time()
+    init_types()
+    check_program(path)
+    t1 := time()
+    roots: [int]
+    for f in init_fns: roots.push(lf_of_inst(f))
+    main_lf := -1
+    if main_fn != 0: main_lf = lf_of_inst(main_fn)
+    i := 0
+    while i < lfuncs.len():
+        lower_function(i)
+        if dump: dump_ir()
+        x64_function()
+        i += 1
+    t2 := time()
+    entry := x64_entry(roots, main_lf)
+    text_off, ro_off, data_off := elf_layout(code.len(), rodata.len())
+    x64_resolve(ELF_BASE + text_off, ELF_BASE + ro_off, ELF_BASE + data_off)
+    ok := write_elf(out, code, entry, rodata, data_size + 8)
+    t3 := time()
+    if timing:
+        eprint("check {(t1 - t0) * 1000.0:.1} ms, lower+codegen {(t2 - t1) * 1000.0:.1} ms, write {(t3 - t2) * 1000.0:.1} ms; {lfuncs.len()} functions, {code.len()} bytes of code")
+    ok
+
+fn main():
+    a := args()
+    if a.len() < 2: usage()
+    lib_dir = find_lib_dir()
+    if a[1] == "build":
+        if a.len() < 3: usage()
+        path := ""
+        out := ""
+        i := 2
+        while i < a.len():
+            x := a[i]
+            if x == "-o" and i + 1 < a.len():
+                out = a[i + 1]
+                i += 1
+            else if x == "--target" and i + 1 < a.len():
+                target_wasm = a[i + 1] == "wasm"
+                i += 1
+            else if x == "--ir": dump = true
+            else if x == "--time": timing = true
+            else: path = x
+            i += 1
+        if len(path) == 0: usage()
+        if len(out) == 0:
+            out = path
+            if ends_with(out, ".jot"): out = out[..len(out) - 4]
+        if not compile(path, out): exit(1)
+        return
+    path := a[1]
+    mkdir("/tmp/jot-cache")
+    base := path
+    s := rfind(base, "/")
+    if s >= 0: base = base[s + 1..]
+    out := "/tmp/jot-cache/{base}.bin"
+    if not compile(path, out): exit(1)
+    run_args := [out]
+    for i in 2..a.len(): run_args.push(a[i])
+    exec(out, run_args)
+    eprint("jot: failed to run {out}")
+    exit(1)

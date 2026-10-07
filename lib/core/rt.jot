@@ -1,0 +1,414 @@
+# Jot core runtime: memory, refcounted objects, arrays, strings.
+# Everything here is called by compiler-generated code. Heap objects (arrays, strings)
+# share one layout: [rc: int][len: int][cap: int][data...]. rc < 0 means immortal.
+
+when TARGET == "wasm":
+    extern fn __wasm_grow(pages: int) -> int
+    extern fn __wasm_write(fd: int, p: *u8, n: int)
+    extern fn __wasm_exit(code: int)
+    extern fn __wasm_now() -> float
+
+# ---------------- low level memory ----------------
+__heap_cur: *u8 = null
+__heap_end: *u8 = null
+__free_lists: **u8 = null
+__live_allocs := 0
+
+# number of live heap allocations (useful for leak tests)
+fn alloc_count() -> int: __live_allocs
+
+fn __os_pages(size: int) -> *u8:
+    when TARGET == "wasm":
+        pages := (size + 65535) / 65536
+        p := __wasm_grow(pages)
+        if p < 0: __out_of_memory()
+        return (p * 65536) as *u8
+    else:
+        p := syscall(9, 0, size, 3, 0x22, -1, 0)
+        if p < 0 and p > -4096: __out_of_memory()
+        return p as *u8
+
+fn __os_free_pages(p: *u8, size: int):
+    when TARGET != "wasm":
+        syscall(11, p, size)
+
+fn __out_of_memory():
+    __write_err("fatal: out of memory\n")
+    __exit(1)
+
+fn __size_class(n: int) -> int:
+    c := 0
+    s := 32
+    while s < n:
+        s = s << 1
+        c += 1
+    c
+
+# Allocate `size` zeroed bytes (16-byte aligned).
+fn __alloc(size: int) -> *u8:
+    __live_allocs += 1
+    n := size + 16
+    if n > 262144:
+        total := (n + 65535) & ~65535
+        h := __os_pages(total) as *int
+        h[0] = total
+        h[1] = -1
+        return (h as *u8) + 16
+    if __free_lists == null: __free_lists = __os_pages(65536) as **u8
+    c := __size_class(n)
+    csize := 32 << c
+    head := __free_lists[c]
+    if head != null:
+        __free_lists[c] = (head as **u8)[0]
+        mem_set(head, 0, csize)
+        h := head as *int
+        h[0] = c
+        return head + 16
+    if __heap_cur == null or __heap_cur + csize > __heap_end:
+        chunk := 4 << 20
+        __heap_cur = __os_pages(chunk)
+        __heap_end = __heap_cur + chunk
+    p := __heap_cur
+    __heap_cur = __heap_cur + csize
+    (p as *int)[0] = c
+    p + 16
+
+fn __free(p: *u8):
+    if p == null: return
+    __live_allocs -= 1
+    h := (p - 16) as *int
+    if h[1] == -1:
+        __os_free_pages(h as *u8, h[0])
+        return
+    c := h[0]
+    (h as **u8)[0] = __free_lists[c]
+    __free_lists[c] = h as *u8
+
+fn __free_obj(p: *u8):
+    __free(p)
+
+fn __rc_inc(p: *u8):
+    if p == null: return
+    h := p as *int
+    if h[0] > 0: h[0] += 1
+
+# release a plain object (string or array of plain values)
+fn __rc_dec(p: *u8):
+    if p == null: return
+    h := p as *int
+    if h[0] <= 0: return
+    h[0] -= 1
+    if h[0] == 0: __free(p)
+
+fn __mem_move(dst: *u8, src: *u8, n: int):
+    if n <= 0: return
+    if dst < src or dst >= src + n:
+        mem_copy(dst, src, n)
+        return
+    i := n - 1
+    while i >= 0:
+        dst[i] = src[i]
+        i -= 1
+
+fn __mem_eq(a: *u8, b: *u8, n: int) -> bool:
+    i := 0
+    while i + 8 <= n:
+        if ((a + i) as *int)[0] != ((b + i) as *int)[0]: return false
+        i += 8
+    while i < n:
+        if a[i] != b[i]: return false
+        i += 1
+    true
+
+# ---------------- process ----------------
+fn __write_fd(fd: int, p: *u8, n: int):
+    when TARGET == "wasm":
+        __wasm_write(fd, p, n)
+    else:
+        off := 0
+        while off < n:
+            r := syscall(1, fd, p + off, n - off)
+            if r <= 0: return
+            off += r
+
+fn __write_err(s: str): __write_fd(2, data(s), len(s))
+
+fn __exit(code: int):
+    when TARGET == "wasm":
+        __wasm_exit(code)
+    else:
+        syscall(231, code)
+
+fn __panic(msg: str):
+    __write_err("panic: ")
+    __write_err(msg)
+    __write_err("\n")
+    __exit(101)
+
+fn __panic_bounds(i: int, n: int, loc: str):
+    __panic("{loc}: index {i} out of bounds (length {n})")
+
+fn __panic_unwrap(loc: str):
+    __panic("{loc}: unwrapped `none` with `!`")
+
+fn __div_zero(loc: str):
+    __panic("{loc}: division by zero")
+
+fn __assert_fail(msg: str, loc: str):
+    __panic("{loc}: {msg}")
+
+fn __print_str(s: str):
+    __write_fd(1, data(s), len(s))
+    __write_fd(1, data("\n"), 1)
+
+# ---------------- arrays ----------------
+fn __arr_new_raw(cap: int, es: int) -> *u8:
+    p := __alloc(24 + cap * es)
+    h := p as *int
+    h[0] = 1
+    h[2] = cap
+    p
+
+fn __arr_repeat(n: int, es: int) -> *u8:
+    if n <= 0: return null
+    p := __arr_new_raw(n, es)
+    (p as *int)[1] = n
+    p
+
+# copy a shared array (caller retains elements); drops one reference to the original
+fn __arr_clone(p: *u8, es: int) -> *u8:
+    h := p as *int
+    n := h[1]
+    q := __arr_new_raw(n, es)
+    (q as *int)[1] = n
+    mem_copy(q + 24, p + 24, n * es)
+    if h[0] > 0: h[0] -= 1
+    q
+
+fn __arr_make_unique(slot: **u8, es: int):
+    p := slot[0]
+    if p != null and (p as *int)[0] != 1: slot[0] = __arr_clone(p, es)
+
+# grow a unique array so it can hold `need` elements
+fn __arr_grow(slot: **u8, es: int, need: int):
+    p := slot[0]
+    if p == null:
+        cap := need
+        if cap < 4: cap = 4
+        slot[0] = __arr_new_raw(cap, es)
+        return
+    h := p as *int
+    if h[2] >= need: return
+    cap := h[2] * 2
+    if cap < need: cap = need
+    q := __arr_new_raw(cap, es)
+    (q as *int)[1] = h[1]
+    mem_copy(q + 24, p + 24, h[1] * es)
+    __free(p)
+    slot[0] = q
+
+fn __arr_push_slot(slot: **u8, es: int) -> *u8:
+    p := slot[0]
+    n := 0
+    if p != null: n = (p as *int)[1]
+    __arr_grow(slot, es, n + 1)
+    p = slot[0]
+    (p as *int)[1] = n + 1
+    p + 24 + n * es
+
+fn __arr_reserve(slot: **u8, es: int, n: int):
+    if n > 0: __arr_grow(slot, es, n)
+
+fn __arr_insert_slot(slot: **u8, es: int, i: int) -> *u8:
+    p := slot[0]
+    n := 0
+    if p != null: n = (p as *int)[1]
+    if i < 0 or i > n: __panic("insert index {i} out of bounds (length {n})")
+    __arr_grow(slot, es, n + 1)
+    p = slot[0]
+    __mem_move(p + 24 + (i + 1) * es, p + 24 + i * es, (n - i) * es)
+    (p as *int)[1] = n + 1
+    mem_set(p + 24 + i * es, 0, es)
+    p + 24 + i * es
+
+fn __arr_remove_slot(slot: **u8, es: int, i: int):
+    p := slot[0]
+    n := (p as *int)[1]
+    __mem_move(p + 24 + i * es, p + 24 + (i + 1) * es, (n - i - 1) * es)
+    (p as *int)[1] = n - 1
+    mem_set(p + 24 + (n - 1) * es, 0, es)
+
+fn __arr_resize(slot: **u8, es: int, n: int):
+    if n < 0: __panic("resize to a negative length")
+    p := slot[0]
+    old := 0
+    if p != null: old = (p as *int)[1]
+    if n > old:
+        __arr_grow(slot, es, n)
+        p = slot[0]
+        mem_set(p + 24 + old * es, 0, (n - old) * es)
+    if slot[0] != null: (slot[0] as *int)[1] = n
+
+fn __arr_slice(p: *u8, a: int, b: int, es: int) -> *u8:
+    n := 0
+    if p != null: n = (p as *int)[1]
+    if a < 0 or b > n or a > b: __panic("slice [{a}..{b}] out of bounds (length {n})")
+    if a == b: return null
+    q := __arr_new_raw(b - a, es)
+    (q as *int)[1] = b - a
+    mem_copy(q + 24, p + 24 + a * es, (b - a) * es)
+    q
+
+fn __arr_concat(a: *u8, b: *u8, es: int) -> *u8:
+    na := 0
+    nb := 0
+    if a != null: na = (a as *int)[1]
+    if b != null: nb = (b as *int)[1]
+    if na + nb == 0: return null
+    q := __arr_new_raw(na + nb, es)
+    (q as *int)[1] = na + nb
+    if na > 0: mem_copy(q + 24, a + 24, na * es)
+    if nb > 0: mem_copy(q + 24 + na * es, b + 24, nb * es)
+    q
+
+# ---------------- strings ----------------
+fn __str_new(n: int) -> *u8:
+    p := __alloc(24 + n + 1)
+    h := p as *int
+    h[0] = 1
+    h[1] = n
+    h[2] = n + 1
+    p
+
+fn __str_concat(a: str, b: str) -> str:
+    la := len(a)
+    lb := len(b)
+    if la == 0: return b
+    if lb == 0: return a
+    p := __str_new(la + lb)
+    mem_copy(p + 24, data(a), la)
+    mem_copy(p + 24 + la, data(b), lb)
+    p as str
+
+fn __str_eq(a: str, b: str) -> bool:
+    n := len(a)
+    if n != len(b): return false
+    if n == 0: return true
+    pa := data(a)
+    pb := data(b)
+    if pa == pb: return true
+    __mem_eq(pa, pb, n)
+
+fn __str_cmp(a: str, b: str) -> int:
+    la := len(a)
+    lb := len(b)
+    n := la
+    if lb < n: n = lb
+    pa := data(a)
+    pb := data(b)
+    i := 0
+    while i < n:
+        ca := pa[i]
+        cb := pb[i]
+        if ca != cb:
+            if ca < cb: return -1
+            return 1
+        i += 1
+    if la < lb: return -1
+    if la > lb: return 1
+    0
+
+fn __str_slice(s: str, a: int, b: int) -> str:
+    n := len(s)
+    if a < 0 or b > n or a > b: __panic("string slice [{a}..{b}] out of bounds (length {n})")
+    if a == 0 and b == n: return s
+    if a == b: return ""
+    p := __str_new(b - a)
+    mem_copy(p + 24, data(s) + a, b - a)
+    p as str
+
+fn __str_append(slot: *str, t: str):
+    lt := len(t)
+    if lt == 0: return
+    ps := slot as **u8
+    p := ps[0]
+    if p == null:
+        slot[0] = t
+        return
+    h := p as *int
+    n := h[1]
+    if h[0] == 1 and h[2] > n + lt:
+        mem_copy(p + 24 + n, data(t), lt)
+        h[1] = n + lt
+        p[24 + n + lt] = 0
+        return
+    cap := (n + lt) * 2 + 1
+    q := __alloc(24 + cap)
+    qh := q as *int
+    qh[0] = 1
+    qh[1] = n + lt
+    qh[2] = cap
+    mem_copy(q + 24, p + 24, n)
+    mem_copy(q + 24 + n, data(t), lt)
+    __rc_dec(p)
+    ps[0] = q
+
+fn __str_from_bytes(b: [u8]) -> str:
+    p := b as *u8
+    if p == null: return ""
+    h := p as *int
+    n := h[1]
+    if h[2] > n and h[0] == 1:
+        p[24 + n] = 0
+        __rc_inc(p)
+        return p as str
+    q := __str_new(n)
+    mem_copy(q + 24, p + 24, n)
+    q as str
+
+fn __str_hash(s: str) -> u64: __hash_bytes(data(s), len(s))
+
+fn __hash_bytes(p: *u8, n: int) -> u64:
+    h: u64 = 14695981039346656037
+    i := 0
+    while i < n:
+        h = (h ^ u64(p[i])) * 1099511628211
+        i += 1
+    h ^ (h >> 29)
+
+# ---------------- string building ----------------
+fn __buf_reserve(buf: mut [u8], extra: int) -> *u8:
+    slot := &buf as **u8
+    __arr_make_unique(slot, 1)
+    n := len(buf)
+    __arr_grow(slot, 1, n + extra + 1)
+    slot[0]
+
+fn __buf_append_raw(buf: mut [u8], src: *u8, n: int):
+    if n <= 0: return
+    old := len(buf)
+    p := __buf_reserve(buf, n)
+    mem_copy(p + 24 + old, src, n)
+    (p as *int)[1] = old + n
+
+fn __buf_byte(buf: mut [u8], b: int):
+    old := len(buf)
+    p := __buf_reserve(buf, 1)
+    p[24 + old] = u8(b & 255)
+    (p as *int)[1] = old + 1
+
+fn __buf_append_str(buf: mut [u8], s: str):
+    __buf_append_raw(buf, data(s), len(s))
+
+# take ownership of a byte buffer and turn it into a string
+fn __buf_finish(b: *u8) -> str:
+    if b == null: return ""
+    h := b as *int
+    n := h[1]
+    if h[2] > n:
+        b[24 + n] = 0
+        return b as str
+    q := __str_new(n)
+    mem_copy(q + 24, b + 24, n)
+    __free(b)
+    q as str

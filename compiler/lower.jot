@@ -1,0 +1,2447 @@
+# Lowering: typed AST -> IR, including reference counting, copy-on-write and closures.
+# Ownership rules: function parameters are borrowed; results of calls and constructors are
+# owned. Owned temporaries used in borrowing positions are released at the end of the
+# statement. Copying a borrowed value into storage retains it.
+
+use util
+use lex
+use ast
+use types
+use check
+use expr
+use ir
+
+const VC_VOID = 0
+const VC_INT = 1
+const VC_FLT = 2
+const VC_AGG = 3
+
+const LK_INST = 0
+const LK_HELPER = 1
+
+enum HK: drop, copy, arrrel, arruniq, eq, hash, thunk, envdrop, partial
+
+struct LFunc:
+    kind: int
+    inst: int
+    hkind: HK
+    htype: int
+    name: str
+
+lfuncs: [LFunc]
+inst_lf: {int: int} = {}
+helper_lf: {str: int} = {}
+
+# data segments
+rodata: [u8]
+str_off: {str: int} = {}
+data_size := 8     # offset 0 holds the initial stack pointer
+global_off: {int: int} = {}
+entry_points: [int]
+
+# relocations inside rodata/data that hold function addresses or data addresses are not needed:
+# all addresses are computed by code.
+
+fn lf_of_inst(f: int) -> int:
+    if x := inst_lf.get(f): return x
+    lfuncs.push(LFunc(LK_INST, f, .drop, 0, fns[f].sym))
+    x := lfuncs.len() - 1
+    inst_lf[f] = x
+    x
+
+fn lf_helper(hk: HK, t: int, p: int) -> int:
+    key := "{int(hk)}:{t}:{p}"
+    if x := helper_lf.get(key): return x
+    lfuncs.push(LFunc(LK_HELPER, p, hk, t, "h_{hk}_{lfuncs.len()}"))
+    x := lfuncs.len() - 1
+    helper_lf[key] = x
+    x
+
+fn rt(name: str) -> int: lf_of_inst(runtime_fn(name))
+
+fn str_data(s: str) -> int:
+    if o := str_off.get(s): return o
+    while rodata.len() % 8 != 0: rodata.push(0)
+    o := rodata.len()
+    __push_i64(rodata, -1)
+    __push_i64(rodata, len(s))
+    __push_i64(rodata, len(s) + 1)
+    for c in s: rodata.push(c)
+    rodata.push(0)
+    str_off[s] = o
+    o
+
+fn __push_i64(b: mut [u8], v: int):
+    for i in 0..8: b.push(u8((v >> (8 * i)) & 255))
+
+fn global_addr_off(g: int) -> int:
+    if o := global_off.get(g): return o
+    t := int(globals[g].type)
+    al := talign(t)
+    if al < 8: al = 8
+    data_size = align_up(data_size, al)
+    o := data_size
+    sz := tsize(t)
+    if sz < 8: sz = 8
+    data_size += sz
+    global_off[g] = o
+    o
+
+# ---------------- type helpers ----------------
+fn vc(t0: int) -> int:
+    t := prune(t0)
+    k := types[t].kind
+    if k == .void_ or k == .typeval or k == .module: return VC_VOID
+    if k == .float_: return VC_FLT
+    if is_aggregate(t): return VC_AGG
+    VC_INT
+
+fn vt_of(t0: int) -> int:
+    t := prune(t0)
+    if types[t].kind == .float_:
+        if int(types[t].bits) == 32: return VS
+        return VF
+    VI
+
+fn mem_mode(t0: int) -> int:
+    t := prune(t0)
+    k := types[t].kind
+    s := tsize(t)
+    if k == .float_: return s | M_FLOAT
+    if k == .int_ and types[t].sign: return s | M_SIGNED
+    s
+
+fn load_val(t: int, addr: int, off: int) -> int:
+    if vc(t) == VC_AGG: return e_addi(addr, off)
+    if vc(t) == VC_VOID: return -1
+    e_load(vt_of(t), addr, off, mem_mode(t))
+
+fn store_val(t: int, addr: int, off: int, v: int):
+    c := vc(t)
+    if c == VC_AGG: e_copy(e_addi(addr, off), v, tsize(t))
+    else if c != VC_VOID: e_store(addr, off, v, mem_mode(t))
+
+fn norm(v: int, t0: int) -> int:
+    t := prune(t0)
+    k := types[t].kind
+    if k == .bool_: return e_un(.zext8, VI, v)
+    if k != .int_: return v
+    s := tsize(t)
+    sg := types[t].sign
+    if s == 1:
+        if sg: return e_un(.sext8, VI, v)
+        return e_un(.zext8, VI, v)
+    if s == 2:
+        if sg: return e_un(.sext16, VI, v)
+        return e_un(.zext16, VI, v)
+    if s == 4:
+        if sg: return e_un(.sext32, VI, v)
+        return e_un(.zext32, VI, v)
+    v
+
+fn zero_val(t: int) -> int:
+    if vt_of(t) == VI: return e_iconst(0)
+    e_fconst(0.0, vt_of(t))
+
+# ---------------- function state ----------------
+struct Val:
+    v: int
+    owned: bool
+    slot: int
+
+struct Place:
+    mem: bool
+    v: int
+
+struct TempItem:
+    is_slot: bool
+    ref: int
+    t: int
+    cond: bool
+
+struct LoopInfo:
+    brk: int
+    cont: int
+    scope: int
+
+cur_fn := 0
+cur_ret := 0
+sret_v := -1
+env_v := -1
+ctl := 0
+cond_depth := 0
+scope_locals: [[int]]
+scope_defers: [[int]]
+loops: [LoopInfo]
+tl_items: [[TempItem]]
+tl_nop: [int]
+tl_cond: [int]
+
+fn V(v: int, owned: bool) -> Val: Val(v, owned, -1)
+
+# ---------------- reference counting ----------------
+fn retain(v: int, t: int):
+    e_call(rt("__rc_inc"), [v], -1)
+
+fn release(v: int, t0: int):
+    t := prune(t0)
+    if types[t].kind == .array and is_managed(int(types[t].elem)):
+        e_call(lf_helper(.arrrel, t, 0), [v], -1)
+        return
+    e_call(rt("__rc_dec"), [v], -1)
+
+fn drop_at(addr: int, t0: int):
+    t := prune(t0)
+    if not is_managed(t): return
+    if vc(t) == VC_INT:
+        release(e_load(VI, addr, 0, ptr_size), t)
+        return
+    e_call(lf_helper(.drop, t, 0), [addr], -1)
+
+fn copy_at(addr: int, t0: int):
+    t := prune(t0)
+    if not is_managed(t): return
+    if vc(t) == VC_INT:
+        retain(e_load(VI, addr, 0, ptr_size), t)
+        return
+    e_call(lf_helper(.copy, t, 0), [addr], -1)
+
+# ---------------- temps ----------------
+fn new_temp(t: int) -> int: new_slot(tsize(t), talign(t))
+
+fn reg_temp_slot(s: int, t: int):
+    if not is_managed(t) or tl_items.len() == 0: return
+    tl_items[tl_items.len() - 1].push(TempItem(true, s, t, cond_depth > tl_cond[tl_cond.len() - 1]))
+
+fn reg_temp_vreg(v: int, t: int):
+    if not is_managed(t) or tl_items.len() == 0: return
+    tl_items[tl_items.len() - 1].push(TempItem(false, v, t, cond_depth > tl_cond[tl_cond.len() - 1]))
+
+fn borrow(val: Val, t: int):
+    if not val.owned or not is_managed(t): return
+    if vc(t) == VC_AGG:
+        if val.slot < 0: ice("owned aggregate without slot")
+        reg_temp_slot(val.slot, t)
+    else:
+        # copy into a fresh vreg so later reassignment of the original can't confuse release
+        reg_temp_vreg(val.v, t)
+
+fn own(val: Val, t: int) -> Val:
+    if val.owned: return val
+    if vc(t) == VC_AGG:
+        s := new_temp(t)
+        a := e_slot(s)
+        e_copy(a, val.v, tsize(t))
+        if is_managed(t): copy_at(a, t)
+        return Val(a, true, s)
+    if is_managed(t): retain(val.v, t)
+    Val(val.v, true, -1)
+
+fn gen_owned(e: int) -> Val: own(gen_expr(e), ntype(e))
+fn gen_borrowed(e: int) -> Val:
+    v := gen_expr(e)
+    borrow(v, ntype(e))
+    Val(v.v, false, -1)
+
+fn stmt_begin():
+    tl_items.push([])
+    tl_nop.push(emit(.nop, 0, 0, 0, 0, 0, 0))
+    tl_cond.push(cond_depth)
+
+fn stmt_end():
+    items := tl_items.pop()
+    nop := tl_nop.pop()
+    tl_cond.pop()
+    # zero conditionally created temps at statement start
+    zs: [int]
+    for it in items:
+        if it.cond:
+            if it.is_slot: zs.push(it.ref * 2)
+            else: zs.push(it.ref * 2 + 1)
+    if zs.len() > 0:
+        start := ir.args.len()
+        for z in zs: ir.args.push(i32(z))
+        ir.code[nop] = Ins(.zeroslots, 0, 0, i32(start), i32(zs.len()), 0, 0)
+    i := items.len() - 1
+    while i >= 0:
+        it := items[i]
+        if it.is_slot:
+            a := e_slot(it.ref)
+            drop_at(a, it.t)
+            if it.cond: e_zero(a, tsize(it.t))
+        else:
+            release(it.ref, it.t)
+            if it.cond: e_mov(it.ref, e_iconst(0))
+        i -= 1
+
+fn enter_cond(): cond_depth += 1
+fn leave_cond(): cond_depth -= 1
+
+# ---------------- structured control ----------------
+fn blk():
+    e_block()
+    ctl += 1
+fn lop():
+    e_loop()
+    ctl += 1
+fn iff(c: int):
+    e_if(c)
+    ctl += 1
+fn els(): e_else()
+fn endc():
+    e_end()
+    ctl -= 1
+# branch to the construct opened at nesting level `level` (1-based count of open constructs)
+fn br_to(level: int): e_br(ctl - level)
+fn brif_to(c: int, level: int): e_brif(c, ctl - level)
+
+# ---------------- scopes ----------------
+fn scope_push():
+    scope_locals.push([])
+    scope_defers.push([])
+
+fn scope_add_local(l: int):
+    if scope_locals.len() == 0: return
+    f := int(locals[l].flags)
+    if not is_managed(int(locals[l].type)) or f & (LF_PARAM | LF_CAPTURE | LF_ALIAS | LF_BYREF) != 0: return
+    scope_locals[scope_locals.len() - 1].push(l)
+
+fn emit_scope_exit(i: int):
+    ds := scope_defers[i]
+    k := ds.len() - 1
+    while k >= 0:
+        d := ds[k]
+        saved := scope_defers[i]
+        scope_defers[i] = ds[..k]
+        if nodes[d].kind == .block:
+            scope_push()
+            gen_block_stmts(d)
+            emit_scope_exit(scope_locals.len() - 1)
+            scope_locals.pop()
+            scope_defers.pop()
+        else: gen_stmt(d)
+        scope_defers[i] = saved
+        k -= 1
+    ls := scope_locals[i]
+    k = ls.len() - 1
+    while k >= 0:
+        l := ls[k]
+        t := int(locals[l].type)
+        if locals[l].offset >= 0:
+            a := e_slot(int(locals[l].offset))
+            drop_at(a, t)
+            e_zero(a, tsize(t))
+        else:
+            release(int(locals[l].vreg), t)
+            e_mov(int(locals[l].vreg), e_iconst(0))
+        k -= 1
+
+fn scope_pop():
+    emit_scope_exit(scope_locals.len() - 1)
+    scope_locals.pop()
+    scope_defers.pop()
+
+# ---------------- places ----------------
+fn read_place(p: Place, t: int) -> int:
+    if not p.mem: return p.v
+    load_val(t, p.v, 0)
+
+fn write_place(p: Place, t: int, v: int):
+    if not p.mem:
+        e_mov(p.v, v)
+        return
+    store_val(t, p.v, 0, v)
+
+fn place_addr(p: Place, t: int) -> int:
+    if p.mem: return p.v
+    # a value in a register: spill to a temporary slot
+    s := new_temp(t)
+    a := e_slot(s)
+    store_val(t, a, 0, p.v)
+    a
+
+fn local_place(l: int, write: bool) -> Place:
+    f := int(locals[l].flags)
+    if f & LF_ALIAS != 0: return gen_place(int(locals[l].alias), write)
+    if f & LF_CAPTURE != 0: return Place(true, e_addi(env_v, int(locals[l].env_off)))
+    if f & LF_BYREF != 0: return Place(true, int(locals[l].vreg))
+    if f & LF_PARAM != 0:
+        if f & LF_MUTPARAM != 0 or vc(int(locals[l].type)) == VC_AGG: return Place(true, int(locals[l].vreg))
+    if locals[l].offset >= 0: return Place(true, e_slot(int(locals[l].offset)))
+    Place(false, int(locals[l].vreg))
+
+fn bounds_check(arr: int, idx: int, pos: int):
+    # arr: array object pointer (may be null), idx: index
+    n := arr_len(arr)
+    bad := e_bin(.geu, VI, idx, n)
+    iff(bad)
+    e_call(rt("__panic_bounds"), [idx, n, e_daddr(str_data(loc_str(pos)))], -1)
+    endc()
+
+fn loc_str(pos: int) -> str:
+    f := pos_file(pos)
+    path := files[f].path
+    s := rfind(path, "/")
+    if s >= 0: path = path[s + 1..]
+    l, c := line_col(pos)
+    "{path}:{l}"
+
+fn e_daddr(off: int) -> int:
+    d := vreg(VI)
+    emit(.daddr, VI, d, 0, 0, 0, off)
+    d
+
+fn e_gaddr(off: int) -> int:
+    d := vreg(VI)
+    emit(.gaddr, VI, d, 0, 0, 0, off)
+    d
+
+fn e_faddr(lf: int) -> int:
+    d := vreg(VI)
+    emit(.faddr, VI, d, 0, 0, 0, lf)
+    d
+
+# length of an array/string object pointer (0 for null)
+fn arr_len(p: int) -> int:
+    r := vreg(VI)
+    emit(.iconst, VI, r, 0, 0, 0, 0)
+    iff(e_bin(.ne, VI, p, e_iconst(0)))
+    e_mov(r, e_load(VI, p, 8, 8))
+    endc()
+    r
+
+fn arr_unique(slot_addr_or_place: Place, at: int):
+    # ensure the array in the place is uniquely owned
+    p := read_place(slot_addr_or_place, at)
+    np := e_call(lf_helper(.arruniq, at, 0), [p], VI)
+    write_place(slot_addr_or_place, at, np)
+
+fn gen_place(e: int, write: bool) -> Place:
+    k := nodes[e].kind
+    if k == .ident:
+        if nodes[e].aux == i32(int(SK.local)): return local_place(int(nodes[e].sym), write)
+        if nodes[e].aux == i32(int(SK.global)): return Place(true, e_gaddr(global_addr_off(int(nodes[e].sym))))
+    else if k == .field:
+        a := int(nodes[e].a)
+        bt := prune(ntype(a))
+        if nodes[e].aux == -3:
+            base := gen_place(a, write)
+            si := int(types[bt].st)
+            layout(bt)
+            v := int(structs[si].variants) + int(nodes[e].aux2)
+            return Place(true, e_addi(place_addr(base, bt), int(fields[int(variants[v].fields) + nodes[e].ival].offset)))
+        if nodes[e].aux == -4:
+            base := gen_place(a, write)
+            ci := swizzle_index(name_of(int(nodes[e].name))[0])
+            return Place(true, e_addi(place_addr(base, bt), ci * 4))
+        addr := 0
+        if types[bt].kind == .ptr:
+            addr = gen_expr(a).v
+            bt = prune(int(types[bt].elem))
+        else:
+            base := gen_place(a, write)
+            addr = place_addr(base, bt)
+        layout(bt)
+        off := 0
+        if types[bt].kind == .tuple: off = tuple_off(bt, nodes[e].ival)
+        else: off = int(fields[int(structs[int(types[bt].st)].fields) + int(nodes[e].aux)].offset)
+        return Place(true, e_addi(addr, off))
+    else if k == .index:
+        a := int(nodes[e].a)
+        bt := prune(ntype(a))
+        bk := types[bt].kind
+        if bk == .ptr:
+            p := gen_expr(a).v
+            i := gen_expr(int(nodes[e].b)).v
+            sz := tsize(int(types[bt].elem))
+            return Place(true, e_bin(.add, VI, p, e_bin(.mul, VI, i, e_iconst(sz))))
+        if bk == .array:
+            arr := 0
+            idx := 0
+            if write:
+                base := gen_place(a, true)
+                arr_unique(base, bt)
+                idx = gen_expr(int(nodes[e].b)).v
+                arr = read_place(base, bt)
+                # re-read: evaluating the index cannot change the array place
+            else:
+                arr = gen_borrowed(a).v
+                idx = gen_expr(int(nodes[e].b)).v
+            bounds_check(arr, idx, nodes[e].pos)
+            sz := tsize(int(types[bt].elem))
+            return Place(true, e_bin(.add, VI, e_addi(arr, 24), e_bin(.mul, VI, idx, e_iconst(sz))))
+        if bk == .str_:
+            arr := gen_borrowed(a).v
+            idx := gen_expr(int(nodes[e].b)).v
+            bounds_check(arr, idx, nodes[e].pos)
+            return Place(true, e_bin(.add, VI, e_addi(arr, 24), idx))
+        if bk == .vec:
+            base := gen_place(a, write)
+            idx := gen_expr(int(nodes[e].b)).v
+            esz := 4
+            if bt == T_MAT4: esz = 16
+            return Place(true, e_bin(.add, VI, place_addr(base, bt), e_bin(.mul, VI, idx, e_iconst(esz))))
+    else if k == .unwrap:
+        a := int(nodes[e].a)
+        ot := prune(ntype(a))
+        base := gen_place(a, write)
+        addr := place_addr(base, ot)
+        has := e_load(VI, addr, tsize(int(types[ot].elem)), 1)
+        iff(e_bin(.eq, VI, has, e_iconst(0)))
+        e_call(rt("__panic_unwrap"), [e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
+        endc()
+        return Place(true, addr)
+    # not a place: evaluate into a temporary
+    t := ntype(e)
+    val := gen_expr(e)
+    if vc(t) == VC_AGG:
+        borrow(val, t)
+        return Place(true, val.v)
+    if val.owned: reg_temp_vreg(val.v, t)
+    Place(false, val.v)
+
+fn tuple_off(t: int, idx: int) -> int:
+    off := 0
+    for i in 0..idx + 1:
+        el := targ(t, i)
+        off = align_up(off, talign(el))
+        if i < idx: off += tsize(el)
+    off
+
+# ---------------- calls ----------------
+fn call_args(args: [int], ptypes: [int], mutmask: int, out: mut [int]):
+    any_mut := mutmask != 0
+    for i, a in args:
+        if mutmask & (1 << i) != 0:
+            p := gen_place(a, true)
+            out.push(place_addr(p, ntype(a)))
+            continue
+        pt := ntype(a)
+        if i < ptypes.len(): pt = ptypes[i]
+        val := gen_expr(a)
+        if any_mut and not val.owned and is_managed(pt): val = own(val, pt)
+        borrow(val, pt)
+        out.push(val.v)
+
+fn ret_vt(t: int) -> int:
+    c := vc(t)
+    if c == VC_VOID: return -1
+    if c == VC_AGG: return -1
+    vt_of(t)
+
+fn finish_call(ret: int, rv: int, rslot: int) -> Val:
+    c := vc(ret)
+    if c == VC_AGG: return Val(e_slot(rslot), true, rslot)
+    if c == VC_VOID: return V(-1, false)
+    if c == VC_INT: return V(norm(rv, ret), true)
+    V(rv, true)
+
+fn inst_mutmask(f: int) -> int:
+    d := int(fns[f].decl)
+    if d == 0 or nodes[d].kind != .fn_: return 0
+    mm := 0
+    for i in 0..fns[f].ptypes.len():
+        if has_flag(kid(d, i), NF_MUT): mm |= 1 << i
+    mm
+
+fn gen_direct_call(f: int, args: [int]) -> Val:
+    ret := int(fns[f].ret)
+    rslot := -1
+    argv: [int]
+    if vc(ret) == VC_AGG:
+        rslot = new_temp(ret)
+        argv.push(e_slot(rslot))
+    call_args(args, fns[f].ptypes, inst_mutmask(f), argv)
+    rv := e_call(lf_of_inst(f), argv, ret_vt(ret))
+    finish_call(ret, rv, rslot)
+
+fn gen_closure_call(callee: int, args: [int]) -> Val:
+    ft := prune(ntype(callee))
+    ret := int(types[ft].elem)
+    cv := gen_borrowed(callee).v
+    fp := e_load(VI, cv, 0, ptr_size)
+    env := e_load(VI, cv, ptr_size, ptr_size)
+    rslot := -1
+    argv: [int]
+    if vc(ret) == VC_AGG:
+        rslot = new_temp(ret)
+        argv.push(e_slot(rslot))
+    argv.push(env)
+    pts: [int]
+    for i in 0..int(types[ft].nargs): pts.push(targ(ft, i))
+    call_args(args, pts, int(types[ft].mutmask), argv)
+    rv := e_calli(fp, argv, ret_vt(ret), false)
+    finish_call(ret, rv, rslot)
+
+fn gen_cfn_call(callee: int, args: [int]) -> Val:
+    ft := prune(ntype(callee))
+    ret := int(types[ft].elem)
+    fp := gen_expr(callee).v
+    argv: [int]
+    for a in args:
+        val := gen_expr(a)
+        borrow(val, ntype(a))
+        argv.push(val.v)
+    rv := e_calli(fp, argv, ret_vt(ret), true)
+    if vc(ret) == VC_AGG: ice("C functions returning structs are not supported")
+    finish_call(ret, rv, -1)
+
+# ---------------- closures ----------------
+fn env_layout(f: int):
+    if fns[f].env_size != 0: return
+    off := 16
+    for cap in fns[f].caps:
+        inn := int(cap.inner)
+        t := int(locals[inn].type)
+        al := talign(t)
+        if al < 8: al = 8
+        off = align_up(off, al)
+        locals[inn].env_off = i32(off)
+        off += tsize(t)
+    fns[f].env_size = i32(align_up(off, 8))
+
+fn closure_size() -> int: 2 * ptr_size
+
+fn gen_lambda(e: int) -> Val:
+    f := int(nodes[e].sym)
+    env_layout(f)
+    s := new_slot(closure_size(), ptr_size)
+    a := e_slot(s)
+    e_store(a, 0, e_faddr(lf_of_inst(f)), ptr_size)
+    if fns[f].caps.len() == 0:
+        e_store(a, ptr_size, e_iconst(0), ptr_size)
+        return Val(a, true, s)
+    env := e_call(rt("__alloc"), [e_iconst(int(fns[f].env_size))], VI)
+    e_store(a, ptr_size, env, ptr_size)
+    e_store(env, 0, e_iconst(1), 8)
+    e_store(env, 8, e_faddr(lf_helper(.envdrop, 0, f)), ptr_size)
+    for cap in fns[f].caps:
+        outer := int(cap.outer)
+        inn := int(cap.inner)
+        t := int(locals[outer].type)
+        id := mk_ident_local(outer, nodes[e].pos)
+        val := own(gen_expr(id), t)
+        store_val(t, env, int(locals[inn].env_off), val.v)
+    Val(e_slot(s), true, s)
+
+fn gen_fnref(e: int) -> Val:
+    f := int(nodes[e].sym)
+    if nodes[e].aux == 1:
+        # C function pointer: the raw function
+        return V(e_faddr(lf_of_inst(f)), false)
+    s := new_slot(closure_size(), ptr_size)
+    a := e_slot(s)
+    e_store(a, 0, e_faddr(lf_helper(.thunk, 0, f)), ptr_size)
+    e_store(a, ptr_size, e_iconst(0), ptr_size)
+    Val(a, true, s)
+
+fn partial_layout(e: int) -> [int]:
+    offs: [int]
+    off := 16
+    if nodes[e].aux == 1: off += 16
+    for i in 0..nkids(e):
+        a := kid(e, i)
+        if nodes[a].kind == .hole:
+            offs.push(-1)
+            continue
+        t := ntype(a)
+        al := talign(t)
+        if al < 8: al = 8
+        off = align_up(off, al)
+        offs.push(off)
+        off += tsize(t)
+    offs.push(align_up(off, 8))
+    offs
+
+fn gen_partial(e: int) -> Val:
+    th := int(nodes[e].d)
+    offs := partial_layout(e)
+    size := offs[offs.len() - 1]
+    fns[th].env_size = i32(size)
+    s := new_slot(closure_size(), ptr_size)
+    a := e_slot(s)
+    e_store(a, 0, e_faddr(lf_helper(.partial, 0, th)), ptr_size)
+    env := e_call(rt("__alloc"), [e_iconst(size)], VI)
+    e_store(a, ptr_size, env, ptr_size)
+    e_store(env, 0, e_iconst(1), 8)
+    e_store(env, 8, e_faddr(lf_helper(.envdrop, 0, th)), ptr_size)
+    target := int(nodes[e].sym)
+    if nodes[e].aux == 1:
+        cv := gen_owned(int(nodes[e].a))
+        e_copy(e_addi(env, 16), cv.v, closure_size())
+    for i in 0..nkids(e):
+        arg := kid(e, i)
+        if nodes[arg].kind == .hole: continue
+        is_mut := false
+        if target != 0: is_mut = inst_mutmask(target) & (1 << i) != 0
+        else: is_mut = int(types[prune(ntype(int(nodes[e].a)))].mutmask) & (1 << i) != 0
+        if is_mut: fatal(nodes[arg].pos, "cannot partially apply a `mut` argument; use `_` for it")
+        val := gen_owned(arg)
+        store_val(ntype(arg), env, offs[i], val.v)
+    Val(e_slot(s), true, s)
+
+# ---------------- string interpolation ----------------
+fn gen_interp(e: int) -> Val:
+    bs := new_slot(8, 8)
+    ba := e_slot(bs)
+    e_store(ba, 0, e_iconst(0), 8)
+    for i in 0..nkids(e):
+        p := kid(e, i)
+        if nodes[p].kind == .str_lit:
+            s := name_of(int(nodes[p].sval))
+            if len(s) == 0: continue
+            e_call(rt("__buf_append_str"), [e_slot(bs), e_daddr(str_data(s))], -1)
+            continue
+        f := int(nodes[p].sym)
+        x := int(nodes[p].a)
+        val := gen_expr(x)
+        borrow(val, ntype(x))
+        argv := [e_slot(bs), val.v]
+        if nodes[p].sval >= 0: argv.push(e_daddr(str_data(name_of(int(nodes[p].sval)))))
+        e_call(lf_of_inst(f), argv, -1)
+    r := e_call(rt("__buf_finish"), [e_load(VI, e_slot(bs), 0, 8)], VI)
+    V(r, true)
+
+# ---------------- value blocks ----------------
+fn gen_value_block(b: int, rs: int, rt_: int):
+    scope_push()
+    n := nkids(b)
+    for i in 0..n:
+        s := kid(b, i)
+        if i == n - 1 and nodes[b].aux != 0 and rs >= 0:
+            stmt_begin()
+            val := gen_owned(int(nodes[s].a))
+            store_val(rt_, e_slot(rs), 0, val.v)
+            stmt_end()
+            continue
+        gen_stmt(s)
+    scope_pop()
+
+fn result_from_slot(rs: int, t: int) -> Val:
+    a := e_slot(rs)
+    if vc(t) == VC_AGG: return Val(a, true, rs)
+    V(load_val(t, a, 0), true)
+
+# ---------------- match ----------------
+fn gen_match_test(p: int, st0: int, hidden_addr: int) -> int:
+    # returns a vreg that is nonzero when the pattern matches
+    st := prune(st0)
+    k := nodes[p].kind
+    if k == .pwild: return e_iconst(1)
+    if k == .pvariant:
+        si := int(types[st].st)
+        layout(st)
+        tag := e_load(VI, hidden_addr, 0, 4)
+        want := int(nodes[p].aux2)
+        if structs[si].simple_enum: want = variants[int(structs[si].variants) + int(nodes[p].aux2)].value
+        return e_bin(.eq, VI, tag, e_iconst(want))
+    if k == .plit:
+        a := int(nodes[p].a)
+        if types[st].kind == .str_:
+            v := gen_borrowed(a).v
+            return e_call(rt("__str_eq"), [e_load(VI, hidden_addr, 0, ptr_size), v], VI)
+        if types[st].kind == .opt:
+            if nodes[a].kind == .none_lit: return e_bin(.eq, VI, e_load(VI, hidden_addr, tsize(int(types[st].elem)), 1), e_iconst(0))
+            fatal(nodes[p].pos, "only `none` and `_` patterns are supported for optionals; use `if v := x`")
+        if vc(st) == VC_FLT: fatal(nodes[p].pos, "cannot match on floats")
+        if vc(st) == VC_AGG: fatal(nodes[p].pos, "unsupported pattern for this type")
+        v := gen_expr(a).v
+        return e_bin(.eq, VI, load_val(st, hidden_addr, 0), v)
+    if k == .prange:
+        sg := types[st].kind == .int_ and types[st].sign
+        x := load_val(st, hidden_addr, 0)
+        lo := gen_expr(int(nodes[p].a)).v
+        hi := gen_expr(int(nodes[p].b)).v
+        c1 := e_bin(.ges, VI, x, lo)
+        if not sg: c1 = e_bin(.geu, VI, x, lo)
+        c2 := 0
+        if has_flag(p, NF_INCLUSIVE):
+            if sg: c2 = e_bin(.les, VI, x, hi)
+            else: c2 = e_bin(.leu, VI, x, hi)
+        else:
+            if sg: c2 = e_bin(.lts, VI, x, hi)
+            else: c2 = e_bin(.ltu, VI, x, hi)
+        return e_bin(.and_, VI, c1, c2)
+    fatal(nodes[p].pos, "invalid pattern")
+    0
+
+fn gen_match(m: int, want: bool) -> Val:
+    hidden := int(nodes[m].sym)
+    st := ntype(int(nodes[m].a))
+    rtp := ntype(m)
+    val := want and vc(rtp) != VC_VOID and rtp != T_NEVER
+    rs := -1
+    if val:
+        rs = new_temp(rtp)
+        e_zero(e_slot(rs), tsize(rtp))
+    scope_push()
+    stmt_begin()
+    sv := gen_owned(int(nodes[m].a))
+    store_val(st, e_slot(int(locals[hidden].offset)), 0, sv.v)
+    stmt_end()
+    scope_add_local(hidden)
+    blk()
+    end_level := ctl
+    for i in 0..nkids(m):
+        arm := kid(m, i)
+        blk()
+        fail_level := ctl
+        blk()
+        match_level := ctl
+        for k in 0..nkids(arm):
+            p := kid(arm, k)
+            ha := e_slot(int(locals[hidden].offset))
+            enter_cond()
+            ok := gen_match_test(p, st, ha)
+            leave_cond()
+            brif_to(ok, match_level)
+        br_to(fail_level)
+        endc()
+        enter_cond()
+        body := int(nodes[arm].b)
+        if val: gen_value_block(body, rs, rtp)
+        else:
+            scope_push()
+            gen_block_stmts(body)
+            scope_pop()
+        leave_cond()
+        br_to(end_level)
+        endc()
+    if val: e_call(rt("__panic"), [e_daddr(str_data("no match arm matched"))], -1)
+    endc()
+    scope_pop()
+    if val: return result_from_slot(rs, rtp)
+    V(-1, false)
+
+# ---------------- binary ----------------
+fn gen_eq(t: int, a: int, b: int) -> int: e_call(lf_helper(.eq, prune(t), 0), [a, b], VI)
+
+fn int_op(op: Tok, sg: bool) -> Op:
+    match op:
+        plus: .add
+        minus: .sub
+        star: .mul
+        slash:
+            if sg: return .divs
+            .divu
+        percent:
+            if sg: return .rems
+            .remu
+        amp: .and_
+        pipe: .or_
+        caret: .xor
+        shl: .shl
+        shr:
+            if sg: return .shrs
+            .shru
+        eq: .eq
+        ne: .ne
+        lt:
+            if sg: return .lts
+            .ltu
+        le:
+            if sg: return .les
+            .leu
+        gt:
+            if sg: return .gts
+            .gtu
+        ge:
+            if sg: return .ges
+            .geu
+        _: .nop
+
+fn float_op(op: Tok) -> Op:
+    match op:
+        plus: .fadd
+        minus: .fsub
+        star: .fmul
+        slash: .fdiv
+        eq: .feq
+        ne: .fne
+        lt: .flt
+        le: .fle
+        gt: .fgt
+        ge: .fge
+        _: .nop
+
+fn gen_binary(e: int) -> Val:
+    a := int(nodes[e].a)
+    b := int(nodes[e].b)
+    lt := prune(ntype(a))
+    op := nodes[e].op as Tok
+    aux := int(nodes[e].aux)
+    is_cmp := op == .eq or op == .ne or op == .lt or op == .le or op == .gt or op == .ge
+    if aux == 1:
+        pa := gen_place(a, false)
+        pb := gen_place(b, false)
+        r := 0
+        if vc(lt) == VC_AGG or types[lt].kind == .array: r = gen_eq(lt, place_addr(pa, lt), place_addr(pb, lt))
+        else: r = gen_eq(lt, place_addr(pa, lt), place_addr(pb, lt))
+        if op == .ne: r = e_bin(.xor, VI, r, e_iconst(1))
+        return V(r, false)
+    if aux == 6:
+        pa := gen_place(a, false)
+        has := e_load(VI, place_addr(pa, lt), tsize(int(types[lt].elem)), 1)
+        if op == .eq: return V(e_bin(.eq, VI, has, e_iconst(0)), false)
+        return V(e_bin(.ne, VI, has, e_iconst(0)), false)
+    if aux == 2:
+        va := gen_borrowed(a).v
+        vb := gen_borrowed(b).v
+        if op == .plus: return V(e_call(rt("__str_concat"), [va, vb], VI), true)
+        if op == .eq or op == .ne:
+            r := e_call(rt("__str_eq"), [va, vb], VI)
+            if op == .ne: r = e_bin(.xor, VI, r, e_iconst(1))
+            return V(r, false)
+        c := e_call(rt("__str_cmp"), [va, vb], VI)
+        return V(e_bin(int_op(op, true), VI, c, e_iconst(0)), false)
+    if aux == 3:
+        va := gen_borrowed(a).v
+        vb := gen_borrowed(b).v
+        et := int(types[lt].elem)
+        r := e_call(rt("__arr_concat"), [va, vb, e_iconst(tsize(et))], VI)
+        if is_managed(et): retain_elems(r, et)
+        return V(r, true)
+    if aux == 4:
+        p := gen_expr(a).v
+        i := gen_expr(b).v
+        d := e_bin(.mul, VI, i, e_iconst(tsize(int(types[lt].elem))))
+        if op == .plus: return V(e_bin(.add, VI, p, d), false)
+        return V(e_bin(.sub, VI, p, d), false)
+    if aux == 5:
+        pa := gen_expr(a).v
+        pb := gen_expr(b).v
+        d := e_bin(.sub, VI, pa, pb)
+        sz := tsize(int(types[lt].elem))
+        if sz > 1: d = e_bin(.divs, VI, d, e_iconst(sz))
+        return V(d, false)
+    if aux >= 7: return gen_vec_binary(e)
+    if vc(lt) == VC_FLT:
+        ty := vt_of(lt)
+        va := gen_expr(a).v
+        vb := gen_expr(b).v
+        if op == .percent:
+            q := e_un(.ftrunc, ty, e_bin(.fdiv, ty, va, vb))
+            return V(e_bin(.fsub, ty, va, e_bin(.fmul, ty, q, vb)), false)
+        return V(e_bin(float_op(op), ty, va, vb), false)
+    va := gen_expr(a).v
+    vb := gen_expr(b).v
+    sg := (types[lt].kind == .int_ and types[lt].sign)
+    if op == .slash or op == .percent:
+        iff(e_bin(.eq, VI, vb, e_iconst(0)))
+        e_call(rt("__div_zero"), [e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
+        endc()
+    if types[lt].kind == .bool_ and (op == .amp or op == .pipe or op == .caret):
+        return V(e_bin(int_op(op, false), VI, va, vb), false)
+    r := e_bin(int_op(op, sg), VI, va, vb)
+    if is_cmp: return V(r, false)
+    if op == .shl or op == .shr: return V(norm(r, ntype(e)), false)
+    V(norm(r, ntype(e)), false)
+
+fn retain_elems(arr: int, et: int):
+    # retain every element of a freshly copied array
+    n := arr_len(arr)
+    i := vreg(VI)
+    e_mov(i, e_iconst(0))
+    blk()
+    lop()
+    brif_to(e_bin(.ges, VI, i, n), ctl - 1)
+    copy_at(e_bin(.add, VI, e_addi(arr, 24), e_bin(.mul, VI, i, e_iconst(tsize(et)))), et)
+    e_mov(i, e_addi(i, 1))
+    br_to(ctl)
+    endc()
+    endc()
+
+# ---------------- vectors ----------------
+fn vec_comps(t: int) -> int:
+    if prune(t) == T_MAT4: return 16
+    int(types[prune(t)].bits)
+
+fn gen_vec_binary(e: int) -> Val:
+    a := int(nodes[e].a)
+    b := int(nodes[e].b)
+    op := nodes[e].op as Tok
+    aux := int(nodes[e].aux)
+    t := ntype(e)
+    s := new_temp(t)
+    d := e_slot(s)
+    if aux == 7:
+        pa := place_addr(gen_place(a, false), T_MAT4)
+        pb := place_addr(gen_place(b, false), T_MAT4)
+        e_call(rt("__mat4_mul"), [d, pa, pb], -1)
+        return Val(d, true, s)
+    if aux == 8:
+        pa := place_addr(gen_place(a, false), T_MAT4)
+        pb := place_addr(gen_place(b, false), T_VEC4)
+        e_call(rt("__mat4_mul_vec4"), [d, pa, pb], -1)
+        return Val(d, true, s)
+    integer := types[prune(t)].sign
+    ty := VS
+    mode := 4 | M_FLOAT
+    if integer:
+        ty = VI
+        mode = 4 | M_SIGNED
+    n := vec_comps(t)
+    fop := float_op(op)
+    if integer: fop = int_op(op, true)
+    if aux == 9:
+        pa := place_addr(gen_place(a, false), t)
+        pb := place_addr(gen_place(b, false), t)
+        for i in 0..n:
+            x := e_load(ty, pa, 4 * i, mode)
+            y := e_load(ty, pb, 4 * i, mode)
+            r := e_bin(fop, ty, x, y)
+            if integer: r = e_un(.sext32, VI, r)
+            e_store(d, 4 * i, r, mode)
+        return Val(d, true, s)
+    if aux == 10:
+        pa := place_addr(gen_place(a, false), t)
+        y := gen_expr(b).v
+        for i in 0..n:
+            x := e_load(ty, pa, 4 * i, mode)
+            r := e_bin(fop, ty, x, y)
+            if integer: r = e_un(.sext32, VI, r)
+            e_store(d, 4 * i, r, mode)
+        return Val(d, true, s)
+    x := gen_expr(a).v
+    pb := place_addr(gen_place(b, false), t)
+    for i in 0..n:
+        y := e_load(ty, pb, 4 * i, mode)
+        r := e_bin(fop, ty, x, y)
+        if integer: r = e_un(.sext32, VI, r)
+        e_store(d, 4 * i, r, mode)
+    Val(d, true, s)
+
+fn gen_vec_ctor(e: int) -> Val:
+    t := ntype(e)
+    s := new_temp(t)
+    d := e_slot(s)
+    n := vec_comps(t)
+    integer := types[prune(t)].sign
+    mode := 4 | M_FLOAT
+    if integer: mode = 4 | M_SIGNED
+    if nkids(e) == 0:
+        e_zero(d, tsize(t))
+        if t == T_MAT4:
+            one := e_fconst(1.0, VS)
+            for i in 0..4: e_store(d, 4 * (i * 5), one, mode)
+        return Val(d, true, s)
+    if nkids(e) == 1 and vc(ntype(kid(e, 0))) != VC_AGG:
+        v := gen_expr(kid(e, 0)).v
+        if t == T_MAT4:
+            e_zero(d, 64)
+            for i in 0..4: e_store(d, 4 * (i * 5), v, mode)
+        else:
+            for i in 0..n: e_store(d, 4 * i, v, mode)
+        return Val(d, true, s)
+    k := 0
+    for i in 0..nkids(e):
+        a := kid(e, i)
+        at := ntype(a)
+        if vc(at) == VC_AGG:
+            pa := gen_expr(a).v
+            for j in 0..vec_comps(at):
+                ty := VS
+                if integer: ty = VI
+                e_store(d, 4 * k, e_load(ty, pa, 4 * j, mode), mode)
+                k += 1
+        else:
+            e_store(d, 4 * k, gen_expr(a).v, mode)
+            k += 1
+    Val(d, true, s)
+
+fn gen_swizzle(e: int) -> Val:
+    a := int(nodes[e].a)
+    bt := ntype(a)
+    nm := name_of(int(nodes[e].name))
+    integer := types[prune(bt)].sign
+    ty := VS
+    mode := 4 | M_FLOAT
+    if integer:
+        ty = VI
+        mode = 4 | M_SIGNED
+    pa := place_addr(gen_place(a, false), bt)
+    if len(nm) == 1: return V(e_load(ty, pa, 4 * swizzle_index(nm[0]), mode), false)
+    t := ntype(e)
+    s := new_temp(t)
+    d := e_slot(s)
+    for i in 0..len(nm): e_store(d, 4 * i, e_load(ty, pa, 4 * swizzle_index(nm[i]), mode), mode)
+    Val(d, true, s)
+
+# ---------------- intrinsics ----------------
+fn gen_intrinsic(e: int) -> Val:
+    id := nodes[e].aux as IN
+    args := kids(e)
+    if id == .len or id == .arrcap:
+        p := gen_borrowed(args[0]).v
+        r := vreg(VI)
+        e_mov(r, e_iconst(0))
+        iff(e_bin(.ne, VI, p, e_iconst(0)))
+        off := 8
+        if id == .arrcap: off = 16
+        e_mov(r, e_load(VI, p, off, 8))
+        endc()
+        return V(r, false)
+    if id == .push:
+        at := prune(ntype(args[0]))
+        et := int(types[at].elem)
+        val := gen_owned(args[1])
+        pl := gen_place(args[0], true)
+        arr_unique(pl, at)
+        sa := place_addr(pl, at)
+        slotp := e_call(rt("__arr_push_slot"), [sa, e_iconst(tsize(et))], VI)
+        if not pl.mem: e_mov(pl.v, e_load(VI, sa, 0, ptr_size))
+        store_val(et, slotp, 0, val.v)
+        return V(-1, false)
+    if id == .pop:
+        at := prune(ntype(args[0]))
+        et := int(types[at].elem)
+        pl := gen_place(args[0], true)
+        arr_unique(pl, at)
+        p := read_place(pl, at)
+        n := arr_len(p)
+        iff(e_bin(.eq, VI, n, e_iconst(0)))
+        e_call(rt("__panic"), [e_daddr(str_data("pop() from an empty array"))], -1)
+        endc()
+        nn := e_bin(.sub, VI, n, e_iconst(1))
+        e_store(p, 8, nn, 8)
+        sz := tsize(et)
+        ea := e_bin(.add, VI, e_addi(p, 24), e_bin(.mul, VI, nn, e_iconst(sz)))
+        if vc(et) == VC_AGG:
+            s := new_temp(et)
+            d := e_slot(s)
+            e_copy(d, ea, sz)
+            e_zero(ea, sz)
+            return Val(d, true, s)
+        v := load_val(et, ea, 0)
+        e_zero(ea, sz)
+        return V(v, true)
+    if id == .insert:
+        at := prune(ntype(args[0]))
+        et := int(types[at].elem)
+        val := gen_owned(args[2])
+        idx := gen_expr(args[1]).v
+        pl := gen_place(args[0], true)
+        arr_unique(pl, at)
+        sa := place_addr(pl, at)
+        slotp := e_call(rt("__arr_insert_slot"), [sa, e_iconst(tsize(et)), idx], VI)
+        if not pl.mem: e_mov(pl.v, e_load(VI, sa, 0, ptr_size))
+        store_val(et, slotp, 0, val.v)
+        return V(-1, false)
+    if id == .remove:
+        at := prune(ntype(args[0]))
+        et := int(types[at].elem)
+        sz := tsize(et)
+        idx := gen_expr(args[1]).v
+        pl := gen_place(args[0], true)
+        arr_unique(pl, at)
+        p := read_place(pl, at)
+        bounds_check(p, idx, nodes[e].pos)
+        ea := e_bin(.add, VI, e_addi(p, 24), e_bin(.mul, VI, idx, e_iconst(sz)))
+        s := new_temp(et)
+        d := e_slot(s)
+        e_copy(d, ea, sz)
+        sa := place_addr(pl, at)
+        e_call(rt("__arr_remove_slot"), [sa, e_iconst(sz), idx], -1)
+        if vc(et) == VC_AGG: return Val(d, true, s)
+        return V(load_val(et, d, 0), true)
+    if id == .clear:
+        at := prune(ntype(args[0]))
+        pl := gen_place(args[0], true)
+        release(read_place(pl, at), at)
+        write_place(pl, at, e_iconst(0))
+        return V(-1, false)
+    if id == .reserve:
+        at := prune(ntype(args[0]))
+        n := gen_expr(args[1]).v
+        pl := gen_place(args[0], true)
+        arr_unique(pl, at)
+        sa := place_addr(pl, at)
+        e_call(rt("__arr_reserve"), [sa, e_iconst(tsize(int(types[at].elem))), n], -1)
+        if not pl.mem: e_mov(pl.v, e_load(VI, sa, 0, ptr_size))
+        return V(-1, false)
+    if id == .resize or id == .truncate or id == .setlen:
+        at := prune(ntype(args[0]))
+        et := int(types[at].elem)
+        n := gen_expr(args[1]).v
+        pl := gen_place(args[0], true)
+        arr_unique(pl, at)
+        if id == .setlen:
+            p := read_place(pl, at)
+            e_store(p, 8, n, 8)
+            return V(-1, false)
+        if is_managed(et):
+            # drop elements beyond the new length
+            blk()
+            lop()
+            p := read_place(pl, at)
+            cur := arr_len(p)
+            brif_to(e_bin(.les, VI, cur, n), ctl - 1)
+            last := e_bin(.sub, VI, cur, e_iconst(1))
+            e_store(p, 8, last, 8)
+            ea := e_bin(.add, VI, e_addi(p, 24), e_bin(.mul, VI, last, e_iconst(tsize(et))))
+            drop_at(ea, et)
+            e_zero(ea, tsize(et))
+            br_to(ctl)
+            endc()
+            endc()
+        if id == .truncate:
+            p := read_place(pl, at)
+            iff(e_bin(.ne, VI, p, e_iconst(0)))
+            iff(e_bin(.lts, VI, n, e_load(VI, p, 8, 8)))
+            e_store(p, 8, n, 8)
+            endc()
+            endc()
+            return V(-1, false)
+        sa := place_addr(pl, at)
+        e_call(rt("__arr_resize"), [sa, e_iconst(tsize(et)), n], -1)
+        if not pl.mem: e_mov(pl.v, e_load(VI, sa, 0, ptr_size))
+        return V(-1, false)
+    if id == .arrdata:
+        p := gen_borrowed(args[0]).v
+        r := vreg(VI)
+        e_mov(r, e_iconst(0))
+        iff(e_bin(.ne, VI, p, e_iconst(0)))
+        e_mov(r, e_addi(p, 24))
+        endc()
+        return V(r, false)
+    if id == .syscall:
+        vs: [int]
+        for a in args: vs.push(gen_expr(a).v)
+        start := ir.args.len()
+        for v in vs: ir.args.push(i32(v))
+        d := vreg(VI)
+        emit(.syscall, VI, d, i32(start), i32(vs.len()), 0, 0)
+        return V(d, false)
+    if id == .memcpy:
+        d := gen_expr(args[0]).v
+        s := gen_expr(args[1]).v
+        n := gen_expr(args[2]).v
+        emit(.memcpy, VI, 0, d, s, n, 0)
+        return V(-1, false)
+    if id == .memset:
+        d := gen_expr(args[0]).v
+        b := gen_expr(args[1]).v
+        n := gen_expr(args[2]).v
+        emit(.memset, VI, 0, d, b, n, 0)
+        return V(-1, false)
+    if id == .panic:
+        m := 0
+        if args.len() > 0: m = gen_borrowed(args[0]).v
+        else: m = e_daddr(str_data("panic"))
+        e_call(rt("__panic"), [m], -1)
+        return V(-1, false)
+    if id == .unreachable:
+        e_call(rt("__panic"), [e_daddr(str_data("unreachable code reached"))], -1)
+        return V(-1, false)
+    if id == .assert:
+        c := gen_expr(args[0]).v
+        iff(e_bin(.eq, VI, c, e_iconst(0)))
+        m := 0
+        if args.len() > 1: m = gen_borrowed(args[1]).v
+        else: m = e_daddr(str_data("assertion failed"))
+        e_call(rt("__assert_fail"), [m, e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
+        endc()
+        return V(-1, false)
+    if id == .embed:
+        s := name_of(int(nodes[e].sval))
+        return V(e_daddr(str_data(s)), false)
+    if id == .to_bytes: return V(gen_expr(args[0]).v, false)
+    if id == .argv:
+        d := vreg(VI)
+        emit(.intr, VI, d, 0, 0, 0, 1)
+        return V(d, false)
+    if id == .sqrt:
+        v := gen_expr(args[0]).v
+        return V(e_un(.fsqrt, vt_of(ntype(args[0])), v), false)
+    if id == .hash:
+        t := prune(ntype(args[0]))
+        pa := place_addr(gen_place(args[0], false), t)
+        return V(e_call(lf_helper(.hash, t, 0), [pa], VI), false)
+    if id == .fmt_struct: return gen_fmt_struct(e)
+    if id == .vec_ctor: return gen_vec_ctor(e)
+    fatal(nodes[e].pos, "intrinsic not supported in codegen")
+    V(-1, false)
+
+fn gen_fmt_struct(e: int) -> Val:
+    args := kids(e)
+    t := prune(ntype(args[1]))
+    bp := gen_place(args[0], true)
+    ba := place_addr(bp, ntype(args[0]))
+    va := place_addr(gen_place(args[1], false), t)
+    fi := 0
+    k := types[t].kind
+    if k == .struct_:
+        si := int(types[t].st)
+        layout(t)
+        lit(ba, "{structs[si].name}(")
+        for i in 0..int(structs[si].nfields):
+            f := int(structs[si].fields) + i
+            sep := ""
+            if i > 0: sep = ", "
+            lit(ba, "{sep}{name_of(int(fields[f].name))}=")
+            fmt_field(ba, int(nodes[kid2(e, fi)].sym), int(fields[f].type), e_addi(va, int(fields[f].offset)))
+            fi += 1
+        lit(ba, ")")
+    else if k == .tuple:
+        lit(ba, "(")
+        for i in 0..int(types[t].nargs):
+            if i > 0: lit(ba, ", ")
+            fmt_field(ba, int(nodes[kid2(e, fi)].sym), targ(t, i), e_addi(va, tuple_off(t, i)))
+            fi += 1
+        lit(ba, ")")
+    else if k == .enum_:
+        si := int(types[t].st)
+        layout(t)
+        tag := e_load(VI, va, 0, 4)
+        for v in 0..int(structs[si].nvariants):
+            vi := int(structs[si].variants) + v
+            want := v
+            if structs[si].simple_enum: want = variants[vi].value
+            iff(e_bin(.eq, VI, tag, e_iconst(want)))
+            lit(ba, name_of(int(variants[vi].name)))
+            nf := int(variants[vi].nfields)
+            if nf > 0:
+                lit(ba, "(")
+                for j in 0..nf:
+                    if j > 0: lit(ba, ", ")
+                    f := int(variants[vi].fields) + j
+                    fmt_field(ba, int(nodes[kid2(e, fi)].sym), int(fields[f].type), e_addi(va, int(fields[f].offset)))
+                    fi += 1
+                lit(ba, ")")
+            endc()
+    else if k == .vec:
+        n := vec_comps(t)
+        lit(ba, "{type_str(t)}(")
+        for i in 0..n:
+            if i > 0: lit(ba, ", ")
+            if types[t].sign:
+                e_call(rt("__fmt_i32"), [ba, e_load(VI, va, 4 * i, 4 | M_SIGNED)], -1)
+            else:
+                e_call(rt("__fmt_f32"), [ba, e_load(VS, va, 4 * i, 4 | M_FLOAT)], -1)
+        lit(ba, ")")
+    else: lit(ba, "<fn>")
+    V(-1, false)
+
+fn lit(ba: int, s: str): e_call(rt("__buf_append_str"), [ba, e_daddr(str_data(s))], -1)
+fn fmt_field(ba: int, f: int, t: int, addr: int): e_call(lf_of_inst(f), [ba, load_val(t, addr, 0)], -1)
+
+# ---------------- conversions ----------------
+fn gen_conv(e: int) -> Val:
+    to := prune(ntype(e))
+    a := int(nodes[e].a)
+    from := prune(ntype(a))
+    cv := nodes[e].aux as CV
+    if cv == .none_ or cv == .ptr: return gen_expr(a)
+    if cv == .int_: return V(norm(gen_expr(a).v, to), false)
+    if cv == .int2float:
+        v := gen_expr(a).v
+        if types[from].kind == .int_ and not types[from].sign and int(types[from].bits) == 64: return V(e_un(.u2f, vt_of(to), v), false)
+        return V(e_un(.i2f, vt_of(to), v), false)
+    if cv == .float2int:
+        v := gen_expr(a).v
+        d := vreg(VI)
+        emit(.f2i, vt_of(from), d, v, 0, 0, 0)
+        return V(norm(d, to), false)
+    if cv == .float_:
+        v := gen_expr(a).v
+        if vt_of(from) == vt_of(to): return V(v, false)
+        d := vreg(vt_of(to))
+        emit(.f2f, vt_of(to), d, v, 0, 0, 0)
+        return V(d, false)
+    if cv == .opt:
+        inner := int(types[to].elem)
+        s := new_temp(to)
+        d := e_slot(s)
+        e_zero(d, tsize(to))
+        val := gen_owned(a)
+        store_val(inner, d, 0, val.v)
+        e_store(d, tsize(inner), e_iconst(1), 1)
+        return Val(d, true, s)
+    fatal(nodes[e].pos, "invalid conversion")
+    V(-1, false)
+
+# ---------------- expressions ----------------
+fn gen_expr(e: int) -> Val:
+    t := prune(ntype(e))
+    k := nodes[e].kind
+    if k == .int_lit:
+        if vc(t) == VC_FLT: return V(e_fconst(float(nodes[e].ival), vt_of(t)), false)
+        return V(e_iconst(nodes[e].ival), false)
+    if k == .float_lit: return V(e_fconst(nodes[e].fval, vt_of(t)), false)
+    if k == .bool_lit: return V(e_iconst(nodes[e].ival), false)
+    if k == .null_lit: return V(e_iconst(0), false)
+    if k == .none_lit:
+        if vc(t) != VC_AGG: return V(e_iconst(0), false)
+        s := new_temp(t)
+        d := e_slot(s)
+        e_zero(d, tsize(t))
+        return Val(d, true, s)
+    if k == .str_lit:
+        if nodes[e].aux != 0: return gen_interp(e)
+        return V(e_daddr(str_data(name_of(int(nodes[e].sval)))), false)
+    if k == .ident:
+        if nodes[e].aux == i32(int(SK.local)) or nodes[e].aux == i32(int(SK.global)):
+            p := gen_place(e, false)
+            return V(read_place(p, t), false)
+        fatal(nodes[e].pos, "cannot generate identifier")
+    if k == .field:
+        if nodes[e].aux == -4: return gen_swizzle(e)
+        p := gen_place(e, false)
+        return V(read_place(p, t), false)
+    if k == .dotname:
+        si := int(types[t].st)
+        layout(t)
+        if structs[si].simple_enum: return V(e_iconst(variants[int(structs[si].variants) + int(nodes[e].aux)].value), false)
+        s := new_temp(t)
+        d := e_slot(s)
+        e_zero(d, tsize(t))
+        e_store(d, 0, e_iconst(int(nodes[e].aux)), 4)
+        return Val(d, true, s)
+    if k == .index:
+        if nodes[e].aux == 1: return gen_slice(e)
+        p := gen_place(e, false)
+        return V(read_place(p, t), false)
+    if k == .unwrap:
+        p := gen_place(e, false)
+        return V(read_place(p, t), false)
+    if k == .call:
+        aux := int(nodes[e].aux)
+        if aux == 0:
+            r := gen_direct_call(int(nodes[e].sym), kids(e))
+            if vc(t) == VC_VOID: return V(-1, false)
+            return r
+        if aux == 1:
+            r := gen_closure_call(int(nodes[e].a), kids(e))
+            if vc(t) == VC_VOID: return V(-1, false)
+            return r
+        if aux == 4: return gen_cfn_call(int(nodes[e].a), kids(e))
+        if aux == 2:
+            si := int(types[t].st)
+            layout(t)
+            s := new_temp(t)
+            d := e_slot(s)
+            e_zero(d, tsize(t))
+            for i in 0..int(structs[si].nfields):
+                a := kid(e, i)
+                if a == 0: continue
+                f := int(structs[si].fields) + i
+                val := gen_owned(a)
+                store_val(int(fields[f].type), d, int(fields[f].offset), val.v)
+            return Val(e_slot(s), true, s)
+        if aux == 3:
+            si := int(types[t].st)
+            layout(t)
+            vi := int(structs[si].variants) + int(nodes[e].aux2)
+            if structs[si].simple_enum: return V(e_iconst(variants[vi].value), false)
+            s := new_temp(t)
+            d := e_slot(s)
+            e_zero(d, tsize(t))
+            e_store(d, 0, e_iconst(int(nodes[e].aux2)), 4)
+            for i in 0..int(variants[vi].nfields):
+                f := int(variants[vi].fields) + i
+                val := gen_owned(kid(e, i))
+                store_val(int(fields[f].type), d, int(fields[f].offset), val.v)
+            return Val(e_slot(s), true, s)
+        fatal(nodes[e].pos, "invalid call")
+    if k == .intrinsic: return gen_intrinsic(e)
+    if k == .partial: return gen_partial(e)
+    if k == .lambda: return gen_lambda(e)
+    if k == .fnref: return gen_fnref(e)
+    if k == .unary:
+        a := int(nodes[e].a)
+        if is_vec(t):
+            neg := mk(.binary, nodes[e].pos)
+            nodes[neg].op = i32(int(Tok.star))
+            nodes[neg].a = i32(a)
+            m1 := mk(.float_lit, nodes[e].pos)
+            nodes[m1].fval = -1.0
+            nodes[m1].type = i32(T_F32)
+            nodes[neg].b = i32(m1)
+            nodes[neg].aux = 10
+            nodes[neg].type = i32(t)
+            return gen_vec_binary(neg)
+        v := gen_expr(a).v
+        if nodes[e].op == i32(int(Tok.minus)):
+            if vc(t) == VC_FLT: return V(e_un(.fneg, vt_of(t), v), false)
+            return V(norm(e_un(.neg, VI, v), t), false)
+        return V(norm(e_un(.not_, VI, v), t), false)
+    if k == .not_: return V(e_bin(.xor, VI, gen_expr(int(nodes[e].a)).v, e_iconst(1)), false)
+    if k == .and_ or k == .or_:
+        r := vreg(VI)
+        e_mov(r, gen_expr(int(nodes[e].a)).v)
+        if k == .and_: iff(r)
+        else: iff(e_bin(.eq, VI, r, e_iconst(0)))
+        enter_cond()
+        e_mov(r, gen_expr(int(nodes[e].b)).v)
+        leave_cond()
+        endc()
+        return V(r, false)
+    if k == .binary: return gen_binary(e)
+    if k == .conv: return gen_conv(e)
+    if k == .cast:
+        a := int(nodes[e].a)
+        from := prune(ntype(a))
+        val := gen_expr(a)
+        if types[from].kind == .float_ and types[t].kind == .int_:
+            d := vreg(VI)
+            emit(.f2bits, vt_of(from), d, val.v, 0, 0, 0)
+            return V(norm(d, t), false)
+        if types[from].kind == .int_ and types[t].kind == .float_:
+            d := vreg(vt_of(t))
+            emit(.bits2f, vt_of(t), d, val.v, 0, 0, 0)
+            return V(d, false)
+        if is_managed(from): borrow(val, from)
+        if is_managed(t): return V(val.v, true)
+        if types[t].kind == .int_: return V(norm(val.v, t), false)
+        return V(val.v, false)
+    if k == .coalesce:
+        a := int(nodes[e].a)
+        ot := prune(ntype(a))
+        rs := new_temp(t)
+        pa := place_addr(gen_place(a, false), ot)
+        inner := int(types[ot].elem)
+        has := e_load(VI, pa, tsize(inner), 1)
+        iff(has)
+        if nodes[e].aux == 1:
+            vv := own(V(pa, false), ot)
+            store_val(ot, e_slot(rs), 0, vv.v)
+        else:
+            vv := own(V(load_val(inner, pa, 0), false), inner)
+            store_val(inner, e_slot(rs), 0, vv.v)
+        els()
+        enter_cond()
+        vb := gen_owned(int(nodes[e].b))
+        store_val(t, e_slot(rs), 0, vb.v)
+        leave_cond()
+        endc()
+        return result_from_slot(rs, t)
+    if k == .array: return gen_array(e, t)
+    if k == .map_lit:
+        s := new_temp(t)
+        d := e_slot(s)
+        e_zero(d, tsize(t))
+        f := int(nodes[e].sym)
+        for i in 0..nkids(e):
+            p := kid(e, i)
+            kv := gen_borrowed(int(nodes[p].a)).v
+            vv := gen_borrowed(int(nodes[p].b)).v
+            e_call(lf_of_inst(f), [e_slot(s), kv, vv], -1)
+        return Val(e_slot(s), true, s)
+    if k == .tuple:
+        if vc(t) == VC_VOID: return V(-1, false)
+        s := new_temp(t)
+        for i in 0..int(types[t].nargs):
+            el := targ(t, i)
+            val := gen_owned(kid(e, i))
+            store_val(el, e_slot(s), tuple_off(t, i), val.v)
+        return Val(e_slot(s), true, s)
+    if k == .range:
+        s := new_temp(T_RANGE)
+        d := e_slot(s)
+        lo := 0
+        if nodes[e].a != 0: lo = gen_expr(int(nodes[e].a)).v
+        else: lo = e_iconst(0)
+        e_store(d, 0, lo, 8)
+        hi := 0
+        if nodes[e].b != 0:
+            hi = gen_expr(int(nodes[e].b)).v
+            if has_flag(e, NF_INCLUSIVE): hi = e_addi(hi, 1)
+        else: hi = e_iconst(0x7fffffffffffffff)
+        e_store(d, 8, hi, 8)
+        return Val(d, false, -1)
+    if k == .addr:
+        p := gen_place(int(nodes[e].a), true)
+        return V(place_addr(p, ntype(int(nodes[e].a))), false)
+    if k == .if_: return gen_if(e, t)
+    if k == .iflet: return gen_iflet(e, t)
+    if k == .match_: return gen_match(e, not has_flag(e, NF_STMT))
+    if k == .block:
+        rs := -1
+        if vc(t) != VC_VOID:
+            rs = new_temp(t)
+            e_zero(e_slot(rs), tsize(t))
+        gen_value_block(e, rs, t)
+        if rs >= 0: return result_from_slot(rs, t)
+        return V(-1, false)
+    fatal(nodes[e].pos, "unsupported expression in codegen ({k})")
+    V(-1, false)
+
+fn gen_slice(e: int) -> Val:
+    a := int(nodes[e].a)
+    bt := prune(ntype(a))
+    r := int(nodes[e].b)
+    p := gen_borrowed(a).v
+    lo := 0
+    if nodes[r].a != 0: lo = gen_expr(int(nodes[r].a)).v
+    else: lo = e_iconst(0)
+    hi := 0
+    if nodes[r].b != 0:
+        hi = gen_expr(int(nodes[r].b)).v
+        if has_flag(r, NF_INCLUSIVE): hi = e_addi(hi, 1)
+    else: hi = arr_len(p)
+    if types[bt].kind == .str_: return V(e_call(rt("__str_slice"), [p, lo, hi], VI), true)
+    et := int(types[bt].elem)
+    q := e_call(rt("__arr_slice"), [p, lo, hi, e_iconst(tsize(et))], VI)
+    if is_managed(et): retain_elems(q, et)
+    V(q, true)
+
+fn gen_array(e: int, t: int) -> Val:
+    et := int(types[t].elem)
+    esz := tsize(et)
+    if nodes[e].b != 0:
+        val := gen_owned(kid(e, 0))
+        vs := new_temp(et)
+        va := e_slot(vs)
+        store_val(et, va, 0, val.v)
+        n := gen_expr(int(nodes[e].b)).v
+        arr := e_call(rt("__arr_repeat"), [n, e_iconst(esz)], VI)
+        res := vreg(VI)
+        e_mov(res, arr)
+        i := vreg(VI)
+        e_mov(i, e_iconst(0))
+        cnt := arr_len(res)
+        blk()
+        lop()
+        brif_to(e_bin(.ges, VI, i, cnt), ctl - 1)
+        ea := e_bin(.add, VI, e_addi(res, 24), e_bin(.mul, VI, i, e_iconst(esz)))
+        e_copy(ea, e_slot(vs), esz)
+        if is_managed(et): copy_at(ea, et)
+        e_mov(i, e_addi(i, 1))
+        br_to(ctl)
+        endc()
+        endc()
+        drop_at(e_slot(vs), et)
+        return V(res, true)
+    n := nkids(e)
+    if n == 0: return V(e_iconst(0), true)
+    if all_const(e, et):
+        # immutable static array: lives in rodata, copied on first write
+        return V(e_daddr(const_array(e, et)), false)
+    arr := e_call(rt("__arr_repeat"), [e_iconst(n), e_iconst(esz)], VI)
+    res := vreg(VI)
+    e_mov(res, arr)
+    for i in 0..n:
+        val := gen_owned(kid(e, i))
+        store_val(et, res, 24 + i * esz, val.v)
+    V(res, true)
+
+fn all_const(e: int, et: int) -> bool:
+    k := types[prune(et)].kind
+    if k != .int_ and k != .float_ and k != .bool_: return false
+    for i in 0..nkids(e):
+        ck := nodes[kid(e, i)].kind
+        if ck != .int_lit and ck != .float_lit and ck != .bool_lit: return false
+    true
+
+fn const_array(e: int, et: int) -> int:
+    while rodata.len() % 8 != 0: rodata.push(0)
+    o := rodata.len()
+    n := nkids(e)
+    sz := tsize(et)
+    __push_i64(rodata, -1)
+    __push_i64(rodata, n)
+    __push_i64(rodata, n)
+    for i in 0..n:
+        c := kid(e, i)
+        bits := 0
+        if nodes[c].kind == .float_lit:
+            if sz == 4: bits = int((f32(nodes[c].fval) as i32) as u32)
+            else: bits = nodes[c].fval as int
+        else: bits = nodes[c].ival
+        for b in 0..sz: rodata.push(u8((bits >> (8 * b)) & 255))
+    o
+
+fn gen_if(e: int, t: int) -> Val:
+    val := vc(t) != VC_VOID and t != T_NEVER and not has_flag(e, NF_STMT)
+    rs := -1
+    if val:
+        rs = new_temp(t)
+        e_zero(e_slot(rs), tsize(t))
+    stmt_begin()
+    c := gen_expr(int(nodes[e].a)).v
+    cv := vreg(VI)
+    e_mov(cv, c)
+    stmt_end()
+    iff(cv)
+    enter_cond()
+    if val: gen_value_block(int(nodes[e].b), rs, t)
+    else:
+        scope_push()
+        gen_block_stmts(int(nodes[e].b))
+        scope_pop()
+    if nodes[e].c != 0:
+        els()
+        if val: gen_value_block(int(nodes[e].c), rs, t)
+        else:
+            scope_push()
+            gen_block_stmts(int(nodes[e].c))
+            scope_pop()
+    leave_cond()
+    endc()
+    if val: return result_from_slot(rs, t)
+    V(-1, false)
+
+fn gen_iflet(e: int, t: int) -> Val:
+    val := vc(t) != VC_VOID and t != T_NEVER and not has_flag(e, NF_STMT)
+    rs := -1
+    if val:
+        rs = new_temp(t)
+        e_zero(e_slot(rs), tsize(t))
+    l := int(nodes[e].sym)
+    a := int(nodes[e].a)
+    ot := prune(ntype(a))
+    inner := int(types[ot].elem)
+    scope_push()
+    stmt_begin()
+    pa := place_addr(gen_place(a, false), ot)
+    has := vreg(VI)
+    e_mov(has, e_load(VI, pa, tsize(inner), 1))
+    iff(has)
+    vv := own(V(load_val(inner, pa, 0), false), inner)
+    write_place(local_place(l, true), inner, vv.v)
+    endc()
+    stmt_end()
+    scope_add_local(l)
+    iff(has)
+    enter_cond()
+    if val: gen_value_block(int(nodes[e].b), rs, t)
+    else:
+        scope_push()
+        gen_block_stmts(int(nodes[e].b))
+        scope_pop()
+    if nodes[e].c != 0:
+        els()
+        if val: gen_value_block(int(nodes[e].c), rs, t)
+        else:
+            scope_push()
+            gen_block_stmts(int(nodes[e].c))
+            scope_pop()
+    leave_cond()
+    endc()
+    scope_pop()
+    if val: return result_from_slot(rs, t)
+    V(-1, false)
+
+# ---------------- statements ----------------
+fn gen_return(s: int):
+    rtp := prune(cur_ret)
+    a := int(nodes[s].a)
+    rv := -1
+    if a != 0 and vc(rtp) != VC_VOID:
+        stmt_begin()
+        val := gen_owned(a)
+        if vc(rtp) == VC_AGG: store_val(rtp, sret_v, 0, val.v)
+        else:
+            rv = vreg(vt_of(rtp))
+            e_mov(rv, val.v)
+        stmt_end()
+    else if a != 0:
+        stmt_begin()
+        val := gen_expr(a)
+        borrow(val, ntype(a))
+        stmt_end()
+    i := scope_locals.len() - 1
+    while i >= 0:
+        emit_scope_exit(i)
+        i -= 1
+    if vc(rtp) == VC_AGG: e_ret(sret_v)
+    else: e_ret(rv)
+
+fn assign_to(target: int, t: int, v: int):
+    pl := gen_place(target, true)
+    if is_managed(t):
+        if pl.mem: drop_at(pl.v, t)
+        else: release(pl.v, t)
+    write_place(pl, t, v)
+
+fn gen_assign(s: int):
+    a := int(nodes[s].a)
+    t := prune(ntype(a))
+    aux := int(nodes[s].aux)
+    if aux == 1:
+        tt := prune(ntype(int(nodes[s].b)))
+        val := gen_owned(int(nodes[s].b))
+        for i in 0..int(types[tt].nargs):
+            el := targ(tt, i)
+            tg := kid(a, i)
+            ea := e_addi(val.v, tuple_off(tt, i))
+            if nodes[tg].kind == .hole: drop_at(ea, el)
+            else: assign_to(tg, el, load_val(el, ea, 0))
+        return
+    if aux == 2:
+        v := gen_borrowed(int(nodes[s].b)).v
+        pl := gen_place(a, true)
+        sa := place_addr(pl, t)
+        e_call(rt("__str_append"), [sa, v], -1)
+        if not pl.mem: e_mov(pl.v, e_load(VI, sa, 0, ptr_size))
+        return
+    if aux == 3:
+        d := e_bin(.mul, VI, gen_expr(int(nodes[s].b)).v, e_iconst(tsize(int(types[t].elem))))
+        pl := gen_place(a, true)
+        cur := read_place(pl, t)
+        if nodes[s].op == i32(int(Tok.pluseq)): write_place(pl, t, e_bin(.add, VI, cur, d))
+        else: write_place(pl, t, e_bin(.sub, VI, cur, d))
+        return
+    if nodes[s].op == i32(int(Tok.assign)):
+        val := gen_owned(int(nodes[s].b))
+        assign_to(a, t, val.v)
+        return
+    # compound arithmetic
+    op := compound_op(int(nodes[s].op)) as Tok
+    pl := gen_place(a, true)
+    cur := read_place(pl, t)
+    rhs := gen_expr(int(nodes[s].b)).v
+    r := 0
+    if is_vec(t):
+        tmp := mk(.binary, nodes[s].pos)
+        ident := mk(.block, nodes[s].pos)
+        ice("compound assignment on vectors should be desugared")
+    if vc(t) == VC_FLT: r = e_bin(float_op(op), vt_of(t), cur, rhs)
+    else:
+        sg := types[t].kind == .int_ and types[t].sign
+        if op == .slash or op == .percent:
+            iff(e_bin(.eq, VI, rhs, e_iconst(0)))
+            e_call(rt("__div_zero"), [e_daddr(str_data(loc_str(nodes[s].pos)))], -1)
+            endc()
+        if types[t].kind == .bool_: r = e_bin(int_op(op, false), VI, cur, rhs)
+        else: r = norm(e_bin(int_op(op, sg), VI, cur, rhs), t)
+    write_place(pl, t, r)
+
+fn gen_vardecl(s: int):
+    if nodes[s].nlist > 0:
+        tt := prune(ntype(int(nodes[s].b)))
+        val := gen_owned(int(nodes[s].b))
+        for i in 0..int(types[tt].nargs):
+            el := targ(tt, i)
+            id := kid(s, i)
+            ea := e_addi(val.v, tuple_off(tt, i))
+            if nodes[id].kind == .hole: drop_at(ea, el)
+            else if has_flag(id, NF_GLOBAL):
+                g := int(nodes[id].sym)
+                store_val(el, e_gaddr(global_addr_off(g)), 0, load_val(el, ea, 0))
+            else:
+                l := int(nodes[id].sym)
+                write_place(local_place(l, true), el, load_val(el, ea, 0))
+                scope_add_local(l)
+        return
+    if has_flag(s, NF_GLOBAL):
+        g := int(nodes[s].sym)
+        iv := int(nodes[s].b)
+        if iv == 0: return
+        ik := nodes[iv].kind
+        if (ik == .int_lit and nodes[iv].ival == 0) or ik == .null_lit or (ik == .bool_lit and nodes[iv].ival == 0): return
+        val := gen_owned(iv)
+        store_val(int(globals[g].type), e_gaddr(global_addr_off(g)), 0, val.v)
+        return
+    l := int(nodes[s].sym)
+    t := int(locals[l].type)
+    pl := local_place(l, true)
+    if nodes[s].b != 0:
+        val := gen_owned(int(nodes[s].b))
+        write_place(pl, t, val.v)
+    else:
+        if pl.mem: e_zero(pl.v, tsize(t))
+        else: e_mov(pl.v, zero_val(t))
+    scope_add_local(l)
+
+fn gen_loop_body(b: int):
+    scope_push()
+    gen_block_stmts(b)
+    scope_pop()
+
+fn gen_for(s: int):
+    scope_push()
+    aux := int(nodes[s].aux)
+    if aux == 0 or aux == 4:
+        l := int(nodes[s].sym)
+        lt := int(locals[l].type)
+        endv := vreg(VI)
+        ctr := vreg(VI)
+        stmt_begin()
+        if aux == 0:
+            it := int(nodes[s].a)
+            e_mov(ctr, gen_expr(int(nodes[it].a)).v)
+            hi := gen_expr(int(nodes[it].b)).v
+            if has_flag(it, NF_INCLUSIVE): hi = e_addi(hi, 1)
+            e_mov(endv, hi)
+        else:
+            r := gen_expr(int(nodes[s].a)).v
+            e_mov(ctr, e_load(VI, r, 0, 8))
+            e_mov(endv, e_load(VI, r, 8, 8))
+        stmt_end()
+        sg := types[prune(lt)].sign
+        blk()
+        brk := ctl
+        lop()
+        top := ctl
+        cmpop := Op.ges
+        if not sg: cmpop = .geu
+        brif_to(e_bin(cmpop, VI, ctr, endv), brk)
+        write_place(local_place(l, true), lt, ctr)
+        blk()
+        cont := ctl
+        loops.push(LoopInfo(brk, cont, scope_locals.len()))
+        gen_loop_body(int(nodes[s].b))
+        loops.pop()
+        endc()
+        e_mov(ctr, e_addi(ctr, 1))
+        br_to(top)
+        endc()
+        endc()
+        scope_pop()
+        return
+    idx := int(nodes[s].c)
+    snap := int(nodes[s].d)
+    el := int(nodes[s].sym)
+    ct := prune(ntype(int(nodes[s].a)))
+    if aux == 1 or aux == 3:
+        stmt_begin()
+        val := gen_owned(int(nodes[s].a))
+        write_place(local_place(snap, true), ct, val.v)
+        stmt_end()
+        scope_add_local(snap)
+    ip := local_place(idx, true)
+    write_place(ip, T_INT, e_iconst(0))
+    blk()
+    brk := ctl
+    lop()
+    top := ctl
+    i := read_place(local_place(idx, false), T_INT)
+    if aux == 1:
+        et := T_U8
+        if types[ct].kind == .array: et = int(types[ct].elem)
+        sv := read_place(local_place(snap, false), ct)
+        brif_to(e_bin(.ges, VI, i, arr_len(sv)), brk)
+        ea := e_bin(.add, VI, e_addi(sv, 24), e_bin(.mul, VI, i, e_iconst(tsize(et))))
+        e_mov(int(locals[el].vreg), ea)
+    else if aux == 2:
+        p := read_place(gen_place(int(nodes[s].a), false), ct)
+        brif_to(e_bin(.ges, VI, i, arr_len(p)), brk)
+    else if aux == 3:
+        si := int(types[ct].st)
+        layout(ct)
+        f0 := int(structs[si].fields)
+        kt := telem(int(fields[f0].type))
+        vt := telem(int(fields[f0 + 1].type))
+        sa := place_addr(local_place(snap, false), ct)
+        keys := e_load(VI, sa, int(fields[f0].offset), ptr_size)
+        brif_to(e_bin(.ges, VI, i, arr_len(keys)), brk)
+        e_mov(int(locals[el].vreg), e_bin(.add, VI, e_addi(keys, 24), e_bin(.mul, VI, i, e_iconst(tsize(kt)))))
+        vl := int(nodes[s].aux2)
+        if vl != 0 and int(locals[vl].flags) & LF_BYREF != 0:
+            vals := e_load(VI, sa, int(fields[f0 + 1].offset), ptr_size)
+            e_mov(int(locals[vl].vreg), e_bin(.add, VI, e_addi(vals, 24), e_bin(.mul, VI, i, e_iconst(tsize(vt)))))
+    blk()
+    cont := ctl
+    loops.push(LoopInfo(brk, cont, scope_locals.len()))
+    gen_loop_body(int(nodes[s].b))
+    loops.pop()
+    endc()
+    ip2 := local_place(idx, true)
+    write_place(ip2, T_INT, e_addi(read_place(ip2, T_INT), 1))
+    br_to(top)
+    endc()
+    endc()
+    scope_pop()
+
+fn gen_while(s: int):
+    scope_push()
+    blk()
+    brk := ctl
+    lop()
+    top := ctl
+    if nodes[s].aux == 1:
+        l := int(nodes[s].sym)
+        a := int(nodes[s].a)
+        ot := prune(ntype(a))
+        inner := int(types[ot].elem)
+        has := vreg(VI)
+        stmt_begin()
+        pa := place_addr(gen_place(a, false), ot)
+        e_mov(has, e_load(VI, pa, tsize(inner), 1))
+        iff(has)
+        vv := own(V(load_val(inner, pa, 0), false), inner)
+        write_place(local_place(l, true), inner, vv.v)
+        endc()
+        stmt_end()
+        brif_to(e_bin(.eq, VI, has, e_iconst(0)), brk)
+        scope_push()
+        scope_add_local(l)
+        blk()
+        cont := ctl
+        loops.push(LoopInfo(brk, cont, scope_locals.len()))
+        gen_block_stmts(int(nodes[s].b))
+        loops.pop()
+        endc()
+        scope_pop()
+        br_to(top)
+    else:
+        cv := vreg(VI)
+        stmt_begin()
+        e_mov(cv, gen_expr(int(nodes[s].a)).v)
+        stmt_end()
+        brif_to(e_bin(.eq, VI, cv, e_iconst(0)), brk)
+        blk()
+        cont := ctl
+        loops.push(LoopInfo(brk, cont, scope_locals.len()))
+        gen_loop_body(int(nodes[s].b))
+        loops.pop()
+        endc()
+        br_to(top)
+    endc()
+    endc()
+    scope_pop()
+
+fn gen_stmt(s: int):
+    k := nodes[s].kind
+    if k == .vardecl:
+        stmt_begin()
+        gen_vardecl(s)
+        stmt_end()
+    else if k == .assign:
+        stmt_begin()
+        gen_assign(s)
+        stmt_end()
+    else if k == .exprstmt:
+        a := int(nodes[s].a)
+        ak := nodes[a].kind
+        if ak == .match_ or ak == .if_ or ak == .iflet:
+            val := gen_expr(a)
+            if val.owned and is_managed(ntype(a)):
+                stmt_begin()
+                borrow(val, ntype(a))
+                stmt_end()
+            return
+        stmt_begin()
+        val := gen_expr(a)
+        borrow(val, ntype(a))
+        stmt_end()
+    else if k == .if_ or k == .iflet: gen_expr(s)
+    else if k == .while_: gen_while(s)
+    else if k == .for_: gen_for(s)
+    else if k == .return_: gen_return(s)
+    else if k == .break_ or k == .continue_:
+        lp := loops[loops.len() - 1]
+        i := scope_locals.len() - 1
+        while i >= lp.scope:
+            emit_scope_exit(i)
+            i -= 1
+        if k == .break_: br_to(lp.brk)
+        else: br_to(lp.cont)
+    else if k == .defer_: scope_defers[scope_defers.len() - 1].push(int(nodes[s].a))
+    else if k == .block:
+        if nodes[s].aux == 5:
+            gen_block_stmts(s)
+            return
+        scope_push()
+        gen_block_stmts(s)
+        scope_pop()
+    else if k == .const_: pass
+    else: fatal(nodes[s].pos, "unsupported statement in codegen")
+
+fn gen_block_stmts(b: int):
+    for i in 0..nkids(b): gen_stmt(kid(b, i))
+
+# ---------------- functions ----------------
+fn begin_fn(name: str, idx: int):
+    ir_begin(name, idx)
+    ctl = 0
+    cond_depth = 0
+    scope_locals = []
+    scope_defers = []
+    loops = []
+    tl_items = []
+    tl_nop = []
+    tl_cond = []
+    sret_v = -1
+    env_v = -1
+
+fn lower_inst(lf: int, f: int):
+    begin_fn(fns[f].sym, lf)
+    cur_fn = f
+    cur_ret = int(fns[f].ret)
+    ir.cabi = fns[f].cabi
+    ir.export_name = fns[f].export_name
+    if vc(cur_ret) == VC_AGG: sret_v = vreg(VI)
+    if fns[f].has_env: env_v = vreg(VI)
+    if fns[f].kind == FK_LAMBDA: env_layout(f)
+    # parameters
+    for i, l in fns[f].params:
+        t := int(locals[l].type)
+        pv := 0
+        if int(locals[l].flags) & LF_MUTPARAM != 0 or vc(t) == VC_AGG: pv = vreg(VI)
+        else: pv = vreg(vt_of(t))
+        locals[l].vreg = i32(pv)
+        locals[l].offset = -1
+    ir.nparams = ir.vtypes.len()
+    ir.ret = ret_vt(cur_ret)
+    # locals
+    for l in fns[f].locals:
+        fl := int(locals[l].flags)
+        t := int(locals[l].type)
+        if fl & (LF_CAPTURE | LF_ALIAS) != 0: continue
+        if fl & LF_PARAM != 0:
+            if fl & LF_ADDR != 0 and fl & LF_MUTPARAM == 0 and vc(t) != VC_AGG:
+                # address-taken scalar parameter: move to memory
+                s := new_slot(8, 8)
+                store_val(t, e_slot(s), 0, int(locals[l].vreg))
+                locals[l].offset = i32(s)
+            continue
+        locals[l].offset = -1
+        if fl & LF_BYREF != 0:
+            locals[l].vreg = i32(vreg(VI))
+            continue
+        if vc(t) == VC_AGG or fl & LF_ADDR != 0:
+            s := new_slot(tsize(t), talign(t))
+            locals[l].offset = i32(s)
+            if is_managed(t): e_zero(e_slot(s), tsize(t))
+            continue
+        locals[l].vreg = i32(vreg(vt_of(t)))
+        if is_managed(t): e_mov(int(locals[l].vreg), e_iconst(0))
+    scope_push()
+    body := int(fns[f].body)
+    if fns[f].kind == FK_INIT:
+        gen_block_stmts(body)
+    else:
+        n := nkids(body)
+        for i in 0..n:
+            s := kid(body, i)
+            if i == n - 1 and nodes[body].aux != 0 and vc(cur_ret) != VC_VOID:
+                r := mk(.return_, nodes[s].pos)
+                nodes[r].a = nodes[s].a
+                gen_return(r)
+                continue
+            gen_stmt(s)
+    scope_pop()
+    if vc(cur_ret) == VC_AGG: e_ret(sret_v)
+    else if vc(cur_ret) == VC_VOID: e_ret(-1)
+    else: e_trap()
+
+fn lower_function(lf: int):
+    f := lfuncs[lf]
+    if f.kind == LK_INST:
+        fi := f.inst
+        if fns[fi].kind == FK_PARTIAL:
+            lower_partial_thunk(lf, fi)
+            return
+        lower_inst(lf, fi)
+        return
+    lower_helper(lf)
+
+# ---------------- generated helper functions ----------------
+fn lower_partial_thunk(lf: int, th: int):
+    pass
+
+fn helper_params(n: int) -> [int]:
+    ps: [int]
+    for i in 0..n: ps.push(vreg(VI))
+    ir.nparams = n
+    ps
+
+fn each_field(t0: int, addr: int, f: fn(int, int)):
+    pass
+
+fn field_list(t0: int) -> [(int, int)]:
+    # (type, offset) of each member of a struct/tuple
+    t := prune(t0)
+    layout(t)
+    out: [(int, int)]
+    if types[t].kind == .struct_:
+        si := int(types[t].st)
+        for i in 0..int(structs[si].nfields):
+            f := int(structs[si].fields) + i
+            out.push((int(fields[f].type), int(fields[f].offset)))
+    else if types[t].kind == .tuple:
+        for i in 0..int(types[t].nargs): out.push((targ(t, i), tuple_off(t, i)))
+    out
+
+fn helper_drop(t: int, copy: bool):
+    ps := helper_params(1)
+    a := ps[0]
+    k := types[t].kind
+    if k == .fn_:
+        env := e_load(VI, a, ptr_size, ptr_size)
+        if copy: retain(env, T_STR)
+        else:
+            iff(e_bin(.ne, VI, env, e_iconst(0)))
+            rc := e_load(VI, env, 0, 8)
+            iff(e_bin(.gts, VI, rc, e_iconst(0)))
+            nrc := e_bin(.sub, VI, rc, e_iconst(1))
+            e_store(env, 0, nrc, 8)
+            iff(e_bin(.eq, VI, nrc, e_iconst(0)))
+            df := e_load(VI, env, 8, ptr_size)
+            e_calli(df, [env], -1, false)
+            endc()
+            endc()
+            endc()
+    else if k == .opt:
+        inner := int(types[t].elem)
+        iff(e_bin(.ne, VI, e_load(VI, a, tsize(inner), 1), e_iconst(0)))
+        if copy: copy_at(a, inner)
+        else: drop_at(a, inner)
+        endc()
+    else if k == .enum_:
+        si := int(types[t].st)
+        layout(t)
+        tag := e_load(VI, a, 0, 4)
+        for v in 0..int(structs[si].nvariants):
+            vi := int(structs[si].variants) + v
+            any := false
+            for i in 0..int(variants[vi].nfields):
+                if is_managed(int(fields[int(variants[vi].fields) + i].type)): any = true
+            if not any: continue
+            iff(e_bin(.eq, VI, tag, e_iconst(v)))
+            for i in 0..int(variants[vi].nfields):
+                f := int(variants[vi].fields) + i
+                ft := int(fields[f].type)
+                if copy: copy_at(e_addi(a, int(fields[f].offset)), ft)
+                else: drop_at(e_addi(a, int(fields[f].offset)), ft)
+            endc()
+    else:
+        for fo in field_list(t):
+            if not is_managed(fo.0): continue
+            if copy: copy_at(e_addi(a, fo.1), fo.0)
+            else: drop_at(e_addi(a, fo.1), fo.0)
+    e_ret(-1)
+
+fn helper_arrrel(t: int):
+    ps := helper_params(1)
+    p := ps[0]
+    et := int(types[t].elem)
+    iff(e_bin(.ne, VI, p, e_iconst(0)))
+    rc := e_load(VI, p, 0, 8)
+    iff(e_bin(.gts, VI, rc, e_iconst(0)))
+    nrc := e_bin(.sub, VI, rc, e_iconst(1))
+    e_store(p, 0, nrc, 8)
+    iff(e_bin(.eq, VI, nrc, e_iconst(0)))
+    n := e_load(VI, p, 8, 8)
+    i := vreg(VI)
+    e_mov(i, e_iconst(0))
+    blk()
+    lop()
+    brif_to(e_bin(.ges, VI, i, n), ctl - 1)
+    drop_at(e_bin(.add, VI, e_addi(p, 24), e_bin(.mul, VI, i, e_iconst(tsize(et)))), et)
+    e_mov(i, e_addi(i, 1))
+    br_to(ctl)
+    endc()
+    endc()
+    e_call(rt("__free_obj"), [p], -1)
+    endc()
+    endc()
+    endc()
+    e_ret(-1)
+
+fn helper_arruniq(t: int):
+    # takes the array pointer, returns a uniquely owned array pointer
+    ps := helper_params(1)
+    ir.ret = VI
+    p := ps[0]
+    et := int(types[t].elem)
+    r := vreg(VI)
+    e_mov(r, p)
+    iff(e_bin(.ne, VI, p, e_iconst(0)))
+    iff(e_bin(.ne, VI, e_load(VI, p, 0, 8), e_iconst(1)))
+    e_mov(r, e_call(rt("__arr_clone"), [p, e_iconst(tsize(et))], VI))
+    if is_managed(et): retain_elems(r, et)
+    endc()
+    endc()
+    e_ret(r)
+
+fn helper_eq(t: int):
+    ps := helper_params(2)
+    ir.ret = VI
+    a := ps[0]
+    b := ps[1]
+    r := vreg(VI)
+    e_mov(r, e_iconst(0))
+    blk()
+    fail := ctl
+    k := types[t].kind
+    if k == .struct_ or k == .tuple:
+        for fo in field_list(t): eq_member(fo.0, e_addi(a, fo.1), e_addi(b, fo.1), fail)
+    else if k == .opt:
+        inner := int(types[t].elem)
+        ha := e_load(VI, a, tsize(inner), 1)
+        hb := e_load(VI, b, tsize(inner), 1)
+        brif_to(e_bin(.ne, VI, ha, hb), fail)
+        iff(ha)
+        eq_member(inner, a, b, fail)
+        endc()
+    else if k == .enum_:
+        si := int(types[t].st)
+        layout(t)
+        ta := e_load(VI, a, 0, 4)
+        brif_to(e_bin(.ne, VI, ta, e_load(VI, b, 0, 4)), fail)
+        for v in 0..int(structs[si].nvariants):
+            vi := int(structs[si].variants) + v
+            if variants[vi].nfields == 0: continue
+            iff(e_bin(.eq, VI, ta, e_iconst(v)))
+            for i in 0..int(variants[vi].nfields):
+                f := int(variants[vi].fields) + i
+                eq_member(int(fields[f].type), e_addi(a, int(fields[f].offset)), e_addi(b, int(fields[f].offset)), fail)
+            endc()
+    else if k == .array:
+        et := int(types[t].elem)
+        pa := e_load(VI, a, 0, ptr_size)
+        pb := e_load(VI, b, 0, ptr_size)
+        na := arr_len(pa)
+        brif_to(e_bin(.ne, VI, na, arr_len(pb)), fail)
+        i := vreg(VI)
+        e_mov(i, e_iconst(0))
+        blk()
+        lop()
+        brif_to(e_bin(.ges, VI, i, na), ctl - 1)
+        off := e_bin(.mul, VI, i, e_iconst(tsize(et)))
+        eq_member(et, e_bin(.add, VI, e_addi(pa, 24), off), e_bin(.add, VI, e_addi(pb, 24), off), fail)
+        e_mov(i, e_addi(i, 1))
+        br_to(ctl)
+        endc()
+        endc()
+    else if k == .vec:
+        for i in 0..vec_comps(t):
+            if types[t].sign:
+                brif_to(e_bin(.ne, VI, e_load(VI, a, 4 * i, 4), e_load(VI, b, 4 * i, 4)), fail)
+            else:
+                brif_to(e_bin(.fne, VS, e_load(VS, a, 4 * i, 4 | M_FLOAT), e_load(VS, b, 4 * i, 4 | M_FLOAT)), fail)
+    else: eq_member(t, a, b, fail)
+    e_mov(r, e_iconst(1))
+    endc()
+    e_ret(r)
+
+# compare members at addresses a and b; branch to `fail` level when different
+fn eq_member(t0: int, a: int, b: int, fail: int):
+    t := prune(t0)
+    k := types[t].kind
+    if k == .str_:
+        r := e_call(rt("__str_eq"), [e_load(VI, a, 0, ptr_size), e_load(VI, b, 0, ptr_size)], VI)
+        brif_to(e_bin(.eq, VI, r, e_iconst(0)), fail)
+        return
+    c := vc(t)
+    if c == VC_INT and k != .array:
+        brif_to(e_bin(.ne, VI, load_val(t, a, 0), load_val(t, b, 0)), fail)
+        return
+    if c == VC_FLT:
+        brif_to(e_bin(.fne, vt_of(t), load_val(t, a, 0), load_val(t, b, 0)), fail)
+        return
+    if k == .fn_:
+        brif_to(e_bin(.ne, VI, e_load(VI, a, 0, ptr_size), e_load(VI, b, 0, ptr_size)), fail)
+        return
+    r := e_call(lf_helper(.eq, t, 0), [a, b], VI)
+    brif_to(e_bin(.eq, VI, r, e_iconst(0)), fail)
+
+fn helper_hash(t: int):
+    ps := helper_params(1)
+    ir.ret = VI
+    a := ps[0]
+    h := vreg(VI)
+    e_mov(h, e_iconst(0xcbf29ce484222325))
+    k := types[t].kind
+    if k == .struct_ or k == .tuple:
+        for fo in field_list(t): hash_member(h, fo.0, e_addi(a, fo.1))
+    else: hash_member(h, t, a)
+    e_ret(h)
+
+fn hash_member(h: int, t0: int, a: int):
+    t := prune(t0)
+    k := types[t].kind
+    c := vc(t)
+    x := 0
+    if k == .str_: x = e_call(rt("__str_hash"), [e_load(VI, a, 0, ptr_size)], VI)
+    else if c == VC_INT and k != .array: x = load_val(t, a, 0)
+    else if c == VC_FLT:
+        sz := tsize(t)
+        x = e_load(VI, a, 0, sz)
+    else if c == VC_AGG and k != .fn_: x = e_call(lf_helper(.hash, t, 0), [a], VI)
+    else: return
+    m := e_bin(.mul, VI, e_bin(.xor, VI, h, x), e_iconst(0x100000001b3))
+    e_mov(h, e_bin(.xor, VI, m, e_bin(.shru, VI, m, e_iconst(29))))
+
+fn helper_thunk(f: int):
+    # (sret?, env, args...) -> f(sret?, args...)
+    ret := int(fns[f].ret)
+    sret := vc(ret) == VC_AGG
+    n := fns[f].ptypes.len()
+    argv: [int]
+    if sret: argv.push(vreg(VI))
+    vreg(VI) # env (ignored)
+    mm := inst_mutmask(f)
+    for i in 0..n:
+        t := fns[f].ptypes[i]
+        if mm & (1 << i) != 0 or vc(t) == VC_AGG: argv.push(vreg(VI))
+        else: argv.push(vreg(vt_of(t)))
+    ir.nparams = ir.vtypes.len()
+    ir.ret = ret_vt(ret)
+    r := e_call(lf_of_inst(f), argv, ret_vt(ret))
+    if sret: e_ret(argv[0])
+    else: e_ret(r)
+
+fn helper_partial(th: int):
+    e := int(fns[th].partial)
+    target := int(nodes[e].sym)
+    offs := partial_layout(e)
+    ret := int(fns[th].ret)
+    sret := vc(ret) == VC_AGG
+    sv := -1
+    if sret: sv = vreg(VI)
+    env := vreg(VI)
+    hole_vs: [int]
+    hmm := int(types[prune(ntype(e))].mutmask)
+    for i, t in fns[th].ptypes:
+        if hmm & (1 << i) != 0 or vc(t) == VC_AGG: hole_vs.push(vreg(VI))
+        else: hole_vs.push(vreg(vt_of(t)))
+    ir.nparams = ir.vtypes.len()
+    ir.ret = ret_vt(ret)
+    argv: [int]
+    if sret: argv.push(sv)
+    if nodes[e].aux == 1: argv.push(e_load(VI, env, 16 + ptr_size, ptr_size))
+    hk := 0
+    for i in 0..nkids(e):
+        a := kid(e, i)
+        if nodes[a].kind == .hole:
+            argv.push(hole_vs[hk])
+            hk += 1
+        else:
+            t := ntype(a)
+            if vc(t) == VC_AGG: argv.push(e_addi(env, offs[i]))
+            else: argv.push(load_val(t, env, offs[i]))
+    r := 0
+    if target != 0: r = e_call(lf_of_inst(target), argv, ret_vt(ret))
+    else:
+        fp := e_load(VI, env, 16, ptr_size)
+        r = e_calli(fp, argv, ret_vt(ret), false)
+    if sret: e_ret(sv)
+    else: e_ret(r)
+
+fn helper_envdrop(f: int):
+    ps := helper_params(1)
+    env := ps[0]
+    if fns[f].kind == FK_PARTIAL:
+        e := int(fns[f].partial)
+        offs := partial_layout(e)
+        if nodes[e].aux == 1: drop_at(e_addi(env, 16), ntype(int(nodes[e].a)))
+        for i in 0..nkids(e):
+            if offs[i] < 0: continue
+            drop_at(e_addi(env, offs[i]), ntype(kid(e, i)))
+    else:
+        env_layout(f)
+        for cap in fns[f].caps:
+            inn := int(cap.inner)
+            t := int(locals[inn].type)
+            if is_managed(t): drop_at(e_addi(env, int(locals[inn].env_off)), t)
+    e_call(rt("__free"), [env], -1)
+    e_ret(-1)
+
+fn lower_helper(lf: int):
+    h := lfuncs[lf]
+    begin_fn(h.name, lf)
+    t := prune(h.htype)
+    match h.hkind:
+        drop: helper_drop(t, false)
+        copy: helper_drop(t, true)
+        arrrel: helper_arrrel(t)
+        arruniq: helper_arruniq(t)
+        eq: helper_eq(t)
+        hash: helper_hash(t)
+        thunk: helper_thunk(h.inst)
+        partial: helper_partial(h.inst)
+        envdrop: helper_envdrop(h.inst)

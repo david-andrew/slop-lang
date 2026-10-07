@@ -1,0 +1,2087 @@
+# Expression checking: type inference, coercions, overload resolution, generics, lambdas.
+# Nodes are rewritten in place (wrapping moves the old content to a fresh node).
+
+use util
+use lex
+use ast
+use types
+use check
+
+enum IN:
+    none_, len, push, pop, insert, remove, clear, reserve, slice, syscall, memcpy, memset, sizeof,
+    arrdata, panic, assert, print, embed, from_bytes, to_bytes, argv, setlen, truncate, resize,
+    hash, alignof, unreachable, arrcap, fmt_struct, sqrt, vec_ctor, cfn_cast, wasm_call, callc, floor_,
+    ceil_, fabs, fmin, fmax
+
+enum CV: none_, int_, int2float, float2int, float_, opt, ptr, bits, fn2clos
+
+struct Intrinsic:
+    name: str
+    id: IN
+    arr: bool
+
+intrinsics := [
+    Intrinsic("len", .len, true), Intrinsic("cap", .arrcap, true), Intrinsic("push", .push, true),
+    Intrinsic("pop", .pop, true), Intrinsic("insert", .insert, true), Intrinsic("remove", .remove, true),
+    Intrinsic("clear", .clear, true), Intrinsic("reserve", .reserve, true), Intrinsic("resize", .resize, true),
+    Intrinsic("truncate", .truncate, true), Intrinsic("data", .arrdata, true),
+    Intrinsic("syscall", .syscall, false), Intrinsic("mem_copy", .memcpy, false), Intrinsic("mem_set", .memset, false),
+    Intrinsic("size_of", .sizeof, false), Intrinsic("align_of", .alignof, false), Intrinsic("panic", .panic, false),
+    Intrinsic("assert", .assert, false), Intrinsic("print", .print, false), Intrinsic("embed", .embed, false),
+    Intrinsic("str_from_bytes", .from_bytes, false), Intrinsic("bytes", .to_bytes, false), Intrinsic("__argv", .argv, false),
+    Intrinsic("unreachable", .unreachable, false), Intrinsic("sqrt", .sqrt, false), Intrinsic("__fmt_fields", .fmt_struct, false),
+    Intrinsic("__hash_value", .hash, false), Intrinsic("__set_len", .setlen, false), Intrinsic("__call_c", .callc, false),
+]
+
+last_checked := 0
+
+fn register_intrinsics():
+    for i, it in intrinsics:
+        nm := intern(it.name)
+        universe[nm] = new_sym(nm, .builtin, int(it.id), 0)
+
+fn intrinsic_of(name: int) -> int:
+    s := name_of(name)
+    for i, it in intrinsics:
+        if it.name == s: return i
+    -1
+
+fn is_lit(n: int) -> bool: has_flag(n, NF_LITERAL)
+fn lit_default(n: int) -> int:
+    if nodes[n].kind == .float_lit: return T_FLOAT
+    T_INT
+
+fn ntype(n: int) -> int: int(nodes[n].type)
+
+# replace node n by a conversion of its old content
+fn wrap_conv(n: int, cv: CV, to: int):
+    inner := nodes.len()
+    nodes.push(nodes[n])
+    nodes[n] = Node(kind = .conv, pos = nodes[inner].pos, a = i32(inner), aux = i32(int(cv)), type = i32(to), flags = i32(NF_CHECKED))
+
+# ---------------- coercion ----------------
+fn int_widens(f: int, t: int) -> bool:
+    fb := int(types[f].bits)
+    tb := int(types[t].bits)
+    if types[f].sign == types[t].sign: return tb >= fb
+    if not types[f].sign and types[t].sign: return tb > fb
+    false
+
+fn can_coerce(n: int, from0: int, to0: int) -> bool:
+    from := prune(from0)
+    to := prune(to0)
+    if type_eq(from, to): return true
+    if from == T_NEVER: return true
+    fk := types[from].kind
+    tk := types[to].kind
+    if has_var(from) or has_var(to):
+        if fk == .var or tk == .var: return true
+        if fk == tk and fk == .array:
+            fe := prune(int(types[from].elem))
+            te := prune(int(types[to].elem))
+            return types[fe].kind == .var or types[te].kind == .var or type_eq(fe, te)
+        if fk == .opt and tk == .opt: return true
+    if n != 0 and is_lit(n):
+        if nodes[n].kind == .int_lit and (tk == .int_ or tk == .float_): return true
+        if nodes[n].kind == .float_lit and tk == .float_: return true
+    if fk == .int_ and tk == .int_: return int_widens(from, to)
+    if fk == .int_ and tk == .float_: return true
+    if fk == .float_ and tk == .float_: return true
+    if tk == .opt:
+        if fk == .none_lit: return true
+        if fk == .opt: return type_eq(int(types[from].elem), int(types[to].elem)) or tkind(int(types[from].elem)) == .var
+        return can_coerce(n, from, int(types[to].elem))
+    if fk == .null_ and (tk == .ptr or tk == .cfn): return true
+    if fk == .ptr and tk == .ptr and (to == T_RAWPTR or from == T_RAWPTR): return true
+    false
+
+# coerce node n to `target` (rewrites n in place); returns n
+fn coerce(n: int, target: int) -> int:
+    if target == 0: return n
+    from := prune(ntype(n))
+    to := prune(target)
+    if from == 0: ice("unchecked expression at {pos_str(nodes[n].pos)}")
+    if from == T_NEVER: return n
+    tk := types[to].kind
+    if is_lit(n):
+        k := nodes[n].kind
+        if k == .int_lit and tk == .int_:
+            v := nodes[n].ival
+            bits := int(types[to].bits)
+            if bits < 64:
+                lo := 0
+                hi := 0
+                if types[to].sign:
+                    lo = -(1 << (bits - 1))
+                    hi = (1 << (bits - 1)) - 1
+                else: hi = (1 << bits) - 1
+                if v < lo or v > hi: fatal(nodes[n].pos, "value {v} does not fit in {type_str(to)}")
+            nodes[n].type = i32(to)
+            clear_flag(n, NF_LITERAL)
+            return n
+        if k == .int_lit and tk == .float_:
+            nodes[n].kind = .float_lit
+            nodes[n].fval = float(nodes[n].ival)
+            nodes[n].type = i32(to)
+            clear_flag(n, NF_LITERAL)
+            return n
+        if k == .float_lit and tk == .float_:
+            nodes[n].type = i32(to)
+            clear_flag(n, NF_LITERAL)
+            return n
+        if tk == .opt and is_numeric(int(types[to].elem)):
+            coerce(n, int(types[to].elem))
+            wrap_conv(n, .opt, to)
+            return n
+        if tk == .var:
+            d := lit_default(n)
+            nodes[n].type = i32(d)
+            clear_flag(n, NF_LITERAL)
+            unify(to, d)
+            return n
+        if tk == .vec and nodes[n].kind == .int_lit or tk == .vec and nodes[n].kind == .float_lit: pass
+    if type_eq(from, to):
+        clear_flag(n, NF_LITERAL)
+        return n
+    fk := types[from].kind
+    if has_var(from) or has_var(to):
+        if unify(from, to): return n
+        if tk == .opt and unify(from, int(types[to].elem)):
+            wrap_conv(n, .opt, to)
+            return n
+    if fk == .int_ and tk == .int_:
+        if int_widens(from, to):
+            wrap_conv(n, .int_, to)
+            return n
+        fatal(nodes[n].pos, "cannot implicitly convert {type_str(from)} to {type_str(to)} (use {type_str(to)}(x) to convert explicitly)")
+    if fk == .int_ and tk == .float_:
+        wrap_conv(n, .int2float, to)
+        return n
+    if fk == .float_ and tk == .float_:
+        wrap_conv(n, .float_, to)
+        return n
+    if tk == .opt:
+        if fk == .none_lit:
+            nodes[n].type = i32(to)
+            return n
+        if fk == .opt:
+            if tkind(int(types[from].elem)) == .var:
+                unify(int(types[from].elem), int(types[to].elem))
+                nodes[n].type = i32(to)
+                return n
+            fatal(nodes[n].pos, "type mismatch: expected {type_str(to)}, found {type_str(from)}")
+        coerce(n, int(types[to].elem))
+        wrap_conv(n, .opt, to)
+        return n
+    if fk == .null_ and (tk == .ptr or tk == .cfn):
+        nodes[n].type = i32(to)
+        return n
+    if fk == .ptr and tk == .ptr and (to == T_RAWPTR or from == T_RAWPTR):
+        wrap_conv(n, .ptr, to)
+        return n
+    if fk == .typeval: fatal(nodes[n].pos, "expected a value of type {type_str(to)}, found a type name")
+    fatal(nodes[n].pos, "type mismatch: expected {type_str(to)}, found {type_str(from)}")
+    n
+
+fn check_to(n: int, target: int) -> int:
+    check_expr(n, target)
+    coerce(n, target)
+    target
+
+fn finalize_literal(n: int) -> int:
+    if is_lit(n): coerce(n, lit_default(n))
+    ntype(n)
+
+fn num_join(a0: int, b0: int) -> int:
+    a := prune(a0)
+    b := prune(b0)
+    if type_eq(a, b): return a
+    ka := types[a].kind
+    kb := types[b].kind
+    if ka == .float_ and kb == .float_:
+        if int(types[a].bits) >= int(types[b].bits): return a
+        return b
+    if ka == .float_ and kb == .int_: return a
+    if kb == .float_ and ka == .int_: return b
+    if ka == .int_ and kb == .int_:
+        if int_widens(a, b): return b
+        if int_widens(b, a): return a
+    0
+
+fn join_types(a: int, b: int, pos: int) -> int:
+    ta := prune(ntype(a))
+    tb := prune(ntype(b))
+    if ta == T_NEVER: return finalize_literal(b)
+    if tb == T_NEVER: return finalize_literal(a)
+    la := is_lit(a)
+    lb := is_lit(b)
+    if la and not lb and can_coerce(a, ta, tb):
+        coerce(a, tb)
+        return tb
+    if lb and not la and can_coerce(b, tb, ta):
+        coerce(b, ta)
+        return ta
+    if la and lb:
+        t := T_INT
+        if nodes[a].kind == .float_lit or nodes[b].kind == .float_lit: t = T_FLOAT
+        coerce(a, t)
+        coerce(b, t)
+        return t
+    if is_numeric(ta) and is_numeric(tb):
+        j := num_join(ta, tb)
+        if j == 0: fatal(pos, "cannot mix {type_str(ta)} and {type_str(tb)}; convert one explicitly")
+        coerce(a, j)
+        coerce(b, j)
+        return j
+    if types[ta].kind == .none_lit or (types[ta].kind == .opt and tkind(int(types[ta].elem)) == .var):
+        t := tb
+        if types[tb].kind != .opt: t = mk_opt(tb)
+        coerce(a, t)
+        coerce(b, t)
+        return t
+    if types[tb].kind == .none_lit or (types[tb].kind == .opt and tkind(int(types[tb].elem)) == .var):
+        t := ta
+        if types[ta].kind != .opt: t = mk_opt(ta)
+        coerce(a, t)
+        coerce(b, t)
+        return t
+    if types[ta].kind == .opt and can_coerce(b, tb, ta):
+        coerce(b, ta)
+        return ta
+    if types[tb].kind == .opt and can_coerce(a, ta, tb):
+        coerce(a, tb)
+        return tb
+    coerce(b, ta)
+    ta
+
+# ---------------- places ----------------
+fn check_place(n: int, for_mut: bool):
+    k := nodes[n].kind
+    if k == .ident:
+        if nodes[n].aux == i32(int(SK.local)):
+            l := int(nodes[n].sym)
+            f := int(locals[l].flags)
+            nm := name_of(int(locals[l].name))
+            if f & LF_PARAM != 0 and f & LF_MUTPARAM == 0: fatal(nodes[n].pos, "cannot modify parameter '{nm}' (parameters are read-only; mark it `mut` or copy it with `{nm} := {nm}`)")
+            if f & LF_CAPTURE != 0: fatal(nodes[n].pos, "cannot modify captured variable '{nm}' (closures capture values by copy)")
+            if f & LF_BYREF != 0: fatal(nodes[n].pos, "cannot modify loop variable '{nm}' (use `for mut` to modify elements)")
+            nf := f | LF_ASSIGNED
+            if for_mut: nf |= LF_ADDR
+            locals[l].flags = i32(nf)
+            return
+        if nodes[n].aux == i32(int(SK.global)): return
+        fatal(nodes[n].pos, "cannot assign to '{name_of(int(nodes[n].name))}'")
+    if k == .field:
+        bt := prune(ntype(int(nodes[n].a)))
+        if types[bt].kind == .ptr: return
+        check_place(int(nodes[n].a), for_mut)
+        return
+    if k == .index:
+        bt := prune(ntype(int(nodes[n].a)))
+        bk := types[bt].kind
+        if bk == .ptr: return
+        if bk == .str_: fatal(nodes[n].pos, "strings are immutable")
+        if bk != .array: fatal(nodes[n].pos, "cannot assign to this index expression")
+        if nodes[n].aux == 1: fatal(nodes[n].pos, "cannot assign to a slice")
+        check_place(int(nodes[n].a), for_mut)
+        return
+    if for_mut: fatal(nodes[n].pos, "a `mut` argument must be a variable, field or element")
+    fatal(nodes[n].pos, "cannot assign to this expression")
+
+# ---------------- type expressions written as expressions ----------------
+fn expr_as_type(e: int) -> int:
+    k := nodes[e].kind
+    if k == .ident:
+        tn := mk(.tname, nodes[e].pos)
+        nodes[tn].name = nodes[e].name
+        return resolve_type(tn)
+    if k == .index and nodes[int(nodes[e].a)].kind == .ident:
+        s := lookup(int(nodes[int(nodes[e].a)].name))
+        if s == 0 or (syms[s].kind != .struct_ and syms[s].kind != .enum_): fatal(nodes[e].pos, "expected a type")
+        targs: [int]
+        if nodes[e].b != 0: targs.push(expr_as_type(int(nodes[e].b)))
+        else:
+            for i in 0..nkids(e): targs.push(expr_as_type(kid(e, i)))
+        d := int(syms[s].ref)
+        if targs.len() != nkids2(d): fatal(nodes[e].pos, "wrong number of type arguments")
+        return get_struct_inst(d, targs)
+    if k == .array and nkids(e) == 1: return mk_array(expr_as_type(kid(e, 0)))
+    fatal(nodes[e].pos, "expected a type")
+    0
+
+# ---------------- calls ----------------
+struct Cand:
+    decl: int
+    sig: FnSig
+    args: [int]
+    binds: [int]
+    cost: int
+    ok: bool
+
+fn ctx_dependent(a: int) -> bool:
+    k := nodes[a].kind
+    if k == .ident: return has_flag(a, NF_FNREF_ARG)
+    if k == .lambda or k == .dotname or k == .none_lit or k == .hole: return true
+    if k == .array: return nkids(a) == 0 and nodes[a].b == 0
+    if k == .map_lit: return nkids(a) == 0
+    false
+
+fn unnamed(a: int) -> int:
+    if nodes[a].kind == .namedarg: return int(nodes[a].a)
+    a
+
+# map call args to parameter slots; returns error message ("" on success)
+fn map_args(pnames: [int], has_default: [bool], args: [int], out: mut [int]) -> str:
+    np := pnames.len()
+    out.clear()
+    out.resize(np)
+    pos := 0
+    for a in args:
+        if nodes[a].kind == .namedarg:
+            k := -1
+            for j in 0..np:
+                if pnames[j] == int(nodes[a].name): k = j
+            if k < 0: return "no parameter named '{name_of(int(nodes[a].name))}'"
+            if out[k] != 0: return "parameter '{name_of(int(nodes[a].name))}' given twice"
+            out[k] = int(nodes[a].a)
+        else:
+            if pos >= np: return "too many arguments (expected {np})"
+            out[pos] = a
+            pos += 1
+    for i in 0..np:
+        if out[i] == 0 and not has_default[i]: return "missing argument '{name_of(pnames[i])}'"
+    ""
+
+fn match_type(pat0: int, a0: int, binds: mut [int], depth: int) -> int:
+    pat := prune(pat0)
+    a := prune(a0)
+    if a == T_NEVER: return 0
+    pk := types[pat].kind
+    ak := types[a].kind
+    if pk == .param:
+        id := int(types[pat].id)
+        if binds[id] == 0:
+            binds[id] = a
+            if depth == 0: return 3
+            return 0
+        if type_eq(binds[id], a): return 0
+        if has_var(prune(binds[id])) and unify(binds[id], a): return 0
+        if can_coerce(0, a, binds[id]): return 1
+        return -1
+    if not has_var(pat):
+        if type_eq(pat, a): return 0
+        if has_var(a):
+            if ak == .var: return 0
+            if ak == pk and ak == .array and match_type(int(types[pat].elem), int(types[a].elem), binds, depth + 1) >= 0: return 0
+            if ak == .opt and pk == .opt: return 0
+        if ak == .none_lit and pk == .opt: return 0
+        if can_coerce(0, a, pat):
+            if (ak == .int_ and pk == .float_) or pk == .opt: return 2
+            return 1
+        return -1
+    if ak == .var: return 0
+    if pk == .opt and ak != .opt:
+        if ak == .none_lit: return 0
+        r := match_type(int(types[pat].elem), a, binds, depth + 1)
+        if r < 0: return -1
+        return r + 4
+    if pk != ak: return -1
+    if pk == .array or pk == .ptr or pk == .opt: return match_type(int(types[pat].elem), int(types[a].elem), binds, depth + 1)
+    if pk == .fn_ or pk == .tuple or pk == .cfn:
+        if types[pat].nargs != types[a].nargs: return -1
+        cost := 0
+        for i in 0..int(types[pat].nargs):
+            r := match_type(targ(pat, i), targ(a, i), binds, depth + 1)
+            if r < 0: return -1
+            cost += r
+        if pk != .tuple:
+            r := match_type(int(types[pat].elem), int(types[a].elem), binds, depth + 1)
+            if r < 0: return -1
+            cost += r
+        return cost
+    if pk == .struct_ or pk == .enum_:
+        sp := int(types[pat].st)
+        sa := int(types[a].st)
+        if structs[sp].decl != structs[sa].decl: return -1
+        cost := 0
+        for i in 0..int(structs[sp].ntargs):
+            r := match_type(struct_targ(sp, i), struct_targ(sa, i), binds, depth + 1)
+            if r < 0: return -1
+            cost += r
+        return cost
+    -1
+
+fn subst_partial(pat0: int, binds: mut [int]) -> int:
+    pat := prune(pat0)
+    if not has_var(pat): return pat
+    k := types[pat].kind
+    if k == .param:
+        id := int(types[pat].id)
+        if binds[id] == 0: binds[id] = mk_var()
+        return binds[id]
+    if k == .array: return mk_array(subst_partial(int(types[pat].elem), binds))
+    if k == .ptr: return mk_ptr(subst_partial(int(types[pat].elem), binds))
+    if k == .opt: return mk_opt(subst_partial(int(types[pat].elem), binds))
+    if k == .fn_ or k == .tuple:
+        a: [int]
+        for i in 0..int(types[pat].nargs): a.push(subst_partial(targ(pat, i), binds))
+        if k == .tuple: return mk_tuple(a)
+        return mk_fn(a, subst_partial(int(types[pat].elem), binds), int(types[pat].mutmask))
+    if k == .struct_ or k == .enum_:
+        si := int(types[pat].st)
+        a: [int]
+        for i in 0..int(structs[si].ntargs): a.push(subst_partial(struct_targ(si, i), binds))
+        return get_struct_inst(int(structs[si].decl), a)
+    pat
+
+fn find_variant(si: int, name: int) -> int:
+    check_struct_fields(si)
+    for v in 0..int(structs[si].nvariants):
+        if int(variants[int(structs[si].variants) + v].name) == name: return v
+    -1
+
+fn arg_cost(a: int, pat: int, binds: mut [int]) -> int:
+    p := prune(pat)
+    pk := types[p].kind
+    if ctx_dependent(a):
+        k := nodes[a].kind
+        if k == .hole: return 0
+        if k == .ident:
+            if pk == .fn_: return 0
+            return -1
+        if k == .lambda:
+            if pk == .param:
+                if nkids(a) > 0 and nodes[kid(a, 0)].a != 0: return 3
+                return -1
+            if pk != .fn_ or int(types[p].nargs) != nkids(a): return -1
+            return 0
+        if k == .dotname:
+            e := p
+            if pk == .opt: e = prune(int(types[p].elem))
+            if types[e].kind != .enum_: return -1
+            if find_variant(int(types[e].st), int(nodes[a].name)) >= 0: return 0
+            return -1
+        if k == .none_lit:
+            if pk == .opt: return 0
+            if pk == .param: return 3
+            return -1
+        if k == .array:
+            if pk == .array: return 0
+            if pk == .param: return 3
+            return -1
+        if k == .map_lit:
+            if pk == .struct_ and structs[int(types[p].st)].name == "Map": return 0
+            return -1
+        return -1
+    if is_lit(a):
+        if pk == .param:
+            b := binds[int(types[p].id)]
+            if b == 0: return 2
+            if can_coerce(a, ntype(a), b): return 0
+            return -1
+        if pk == .int_:
+            if nodes[a].kind == .int_lit:
+                if p == T_INT: return 0
+                return 1
+            return -1
+        if pk == .float_:
+            if nodes[a].kind == .int_lit: return 1
+            if p == T_FLOAT: return 0
+            return 1
+        if pk == .opt and is_numeric(int(types[p].elem)): return 2
+        if pk == .vec: return -1
+        return -1
+    match_type(pat, ntype(a), binds, 0)
+
+fn check_args_untyped(args: [int]):
+    for a0 in args:
+        a := unnamed(a0)
+        if nodes[a].kind == .ident and not has_flag(a, NF_CHECKED):
+            s := lookup(int(nodes[a].name))
+            if s != 0 and syms[s].kind == .fns: add_flag(a, NF_FNREF_ARG)
+        if ctx_dependent(a) or has_flag(a, NF_CHECKED): continue
+        check_expr(a, 0)
+        add_flag(a, NF_CHECKED)
+
+fn finish_arg(a: int, pt: int, is_mut: bool):
+    if nodes[a].kind == .hole:
+        nodes[a].type = i32(pt)
+        return
+    if not has_flag(a, NF_CHECKED) or nodes[a].type == 0:
+        check_expr(a, pt)
+        add_flag(a, NF_CHECKED)
+    if is_mut:
+        check_place(a, true)
+        if not type_eq(ntype(a), pt) and not unify(ntype(a), pt): fatal(nodes[a].pos, "`mut` argument must have type {type_str(pt)} exactly, found {type_str(ntype(a))}")
+        add_flag(a, NF_MUT)
+        return
+    coerce(a, pt)
+
+fn default_arg(decl: int, i: int, pt: int) -> int:
+    d := clone(int(nodes[kid(decl, i)].b))
+    saved := cx
+    ctxs.push(FnCtx(ctxs[cx].inst, -1, i32(T_VOID), false, 0, nodes[decl].mod, i32(sc_names.len())))
+    cx = ctxs.len() - 1
+    check_expr(d, pt)
+    coerce(d, pt)
+    ctxs.pop()
+    cx = saved
+    d
+
+fn has_hole(args: [int]) -> bool:
+    for a in args:
+        if nodes[unnamed(a)].kind == .hole: return true
+    false
+
+fn finish_partial(n: int, ptypes: [int], mutmask: int, ret: int) -> int:
+    hp: [int]
+    mm := 0
+    for i in 0..nkids(n):
+        a := kid(n, i)
+        if nodes[a].kind == .hole:
+            if mutmask & (1 << i) != 0: mm |= 1 << hp.len()
+            hp.push(ptypes[i])
+    nodes[n].kind = .partial
+    th := new_inst(FK_PARTIAL, cur_mod(), "partial")
+    fns[th].ptypes = hp
+    fns[th].ret = i32(ret)
+    fns[th].has_env = true
+    fns[th].partial = i32(n)
+    fns[th].state = 2
+    t := mk_fn(hp, ret, mm)
+    nodes[n].type = i32(t)
+    nodes[n].d = i32(th)
+    t
+
+fn resolve_fn_call(n: int, name: int, decls: [int], args: [int], expected: int) -> int:
+    check_args_untyped(args)
+    cands: [Cand]
+    last_err := ""
+    best := -1
+    for d in decls:
+        cd := Cand(decl = d, sig = fn_sig(d))
+        np := nkids(d)
+        pnames: [int]
+        hasdef: [bool]
+        for i in 0..np:
+            pnames.push(int(nodes[kid(d, i)].name))
+            hasdef.push(nodes[kid(d, i)].b != 0)
+        err := map_args(pnames, hasdef, args, cd.args)
+        if len(err) > 0:
+            last_err = err
+            continue
+        cd.binds = [0; int(cd.sig.ntp)]
+        cost := 0
+        ok := true
+        for phase in 0..3:
+            if not ok: break
+            for i in 0..np:
+                a := cd.args[i]
+                if a == 0: continue
+                cls := 0
+                if ctx_dependent(a): cls = 2
+                else if is_lit(a): cls = 1
+                if cls != phase: continue
+                pt := cd.sig.params[i]
+                if int(cd.sig.mutmask) & (1 << i) != 0 and not ctx_dependent(a):
+                    r := match_type(pt, ntype(a), cd.binds, 0)
+                    ok2 := r >= 0
+                    if ok2:
+                        ptx := subst(pt, cd.binds)
+                        if not has_var(prune(ptx)) and not has_var(prune(ntype(a))) and not type_eq(ptx, ntype(a)): ok2 = false
+                    if not ok2:
+                        ok = false
+                        last_err = "argument {i + 1} must have type {type_str(subst(pt, cd.binds))} (mut parameters need an exact match)"
+                        break
+                    cost += r
+                    continue
+                r := arg_cost(a, pt, cd.binds)
+                if r < 0:
+                    ok = false
+                    ptx := subst(pt, cd.binds)
+                    if nodes[a].type != 0: last_err = "argument '{name_of(pnames[i])}' expects {type_str(ptx)}, found {type_str(ntype(a))}"
+                    else: last_err = "argument '{name_of(pnames[i])}' has the wrong type (expects {type_str(ptx)})"
+                    break
+                cost += r
+        if not ok: continue
+        cd.ok = true
+        cd.cost = cost
+        cands.push(cd)
+        ci := cands.len() - 1
+        if best < 0 or cost < cands[best].cost: best = ci
+        else if cost == cands[best].cost:
+            if cands[best].sig.generic and not cd.sig.generic: best = ci
+            else if cands[best].sig.generic == cd.sig.generic:
+                fatal(nodes[n].pos, "ambiguous call to '{name_of(name)}': candidates at {pos_str(nodes[cands[best].decl].pos)} and {pos_str(nodes[d].pos)}")
+    if best < 0:
+        if decls.len() == 1:
+            if len(last_err) == 0: last_err = "arguments do not match"
+            fatal(nodes[n].pos, "in call to '{name_of(name)}': {last_err}")
+        ts := ""
+        for i, a0 in args:
+            a := unnamed(a0)
+            if i > 0: ts += ", "
+            if nodes[a].type != 0: ts += type_str(ntype(a))
+            else: ts += "?"
+        sep := ""
+        if len(last_err) > 0: sep = ": "
+        fatal(nodes[n].pos, "no matching overload for '{name_of(name)}({ts})'{sep}{last_err}")
+    cd := cands[best]
+    decl := cd.decl
+    np := nkids(decl)
+    partial := has_hole(args)
+    for i in 0..np:
+        a := cd.args[i]
+        if a == 0 or not is_lit(a): continue
+        p := prune(cd.sig.params[i])
+        if types[p].kind == .param and cd.binds[int(types[p].id)] == 0: cd.binds[int(types[p].id)] = lit_default(a)
+    for i in 0..np:
+        a := cd.args[i]
+        if a == 0 or not ctx_dependent(a) or nodes[a].kind == .hole: continue
+        pt := subst_partial(cd.sig.params[i], cd.binds)
+        check_expr(a, pt)
+        add_flag(a, NF_CHECKED)
+        match_type(cd.sig.params[i], ntype(a), cd.binds, 0)
+    if expected != 0 and cd.sig.ret != 0:
+        rb := cd.binds
+        if match_type(int(cd.sig.ret), expected, rb, 0) >= 0: cd.binds = rb
+    for i in 0..int(cd.sig.ntp):
+        b := cd.binds[i]
+        if b == 0 or tkind(b) == .var:
+            if partial: fatal(nodes[n].pos, "cannot infer generic types for partial application of '{name_of(name)}'; annotate the arguments")
+            fatal(nodes[n].pos, "cannot infer type parameter {i + 1} of '{name_of(name)}'")
+    f := get_fn_inst(decl, cd.binds, nodes[n].pos)
+    fin: [int]
+    for i in 0..np:
+        a := cd.args[i]
+        is_mut := has_flag(kid(decl, i), NF_MUT)
+        if a == 0:
+            fin.push(default_arg(decl, i, fns[f].ptypes[i]))
+            continue
+        finish_arg(a, fns[f].ptypes[i], is_mut)
+        fin.push(a)
+    set_list(n, fin)
+    nodes[n].sym = i32(f)
+    nodes[n].aux = 0
+    nodes[n].kind = .call
+    nodes[n].a = 0
+    if partial: return finish_partial(n, fns[f].ptypes, int(cd.sig.mutmask), int(fns[f].ret))
+    nodes[n].type = fns[f].ret
+    int(fns[f].ret)
+
+fn value_call(n: int, callee: int, args: [int]) -> int:
+    ft := prune(ntype(callee))
+    if types[ft].kind != .fn_ and types[ft].kind != .cfn: fatal(nodes[n].pos, "cannot call a value of type {type_str(ft)}")
+    na := int(types[ft].nargs)
+    if args.len() != na: fatal(nodes[n].pos, "function value expects {na} argument(s), got {args.len()}")
+    for i, a in args:
+        if nodes[a].kind == .namedarg: fatal(nodes[a].pos, "named arguments are not allowed when calling a function value")
+        finish_arg(a, targ(ft, i), int(types[ft].mutmask) & (1 << i) != 0)
+    set_list(n, args)
+    nodes[n].a = i32(callee)
+    nodes[n].sym = 0
+    nodes[n].aux = 1
+    if types[ft].kind == .cfn: nodes[n].aux = 4
+    if has_hole(args):
+        if types[ft].kind == .cfn: fatal(nodes[n].pos, "partial application of C function pointers is not supported")
+        pts: [int]
+        for i in 0..na: pts.push(targ(ft, i))
+        return finish_partial(n, pts, int(types[ft].mutmask), int(types[ft].elem))
+    nodes[n].type = types[ft].elem
+    int(types[ft].elem)
+
+fn slot_of(args: [int], a: int) -> int:
+    for x in args:
+        if x == a or (nodes[x].kind == .namedarg and int(nodes[x].a) == a): return a
+    a
+
+fn struct_ctor(n: int, st_type: int, decl: int, args: [int], expected: int) -> int:
+    t := st_type
+    if t == 0 and nkids2(decl) == 0: t = get_struct_inst(decl, [])
+    if t == 0:
+        ntp := nkids2(decl)
+        binds := [0; ntp]
+        ex := prune(expected)
+        if expected != 0 and types[ex].kind == .struct_ and int(structs[int(types[ex].st)].decl) == decl: t = ex
+        else:
+            mark := scope_mark()
+            for i in 0..ntp:
+                nm := int(nodes[kid2(decl, i)].name)
+                push_scope_sym(nm, new_sym(nm, .type_, mk_param(i), 0))
+            check_args_untyped(args)
+            pnames: [int]
+            hasdef: [bool]
+            for i in 0..nkids(decl):
+                pnames.push(int(nodes[kid(decl, i)].name))
+                hasdef.push(true)
+            mapped: [int]
+            err := map_args(pnames, hasdef, args, mapped)
+            if len(err) > 0: fatal(nodes[n].pos, err)
+            for i in 0..nkids(decl):
+                a := mapped[i]
+                if a == 0 or ctx_dependent(a): continue
+                f := kid(decl, i)
+                if nodes[f].a == 0: continue
+                saved := cx
+                pat := resolve_type(int(nodes[f].a))
+                if is_lit(a): finalize_literal(a)
+                match_type(pat, ntype(a), binds, 0)
+            scope_reset(mark)
+            for i in 0..ntp:
+                if binds[i] == 0: fatal(nodes[n].pos, "cannot infer type parameter '{name_of(int(nodes[kid2(decl, i)].name))}' of {name_of(int(nodes[decl].name))}")
+            t = get_struct_inst(decl, binds)
+    si := int(types[prune(t)].st)
+    check_struct_fields(si)
+    nf := int(structs[si].nfields)
+    pnames: [int]
+    hasdef: [bool]
+    for i in 0..nf:
+        pnames.push(int(fields[int(structs[si].fields) + i].name))
+        hasdef.push(true)
+    mapped: [int]
+    err := map_args(pnames, hasdef, args, mapped)
+    if len(err) > 0: fatal(nodes[n].pos, "in {name_of(int(nodes[decl].name))}(...): {err}")
+    fin: [int]
+    for i in 0..nf:
+        fi := int(structs[si].fields) + i
+        a := mapped[i]
+        if a == 0:
+            dv := int(fields[fi].defval)
+            if dv != 0:
+                d := clone(dv)
+                saved := cx
+                ctxs.push(FnCtx(ctxs[cx].inst, -1, i32(T_VOID), false, 0, nodes[decl].mod, i32(sc_names.len())))
+                cx = ctxs.len() - 1
+                check_expr(d, int(fields[fi].type))
+                coerce(d, int(fields[fi].type))
+                ctxs.pop()
+                cx = saved
+                fin.push(d)
+            else: fin.push(0)
+            continue
+        if nodes[a].kind == .hole: fatal(nodes[a].pos, "partial application of constructors is not supported")
+        finish_arg(a, int(fields[fi].type), false)
+        fin.push(a)
+    nodes[n].kind = .call
+    nodes[n].aux = 2
+    set_list(n, fin)
+    nodes[n].type = i32(t)
+    nodes[n].a = 0
+    t
+
+fn variant_ctor(n: int, et: int, vi: int, args: [int]) -> int:
+    si := int(types[prune(et)].st)
+    v := int(structs[si].variants) + vi
+    nf := int(variants[v].nfields)
+    pnames: [int]
+    hasdef: [bool]
+    for i in 0..nf:
+        pnames.push(int(fields[int(variants[v].fields) + i].name))
+        hasdef.push(false)
+    mapped: [int]
+    err := map_args(pnames, hasdef, args, mapped)
+    if len(err) > 0: fatal(nodes[n].pos, "in {name_of(int(variants[v].name))}(...): {err}")
+    for i in 0..nf: finish_arg(mapped[i], int(fields[int(variants[v].fields) + i].type), false)
+    nodes[n].kind = .call
+    nodes[n].aux = 3
+    nodes[n].aux2 = i32(vi)
+    set_list(n, mapped)
+    nodes[n].type = i32(et)
+    nodes[n].a = 0
+    et
+
+fn conversion(n: int, to0: int, args: [int]) -> int:
+    if args.len() != 1 or nodes[args[0]].kind == .namedarg: fatal(nodes[n].pos, "{type_str(to0)}(...) takes one argument")
+    to := prune(to0)
+    tk := types[to].kind
+    if tk == .str_:
+        part := mk(.pair, nodes[n].pos)
+        nodes[part].a = i32(args[0])
+        nodes[part].sval = -1
+        nodes[n] = Node(kind = .str_lit, pos = nodes[n].pos, aux = 1)
+        set_list(n, [part])
+        return check_expr(n, 0)
+    if tk == .vec: return check_vec_ctor(n, to, args)
+    a := args[0]
+    check_expr(a, to)
+    ft := prune(ntype(a))
+    if is_lit(a) and is_numeric(to):
+        coerce(a, to)
+        nodes[n] = nodes[a]
+        return to
+    fk := types[ft].kind
+    cv := -1
+    if tk == .int_:
+        if fk == .int_ or fk == .bool_: cv = int(CV.int_)
+        else if fk == .float_: cv = int(CV.float2int)
+        else if fk == .enum_ and simple_enum(ft): cv = int(CV.int_)
+        else if fk == .ptr: cv = int(CV.ptr)
+    else if tk == .float_:
+        if fk == .int_: cv = int(CV.int2float)
+        else if fk == .float_: cv = int(CV.float_)
+    else if tk == .bool_:
+        if fk == .bool_: cv = int(CV.none_)
+    if cv < 0: fatal(nodes[n].pos, "cannot convert {type_str(ft)} to {type_str(to)}")
+    if type_eq(ft, to):
+        nodes[n] = nodes[a]
+        return to
+    nodes[n] = Node(kind = .conv, pos = nodes[n].pos, a = i32(a), aux = i32(cv), type = i32(to), flags = i32(NF_CHECKED))
+    to
+
+fn collect_in(table: {int: int}, name: int, out: mut [int]):
+    s := table.get(name) ?? 0
+    if s == 0 or syms[s].kind != .fns: return
+    o := s
+    while o != 0:
+        d := int(syms[o].decl)
+        if not out.contains(d): out.push(d)
+        o = int(syms[o].next)
+
+fn collect_module(m: int, name: int, out: mut [int]):
+    if m < 0: return
+    if modules[m].is_prelude: collect_in(prelude, name, out)
+    else:
+        collect_in(modules[m].names, name, out)
+        for u in modules[m].uses:
+            if modules[u].is_prelude: collect_in(prelude, name, out)
+            else: collect_in(modules[u].names, name, out)
+
+fn collect_fns(name: int, out: mut [int]):
+    collect_module(cur_mod(), name, out)
+    collect_in(prelude, name, out)
+
+fn call_by_name(n: int, name: int, mod_scope: int, args: [int], expected: int, ufcs: bool) -> int:
+    ii := intrinsic_of(name)
+    if ii >= 0 and intrinsics[ii].arr and args.len() > 0:
+        a0 := args[0]
+        if not has_flag(a0, NF_CHECKED):
+            check_expr(a0, 0)
+            add_flag(a0, NF_CHECKED)
+        t0 := prune(ntype(a0))
+        if types[t0].kind == .array or types[t0].kind == .str_: return check_intrinsic(n, intrinsics[ii].id, args, expected)
+    decls: [int]
+    if not ufcs:
+        s := 0
+        if mod_scope >= 0: s = module_lookup(mod_scope, name)
+        else: s = lookup(name)
+        if s != 0:
+            sk := syms[s].kind
+            if sk == .local or sk == .global:
+                vt := 0
+                if sk == .local: vt = int(locals[int(syms[s].ref)].type)
+                else:
+                    ensure_global(int(syms[s].ref), nodes[n].pos)
+                    vt = int(globals[int(syms[s].ref)].type)
+                if tkind(vt) == .fn_ or tkind(vt) == .cfn:
+                    callee := mk(.ident, nodes[n].pos)
+                    nodes[callee].name = i32(name)
+                    if mod_scope >= 0:
+                        saved := cx
+                        check_expr_in_module(callee, mod_scope)
+                    else: check_expr(callee, 0)
+                    return value_call(n, callee, args)
+            else if sk == .struct_: return struct_ctor(n, 0, int(syms[s].ref), args, expected)
+            else if sk == .enum_: fatal(nodes[n].pos, "use {name_of(name)}.variant(...) to construct an enum")
+            else if sk == .type_: return conversion(n, int(syms[s].ref), args)
+            else if sk == .const_ or sk == .module: fatal(nodes[n].pos, "'{name_of(name)}' is not a function")
+            else if sk == .builtin:
+                collect_fns(name, decls)
+                if decls.len() == 0: return check_intrinsic(n, int(syms[s].ref) as IN, args, expected)
+    if mod_scope >= 0: collect_module(mod_scope, name, decls)
+    else: collect_fns(name, decls)
+    if ufcs and args.len() > 0:
+        tm := module_of_type(ntype(args[0]))
+        if tm >= 0: collect_module(tm, name, decls)
+    if decls.len() == 0:
+        if ii >= 0 and not intrinsics[ii].arr: return check_intrinsic(n, intrinsics[ii].id, args, expected)
+        if ii >= 0 and intrinsics[ii].arr and args.len() > 0: fatal(nodes[n].pos, "'{name_of(name)}' expects an array or string, found {type_str(ntype(args[0]))}")
+        if ufcs: fatal(nodes[n].pos, "no field or function '{name_of(name)}' for type {type_str(ntype(args[0]))}")
+        fatal(nodes[n].pos, "unknown function '{name_of(name)}'")
+    resolve_fn_call(n, name, decls, args, expected)
+
+fn check_expr_in_module(n: int, m: int) -> int:
+    saved := cx
+    ctxs.push(FnCtx(ctxs[cx].inst, i32(cx), ctxs[cx].ret, false, 0, i32(m), i32(sc_names.len())))
+    cx = ctxs.len() - 1
+    t := check_expr(n, 0)
+    ctxs.pop()
+    cx = saved
+    t
+
+fn check_call(n: int, expected: int) -> int:
+    callee := int(nodes[n].a)
+    args := kids(n)
+    ck := nodes[callee].kind
+    if ck == .ident: return call_by_name(n, int(nodes[callee].name), -1, args, expected, false)
+    if ck == .dotname:
+        et := prune(expected)
+        if expected != 0 and types[et].kind == .opt: et = prune(int(types[et].elem))
+        if expected == 0 or types[et].kind != .enum_: fatal(nodes[callee].pos, "cannot infer the enum type for '.{name_of(int(nodes[callee].name))}'")
+        vi := find_variant(int(types[et].st), int(nodes[callee].name))
+        if vi < 0: fatal(nodes[callee].pos, "{type_str(et)} has no variant '{name_of(int(nodes[callee].name))}'")
+        return variant_ctor(n, et, vi, args)
+    if ck == .field:
+        recv := int(nodes[callee].a)
+        rt := prune(check_expr(recv, 0))
+        fname := int(nodes[callee].name)
+        rk := types[rt].kind
+        if rk == .module: return call_by_name(n, fname, int(types[rt].mod), args, expected, false)
+        if rk == .typeval:
+            tt := prune(int(types[rt].elem))
+            if tt != 0 and types[tt].kind == .enum_:
+                vi := find_variant(int(types[tt].st), fname)
+                if vi < 0: fatal(nodes[callee].pos, "{type_str(tt)} has no variant '{name_of(fname)}'")
+                return variant_ctor(n, tt, vi, args)
+            fatal(nodes[callee].pos, "type {type_str(tt)} has no member '{name_of(fname)}'")
+        st := rt
+        if rk == .ptr: st = prune(int(types[rt].elem))
+        if types[st].kind == .struct_:
+            si := int(types[st].st)
+            check_struct_fields(si)
+            for i in 0..int(structs[si].nfields):
+                fi := int(structs[si].fields) + i
+                if int(fields[fi].name) == fname and (tkind(int(fields[fi].type)) == .fn_ or tkind(int(fields[fi].type)) == .cfn):
+                    check_expr(callee, 0)
+                    return value_call(n, callee, args)
+        # uniform call syntax
+        add_flag(recv, NF_CHECKED)
+        nl := [recv]
+        for a in args: nl.push(a)
+        set_list(n, nl)
+        return call_by_name(n, fname, -1, nl, expected, true)
+    if ck == .index and nodes[int(nodes[callee].a)].kind == .ident:
+        s := lookup(int(nodes[int(nodes[callee].a)].name))
+        if s != 0 and syms[s].kind == .struct_:
+            t := expr_as_type(callee)
+            return struct_ctor(n, t, int(syms[s].ref), args, expected)
+    check_expr(callee, 0)
+    value_call(n, callee, args)
+
+fn resolve_by_types(name: int, ts: [int], pos: int, required: bool) -> int:
+    decls: [int]
+    collect_fns(name, decls)
+    collect_in(prelude, name, decls)
+    if ts.len() > 0:
+        tm := module_of_type(ts[ts.len() - 1])
+        if tm >= 0: collect_module(tm, name, decls)
+    best := -1
+    bestcost := 1 << 30
+    bestb: [int]
+    for k, d in decls:
+        sig := fn_sig(d)
+        if nkids(d) != ts.len(): continue
+        binds := [0; int(sig.ntp)]
+        cost := 0
+        ok := true
+        for i in 0..ts.len():
+            r := match_type(sig.params[i], ts[i], binds, 0)
+            if r < 0 or (int(sig.mutmask) & (1 << i) != 0 and r == 1):
+                ok = false
+                break
+            cost += r
+        if not ok: continue
+        if cost < bestcost:
+            best = k
+            bestcost = cost
+            bestb = binds
+    if best < 0:
+        if not required: return 0
+        last := "()"
+        if ts.len() > 0: last = type_str(ts[ts.len() - 1])
+        fatal(pos, "no function '{name_of(name)}' accepting {last}")
+    get_fn_inst(decls[best], bestb, pos)
+
+# ---------------- intrinsics ----------------
+fn arg_type(args: [int], i: int, expected: int) -> int:
+    a := args[i]
+    if nodes[a].kind == .namedarg: fatal(nodes[a].pos, "named arguments are not supported here")
+    if not has_flag(a, NF_CHECKED) or nodes[a].type == 0:
+        check_expr(a, expected)
+        add_flag(a, NF_CHECKED)
+    if expected != 0: coerce(a, expected)
+    prune(ntype(a))
+
+fn nargs_check(n: int, nargs: int, lo: int, hi: int, name: str):
+    if nargs < lo or nargs > hi:
+        if lo == hi: fatal(nodes[n].pos, "{name} expects {lo} argument(s), got {nargs}")
+        fatal(nodes[n].pos, "{name} expects {lo} to {hi} arguments, got {nargs}")
+
+fn fmt_part(part: int, pos: int):
+    t := prune(ntype(int(nodes[part].a)))
+    if types[t].kind == .void_: fatal(nodes[int(nodes[part].a)].pos, "cannot format a value of type void")
+    bt := mk_array(T_U8)
+    if nodes[part].sval >= 0: nodes[part].sym = i32(resolve_by_types(intern("__fmt_spec"), [bt, t, T_STR], pos, true))
+    else: nodes[part].sym = i32(resolve_by_types(intern("__fmt"), [bt, t], pos, true))
+
+fn check_intrinsic(n: int, id: IN, args: [int], expected: int) -> int:
+    nodes[n].kind = .intrinsic
+    nodes[n].aux = i32(int(id))
+    set_list(n, args)
+    nodes[n].a = 0
+    nargs := args.len()
+    r := T_VOID
+    if id == .len or id == .arrcap:
+        nargs_check(n, nargs, 1, 1, "len")
+        t := arg_type(args, 0, 0)
+        if types[t].kind != .array and types[t].kind != .str_: fatal(nodes[n].pos, "len() expects an array or string, found {type_str(t)}")
+        r = T_INT
+    else if id == .push:
+        nargs_check(n, nargs, 2, 2, "push")
+        t := arg_type(args, 0, 0)
+        if types[t].kind != .array: fatal(nodes[n].pos, "push() needs an array, found {type_str(t)}")
+        check_place(args[0], false)
+        arg_type(args, 1, int(types[t].elem))
+    else if id == .pop:
+        nargs_check(n, nargs, 1, 1, "pop")
+        t := arg_type(args, 0, 0)
+        if types[t].kind != .array: fatal(nodes[n].pos, "pop() needs an array")
+        check_place(args[0], false)
+        r = int(types[t].elem)
+    else if id == .insert:
+        nargs_check(n, nargs, 3, 3, "insert")
+        t := arg_type(args, 0, 0)
+        if types[t].kind != .array: fatal(nodes[n].pos, "insert() needs an array")
+        check_place(args[0], false)
+        arg_type(args, 1, T_INT)
+        arg_type(args, 2, int(types[t].elem))
+    else if id == .remove:
+        nargs_check(n, nargs, 2, 2, "remove")
+        t := arg_type(args, 0, 0)
+        if types[t].kind != .array: fatal(nodes[n].pos, "remove() needs an array")
+        check_place(args[0], false)
+        arg_type(args, 1, T_INT)
+        r = int(types[t].elem)
+    else if id == .clear:
+        nargs_check(n, nargs, 1, 1, "clear")
+        t := arg_type(args, 0, 0)
+        if types[t].kind != .array: fatal(nodes[n].pos, "clear() needs an array")
+        check_place(args[0], false)
+    else if id == .reserve or id == .resize or id == .truncate or id == .setlen:
+        nargs_check(n, nargs, 2, 2, "reserve/resize/truncate")
+        t := arg_type(args, 0, 0)
+        if types[t].kind != .array: fatal(nodes[n].pos, "this operation needs an array")
+        check_place(args[0], false)
+        arg_type(args, 1, T_INT)
+    else if id == .arrdata:
+        nargs_check(n, nargs, 1, 1, "data")
+        t := arg_type(args, 0, 0)
+        if types[t].kind == .str_: r = T_RAWPTR
+        else if types[t].kind == .array: r = mk_ptr(int(types[t].elem))
+        else: fatal(nodes[n].pos, "data() needs an array or string")
+    else if id == .syscall:
+        if nargs < 1 or nargs > 7: fatal(nodes[n].pos, "syscall takes 1 to 7 arguments")
+        for i in 0..nargs:
+            t := arg_type(args, i, 0)
+            a := args[i]
+            if is_lit(a): coerce(a, T_INT)
+            else if types[t].kind == .ptr or types[t].kind == .null_:
+                if types[t].kind == .null_: nodes[a].type = i32(T_RAWPTR)
+            else if types[t].kind == .int_:
+                if t != T_INT: coerce(a, T_INT)
+            else if types[t].kind == .bool_: pass
+            else: fatal(nodes[a].pos, "syscall arguments must be integers or pointers")
+        r = T_INT
+    else if id == .memcpy or id == .memset:
+        nm := "mem_set"
+        if id == .memcpy: nm = "mem_copy"
+        nargs_check(n, nargs, 3, 3, nm)
+        t0 := arg_type(args, 0, 0)
+        if types[t0].kind != .ptr: fatal(nodes[args[0]].pos, "expected a pointer")
+        if id == .memcpy:
+            t1 := arg_type(args, 1, 0)
+            if types[t1].kind != .ptr: fatal(nodes[args[1]].pos, "expected a pointer")
+        else: arg_type(args, 1, T_INT)
+        arg_type(args, 2, T_INT)
+    else if id == .sizeof or id == .alignof:
+        nargs_check(n, nargs, 1, 1, "size_of")
+        t := expr_as_type(args[0])
+        layout(t)
+        v := tsize(t)
+        if id == .alignof: v = talign(t)
+        nodes[n] = Node(kind = .int_lit, pos = nodes[n].pos, ival = v, type = i32(T_INT), flags = i32(NF_LITERAL | NF_CHECKED))
+        return T_INT
+    else if id == .panic:
+        nargs_check(n, nargs, 0, 1, "panic")
+        if nargs > 0: arg_type(args, 0, T_STR)
+        r = T_NEVER
+    else if id == .unreachable: r = T_NEVER
+    else if id == .assert:
+        nargs_check(n, nargs, 1, 2, "assert")
+        arg_type(args, 0, T_BOOL)
+        if nargs == 2: arg_type(args, 1, T_STR)
+    else if id == .print:
+        s := mk(.str_lit, nodes[n].pos)
+        nodes[s].aux = 1
+        parts: [int]
+        for i, a in args:
+            if nodes[a].kind == .namedarg: fatal(nodes[a].pos, "print() does not take named arguments")
+            if i > 0:
+                sp := mk(.str_lit, nodes[n].pos)
+                nodes[sp].sval = i32(intern(" "))
+                parts.push(sp)
+            part := mk(.pair, nodes[n].pos)
+            nodes[part].a = i32(a)
+            nodes[part].sval = -1
+            parts.push(part)
+        set_list(s, parts)
+        if nargs == 1 and nodes[args[0]].kind == .str_lit and nodes[args[0]].aux == 0: s = args[0]
+        check_expr(s, 0)
+        nodes[n].kind = .call
+        nodes[n].aux = 0
+        set_list(n, [s])
+        nodes[n].sym = i32(runtime_fn("__print_str"))
+        nodes[n].type = i32(T_VOID)
+        return T_VOID
+    else if id == .embed:
+        nargs_check(n, nargs, 1, 1, "embed")
+        a := args[0]
+        if nodes[a].kind != .str_lit or nodes[a].aux != 0: fatal(nodes[n].pos, "embed() needs a string literal path")
+        rel := name_of(int(nodes[a].sval))
+        path := rel
+        if not starts_with(rel, "/"): path = "{files[pos_file(nodes[n].pos)].dir}/{rel}"
+        d := read_file(path)
+        if d == none: fatal(nodes[n].pos, "embed: cannot read '{path}'")
+        nodes[n].sval = i32(intern(d!))
+        r = mk_array(T_U8)
+    else if id == .from_bytes:
+        nargs_check(n, nargs, 1, 1, "str_from_bytes")
+        arg_type(args, 0, mk_array(T_U8))
+        nodes[n].kind = .call
+        nodes[n].aux = 0
+        nodes[n].sym = i32(runtime_fn("__str_from_bytes"))
+        nodes[n].type = i32(T_STR)
+        return T_STR
+    else if id == .to_bytes:
+        nargs_check(n, nargs, 1, 1, "bytes")
+        arg_type(args, 0, T_STR)
+        r = mk_array(T_U8)
+    else if id == .argv: r = T_RAWPTR
+    else if id == .sqrt:
+        nargs_check(n, nargs, 1, 1, "sqrt")
+        t := arg_type(args, 0, 0)
+        if is_lit(args[0]) or types[t].kind == .int_:
+            coerce(args[0], T_FLOAT)
+            t = T_FLOAT
+        if types[t].kind != .float_: fatal(nodes[n].pos, "sqrt() needs a float")
+        r = t
+    else if id == .fmt_struct:
+        nargs_check(n, nargs, 2, 2, "__fmt_fields")
+        arg_type(args, 0, 0)
+        t := arg_type(args, 1, 0)
+        bt := mk_array(T_U8)
+        fts: [int]
+        k := types[t].kind
+        if k == .struct_:
+            si := int(types[t].st)
+            check_struct_fields(si)
+            for i in 0..int(structs[si].nfields): fts.push(int(fields[int(structs[si].fields) + i].type))
+        else if k == .tuple:
+            for i in 0..int(types[t].nargs): fts.push(targ(t, i))
+        else if k == .enum_:
+            si := int(types[t].st)
+            check_struct_fields(si)
+            for v in 0..int(structs[si].nvariants):
+                vi := int(structs[si].variants) + v
+                for i in 0..int(variants[vi].nfields): fts.push(int(fields[int(variants[vi].fields) + i].type))
+        else if k == .fn_ or k == .vec: pass
+        else: fatal(nodes[n].pos, "cannot format a value of type {type_str(t)}")
+        refs: [int]
+        for ft in fts:
+            ref := mk(.fnref, nodes[n].pos)
+            nodes[ref].sym = i32(resolve_by_types(intern("__fmt_elem"), [bt, ft], nodes[n].pos, true))
+            refs.push(ref)
+        set_list2(n, refs)
+    else if id == .hash:
+        nargs_check(n, nargs, 1, 1, "__hash_value")
+        arg_type(args, 0, 0)
+        r = T_U64
+    else if id == .callc:
+        # __call_c(fnptr, args...) : call a C function pointer (rarely needed; cfn types are preferred)
+        fatal(nodes[n].pos, "__call_c is not supported")
+    else: fatal(nodes[n].pos, "unsupported intrinsic")
+    nodes[n].type = i32(r)
+    r
+
+# ---------------- vectors ----------------
+fn vec_n(t: int) -> int: int(types[prune(t)].bits)
+fn vec_comp_type(t: int) -> int:
+    if types[prune(t)].sign: return T_I32
+    T_F32
+
+fn check_vec_ctor(n: int, t: int, args: [int]) -> int:
+    # vecN(x, y, ...) with scalars and/or smaller vectors; vecN(s) splats; mat4(...) 16 floats or none
+    total := 0
+    ct := vec_comp_type(t)
+    for a in args:
+        if nodes[a].kind == .namedarg: fatal(nodes[a].pos, "named arguments are not supported here")
+        at := prune(check_expr(a, 0))
+        add_flag(a, NF_CHECKED)
+        if types[at].kind == .vec:
+            total += vec_n(at)
+        else:
+            if is_lit(a) or is_numeric(at): coerce(a, ct)
+            else: fatal(nodes[a].pos, "expected a number or vector, found {type_str(at)}")
+            total += 1
+    want := vec_n(t)
+    if args.len() != 0 and total != want and not (args.len() == 1 and total == 1):
+        fatal(nodes[n].pos, "{type_str(t)}(...) needs {want} components, got {total}")
+    nodes[n].kind = .intrinsic
+    nodes[n].aux = i32(int(IN.vec_ctor))
+    set_list(n, args)
+    nodes[n].a = 0
+    nodes[n].type = i32(t)
+    t
+
+swizzle_chars := "xyzwrgbastpq"
+fn swizzle_index(c: u8) -> int:
+    i := find_byte(swizzle_chars, c)
+    if i < 0: return -1
+    i % 4
+
+# ---------------- operators ----------------
+fn op_overload(n: int, opname: str) -> int:
+    decls: [int]
+    nm := intern(opname)
+    collect_fns(nm, decls)
+    tm := module_of_type(ntype(int(nodes[n].a)))
+    if tm >= 0: collect_module(tm, nm, decls)
+    if nodes[n].b != 0:
+        tm2 := module_of_type(ntype(int(nodes[n].b)))
+        if tm2 >= 0: collect_module(tm2, nm, decls)
+    if decls.len() == 0: return 0
+    a := int(nodes[n].a)
+    b := int(nodes[n].b)
+    add_flag(a, NF_CHECKED)
+    args := [a]
+    if b != 0:
+        add_flag(b, NF_CHECKED)
+        args.push(b)
+    nodes[n] = Node(kind = .call, pos = nodes[n].pos)
+    set_list(n, args)
+    resolve_fn_call(n, nm, decls, args, 0)
+
+fn is_struct_like(t0: int) -> bool:
+    t := prune(t0)
+    k := types[t].kind
+    k == .struct_ or k == .tuple or (k == .enum_ and not simple_enum(t))
+
+fn check_binary(n: int, expected: int) -> int:
+    op := nodes[n].op as Tok
+    if op == .kw_in:
+        call := mk(.call, nodes[n].pos)
+        callee := mk(.field, nodes[n].pos)
+        nodes[callee].a = nodes[n].b
+        nodes[callee].name = i32(intern("contains"))
+        nodes[call].a = i32(callee)
+        set_list(call, [int(nodes[n].a)])
+        nodes[n] = nodes[call]
+        return check_expr(n, 0)
+    is_cmp := op == .eq or op == .ne or op == .lt or op == .le or op == .gt or op == .ge
+    is_shift := op == .shl or op == .shr
+    hint := 0
+    if not is_cmp and expected != 0 and (is_numeric(expected) or is_vec(expected)): hint = expected
+    a := int(nodes[n].a)
+    b := int(nodes[n].b)
+    ta := prune(check_expr(a, hint))
+    tb := 0
+    bk := nodes[b].kind
+    if bk == .none_lit or bk == .null_lit or bk == .dotname: tb = prune(check_expr(b, ta))
+    else:
+        h := 0
+        if not is_lit(a) and not is_shift and is_numeric(ta): h = ta
+        tb = prune(check_expr(b, h))
+    if types[ta].kind == .typeval or types[tb].kind == .typeval: fatal(nodes[n].pos, "a type name cannot be used as a value here")
+    # vectors
+    if is_vec(ta) or is_vec(tb): return check_vec_binary(n, op, ta, tb)
+    if is_struct_like(ta) or is_struct_like(tb):
+        opn := tok_text(op)
+        r := op_overload(n, opn)
+        if r != 0: return r
+        if op == .ne:
+            eqn := mk(.binary, nodes[n].pos)
+            nodes[eqn].op = i32(int(Tok.eq))
+            nodes[eqn].a = i32(a)
+            nodes[eqn].b = i32(b)
+            r2 := op_overload(eqn, "==")
+            if r2 != 0:
+                nodes[n] = Node(kind = .not_, pos = nodes[n].pos, a = i32(eqn), type = i32(T_BOOL))
+                return T_BOOL
+        if op == .eq or op == .ne:
+            if not type_eq(ta, tb): fatal(nodes[n].pos, "cannot compare {type_str(ta)} with {type_str(tb)}")
+            nodes[n].aux = 1
+            nodes[n].type = i32(T_BOOL)
+            return T_BOOL
+        fatal(nodes[n].pos, "operator {opn} is not defined for {type_str(ta)} and {type_str(tb)}")
+    if is_shift:
+        finalize_literal(a)
+        finalize_literal(b)
+        ta = prune(ntype(a))
+        tb = prune(ntype(b))
+        if not is_int(ta) or not is_int(tb): fatal(nodes[n].pos, "shift operands must be integers")
+        nodes[n].type = i32(ta)
+        return ta
+    tka := types[ta].kind
+    tkb := types[tb].kind
+    if op == .plus and tka == .str_:
+        coerce(b, T_STR)
+        nodes[n].aux = 2
+        nodes[n].type = i32(T_STR)
+        return T_STR
+    if op == .plus and tka == .array:
+        coerce(b, ta)
+        nodes[n].aux = 3
+        nodes[n].type = i32(ta)
+        return ta
+    if tka == .ptr and (op == .plus or op == .minus) and (is_int(tb) or is_lit(b)):
+        coerce(b, T_INT)
+        nodes[n].aux = 4
+        nodes[n].type = i32(ta)
+        return ta
+    if tka == .ptr and tkb == .ptr and op == .minus:
+        nodes[n].aux = 5
+        nodes[n].type = i32(T_INT)
+        return T_INT
+    if is_cmp:
+        if tka == .str_ or tkb == .str_:
+            if not type_eq(ta, tb): fatal(nodes[n].pos, "cannot compare {type_str(ta)} with {type_str(tb)}")
+            nodes[n].aux = 2
+            nodes[n].type = i32(T_BOOL)
+            return T_BOOL
+        if tka == .opt or tkb == .opt or tka == .none_lit or tkb == .none_lit:
+            if op != .eq and op != .ne: fatal(nodes[n].pos, "optionals can only be compared with == and !=")
+            if nodes[b].kind == .none_lit or nodes[a].kind == .none_lit:
+                if nodes[a].kind == .none_lit:
+                    nodes[n].a = i32(b)
+                    nodes[n].b = i32(a)
+                if tkind(ntype(int(nodes[n].a))) != .opt: fatal(nodes[n].pos, "only optionals can be compared with none")
+                nodes[n].aux = 6
+                nodes[n].type = i32(T_BOOL)
+                return T_BOOL
+            join_types(a, b, nodes[n].pos)
+            nodes[n].aux = 1
+            nodes[n].type = i32(T_BOOL)
+            return T_BOOL
+        if tka == .array or tkb == .array:
+            if op != .eq and op != .ne: fatal(nodes[n].pos, "arrays can only be compared with == and !=")
+            if not can_coerce(b, tb, ta): fatal(nodes[n].pos, "cannot compare {type_str(ta)} with {type_str(tb)}")
+            coerce(b, ta)
+            nodes[n].aux = 1
+            nodes[n].type = i32(T_BOOL)
+            return T_BOOL
+        if tka == .bool_ or tka == .enum_ or tka == .ptr or tka == .null_ or tka == .fn_ or tka == .cfn:
+            if tka == .null_:
+                nodes[n].a = i32(b)
+                nodes[n].b = i32(a)
+                a = int(nodes[n].a)
+                b = int(nodes[n].b)
+                x := ta
+                ta = tb
+                tb = x
+            if not can_coerce(b, tb, ta) and not type_eq(ta, tb): fatal(nodes[n].pos, "cannot compare {type_str(ta)} with {type_str(tb)}")
+            if types[ta].kind == .fn_: fatal(nodes[n].pos, "functions cannot be compared")
+            coerce(b, ta)
+            nodes[n].type = i32(T_BOOL)
+            return T_BOOL
+    if op == .amp or op == .pipe or op == .caret:
+        if tka == .bool_ and tkb == .bool_:
+            nodes[n].type = i32(T_BOOL)
+            return T_BOOL
+    if not is_numeric(ta) or not is_numeric(tb):
+        if tka == .opt and is_numeric(int(types[ta].elem)): fatal(nodes[n].pos, "operator {tok_text(op)} on an optional value: unwrap it first with `x!` or `x ?? default`")
+        fatal(nodes[n].pos, "operator {tok_text(op)} is not defined for {type_str(ta)} and {type_str(tb)}")
+    j := join_types(a, b, nodes[n].pos)
+    if (op == .amp or op == .pipe or op == .caret) and not is_int(j): fatal(nodes[n].pos, "bitwise operators need integers")
+    if is_cmp: nodes[n].type = i32(T_BOOL)
+    else: nodes[n].type = i32(j)
+    if not is_cmp and is_lit(a) and is_lit(b) and nodes[a].kind == .int_lit and nodes[b].kind == .int_lit:
+        x := nodes[a].ival
+        y := nodes[b].ival
+        v := 0
+        ok := true
+        if op == .plus: v = x + y
+        else if op == .minus: v = x - y
+        else if op == .star: v = x * y
+        else if op == .slash:
+            if y == 0: ok = false
+            else: v = x / y
+        else if op == .percent:
+            if y == 0: ok = false
+            else: v = x % y
+        else if op == .amp: v = x & y
+        else if op == .pipe: v = x | y
+        else if op == .caret: v = x ^ y
+        else: ok = false
+        if ok: nodes[n] = Node(kind = .int_lit, pos = nodes[n].pos, ival = v, flags = i32(NF_LITERAL | NF_CHECKED), type = i32(T_INT))
+    ntype(n)
+
+fn check_vec_binary(n: int, op: Tok, ta: int, tb: int) -> int:
+    a := int(nodes[n].a)
+    b := int(nodes[n].b)
+    if op == .eq or op == .ne:
+        if not type_eq(ta, tb): fatal(nodes[n].pos, "cannot compare {type_str(ta)} with {type_str(tb)}")
+        nodes[n].aux = 1
+        nodes[n].type = i32(T_BOOL)
+        return T_BOOL
+    if op != .plus and op != .minus and op != .star and op != .slash: fatal(nodes[n].pos, "operator {tok_text(op)} is not defined for vectors")
+    if is_vec(ta) and is_vec(tb):
+        if ta == T_MAT4 and tb == T_MAT4:
+            if op != .star: fatal(nodes[n].pos, "matrices only support *")
+            nodes[n].aux = 7
+            nodes[n].type = i32(T_MAT4)
+            return T_MAT4
+        if ta == T_MAT4 and tb == T_VEC4 and op == .star:
+            nodes[n].aux = 8
+            nodes[n].type = i32(T_VEC4)
+            return T_VEC4
+        if not type_eq(ta, tb): fatal(nodes[n].pos, "cannot apply {tok_text(op)} to {type_str(ta)} and {type_str(tb)}")
+        nodes[n].aux = 9
+        nodes[n].type = i32(ta)
+        return ta
+    # vector op scalar / scalar op vector
+    if is_vec(ta):
+        coerce(b, vec_comp_type(ta))
+        nodes[n].aux = 10
+        nodes[n].type = i32(ta)
+        return ta
+    if op != .star and op != .slash and op != .plus and op != .minus: fatal(nodes[n].pos, "invalid vector operation")
+    coerce(a, vec_comp_type(tb))
+    nodes[n].aux = 11
+    nodes[n].type = i32(tb)
+    tb
+
+# ---------------- match ----------------
+fn check_match(m: int, expected: int) -> int:
+    is_stmt := has_flag(m, NF_STMT)
+    check_expr(int(nodes[m].a), 0)
+    finalize_literal(int(nodes[m].a))
+    st := prune(ntype(int(nodes[m].a)))
+    mark := scope_mark()
+    hidden := new_local(0, st, nodes[m].pos)
+    locals[hidden].flags = i32(LF_ADDR)
+    nodes[m].sym = i32(hidden)
+    result := 0
+    first_val := 0
+    has_wild := false
+    seen: [bool]
+    if types[st].kind == .enum_:
+        check_struct_fields(int(types[st].st))
+        seen = [false; int(structs[int(types[st].st)].nvariants)]
+    for i in 0..nkids(m):
+        arm := kid(m, i)
+        amark := scope_mark()
+        for k in 0..nkids(arm):
+            p := kid(arm, k)
+            pk := nodes[p].kind
+            if pk == .pwild:
+                has_wild = true
+                continue
+            if pk == .pvariant and types[st].kind == .enum_:
+                si := int(types[st].st)
+                vi := find_variant(si, int(nodes[p].name))
+                if vi < 0: fatal(nodes[p].pos, "{type_str(st)} has no variant '{name_of(int(nodes[p].name))}'")
+                nodes[p].aux2 = i32(vi)
+                seen[vi] = true
+                v := int(structs[si].variants) + vi
+                if nkids(p) > 0:
+                    if nkids(p) != int(variants[v].nfields): fatal(nodes[p].pos, "variant '{name_of(int(variants[v].name))}' has {variants[v].nfields} field(s), pattern binds {nkids(p)}")
+                    if nkids(arm) > 1: fatal(nodes[p].pos, "patterns with bindings cannot be combined with other patterns")
+                    for f in 0..nkids(p):
+                        b := kid(p, f)
+                        if name_of(int(nodes[b].name)) == "_": continue
+                        ft := int(fields[int(variants[v].fields) + f].type)
+                        l := new_local(int(nodes[b].name), ft, nodes[b].pos)
+                        locals[l].flags = i32(int(locals[l].flags) | LF_ALIAS)
+                        fa := mk(.field, nodes[b].pos)
+                        nodes[fa].a = i32(mk_ident_local(hidden, nodes[b].pos))
+                        nodes[fa].aux = -3
+                        nodes[fa].aux2 = i32(vi)
+                        nodes[fa].ival = f
+                        nodes[fa].type = i32(ft)
+                        add_flag(fa, NF_CHECKED)
+                        locals[l].alias = i32(fa)
+                        nodes[b].sym = i32(l)
+                continue
+            if pk == .pvariant:
+                if nodes[p].aux != 0: fatal(nodes[p].pos, "variant patterns need an enum value")
+                id := mk(.ident, nodes[p].pos)
+                nodes[id].name = nodes[p].name
+                nodes[p] = Node(kind = .plit, pos = nodes[p].pos, a = i32(id))
+                pk = .plit
+            if pk == .plit:
+                e := int(nodes[p].a)
+                check_expr(e, st)
+                coerce(e, st)
+                if types[st].kind == .enum_ and nodes[e].kind == .dotname: seen[int(nodes[e].aux)] = true
+                continue
+            if pk == .prange:
+                if not is_int(st): fatal(nodes[p].pos, "range patterns need an integer value")
+                check_to(int(nodes[p].a), st)
+                check_to(int(nodes[p].b), st)
+                continue
+            fatal(nodes[p].pos, "invalid pattern")
+        body := int(nodes[arm].b)
+        if is_stmt: check_block(body, 0, false)
+        else:
+            exp := expected
+            if result != 0: exp = result
+            t := check_block(body, exp, true)
+            if t != T_NEVER:
+                if nodes[body].aux == 0 and tkind(t) == .void_:
+                    if result != 0 and tkind(result) != .void_ and expected != 0: fatal(nodes[arm].pos, "match arm has no value")
+                    result = T_VOID
+                else if result == 0:
+                    result = t
+                    first_val = body
+                else:
+                    vp := block_value(body)
+                    if expected != 0: coerce(vp, expected)
+                    else if first_val != 0: result = join_types(block_value(first_val), vp, nodes[arm].pos)
+                    else: coerce(vp, result)
+        scope_reset(amark)
+    scope_reset(mark)
+    exhaustive := has_wild
+    if not exhaustive and types[st].kind == .enum_:
+        exhaustive = true
+        for s in seen:
+            if not s: exhaustive = false
+    nodes[m].aux2 = i32(int(exhaustive))
+    if is_stmt:
+        nodes[m].type = i32(T_VOID)
+        return T_VOID
+    if not exhaustive: fatal(nodes[m].pos, "match expression is not exhaustive (add a `_:` arm)")
+    if result == 0: result = T_NEVER
+    if expected != 0 and result != T_NEVER:
+        for i in 0..nkids(m):
+            b := int(nodes[kid(m, i)].b)
+            if nodes[b].aux != 0: coerce(block_value(b), expected)
+        result = expected
+    else:
+        for i in 0..nkids(m):
+            b := int(nodes[kid(m, i)].b)
+            if nodes[b].aux != 0:
+                finalize_literal(block_value(b))
+                coerce(block_value(b), result)
+    nodes[m].type = i32(result)
+    result
+
+# ---------------- lambdas ----------------
+fn check_lambda(lam: int, expected: int) -> int:
+    et := prune(expected)
+    if expected != 0 and types[et].kind != .fn_: et = 0
+    if expected == 0: et = 0
+    np := nkids(lam)
+    if et != 0 and int(types[et].nargs) != np: fatal(nodes[lam].pos, "lambda has {np} parameter(s) but {types[et].nargs} are expected")
+    f := new_inst(FK_LAMBDA, cur_mod(), "lambda")
+    fns[f].decl = i32(lam)
+    fns[f].has_env = true
+    fns[f].body = nodes[lam].b
+    mm := 0
+    pts: [int]
+    for i in 0..np:
+        p := kid(lam, i)
+        pt := 0
+        if nodes[p].a != 0:
+            pt = resolve_type(int(nodes[p].a))
+            if et != 0 and not unify(pt, targ(et, i)): fatal(nodes[p].pos, "parameter type {type_str(pt)} does not match expected {type_str(targ(et, i))}")
+        else if et != 0: pt = targ(et, i)
+        else: fatal(nodes[p].pos, "cannot infer the type of parameter '{name_of(int(nodes[p].name))}'; add a type annotation")
+        if has_flag(p, NF_MUT): mm |= 1 << i
+        if et != 0 and int(types[et].mutmask) & (1 << i) != 0:
+            mm |= 1 << i
+            add_flag(p, NF_MUT)
+        pts.push(pt)
+    fns[f].ptypes = pts
+    ret_hint := 0
+    if et != 0: ret_hint = int(types[et].elem)
+    check_lambda_body(f, lam, ret_hint)
+    zp: [int]
+    for t in fns[f].ptypes: zp.push(zonk(t))
+    fns[f].ptypes = zp
+    fns[f].ret = i32(zonk(int(fns[f].ret)))
+    zonk_tree(int(fns[f].body))
+    for l in fns[f].locals: locals[l].type = i32(zonk(int(locals[l].type)))
+    nodes[lam].sym = i32(f)
+    t := mk_fn(zp, int(fns[f].ret), mm)
+    nodes[lam].type = i32(t)
+    fns[f].fntype = i32(t)
+    t
+
+fn fn_value(n: int, expected: int) -> int:
+    decls: [int]
+    collect_fns(int(nodes[n].name), decls)
+    et := prune(expected)
+    if expected == 0: et = 0
+    f := 0
+    for d in decls:
+        sig := fn_sig(d)
+        if et != 0 and (types[et].kind == .fn_ or types[et].kind == .cfn):
+            if int(types[et].nargs) != nkids(d): continue
+            binds := [0; int(sig.ntp)]
+            ok := true
+            for i in 0..int(types[et].nargs):
+                r := match_type(sig.params[i], targ(et, i), binds, 0)
+                if r < 0 or r == 1:
+                    ok = false
+                    break
+            if not ok: continue
+            for b in binds:
+                if b == 0: ok = false
+            if not ok: continue
+            f = get_fn_inst(d, binds, nodes[n].pos)
+            break
+        else if not sig.generic and decls.len() == 1: f = get_fn_inst(d, [], nodes[n].pos)
+    if f == 0:
+        if et != 0 and types[et].kind == .fn_: fatal(nodes[n].pos, "no version of '{name_of(int(nodes[n].name))}' matches {type_str(et)}")
+        fatal(nodes[n].pos, "cannot use overloaded or generic function '{name_of(int(nodes[n].name))}' as a value without a known type")
+    mm := 0
+    d := int(fns[f].decl)
+    for i in 0..fns[f].ptypes.len():
+        if has_flag(kid(d, i), NF_MUT): mm |= 1 << i
+    nodes[n].kind = .fnref
+    nodes[n].sym = i32(f)
+    t := mk_fn(fns[f].ptypes, int(fns[f].ret), mm)
+    if et != 0 and types[et].kind == .cfn:
+        if not fns[f].cabi: fatal(nodes[n].pos, "'{name_of(int(nodes[n].name))}' must be marked @cabi to be used as a C function pointer")
+        t = mk_cfn(fns[f].ptypes, int(fns[f].ret))
+        nodes[n].aux = 1
+    nodes[n].type = i32(t)
+    t
+
+fn mk_ident_local(l: int, pos: int) -> int:
+    n := mk(.ident, pos)
+    nodes[n].name = locals[l].name
+    nodes[n].sym = i32(l)
+    nodes[n].type = locals[l].type
+    nodes[n].aux = i32(int(SK.local))
+    add_flag(n, NF_CHECKED)
+    n
+
+# ---------------- main expression checker ----------------
+fn check_expr(n: int, expected: int) -> int:
+    last_checked = n
+    if nodes[n].type != 0 and has_flag(n, NF_CHECKED): return ntype(n)
+    t := 0
+    ex := prune(expected)
+    if expected == 0: ex = 0
+    exk := TK.void_
+    if ex != 0: exk = types[ex].kind
+    k := nodes[n].kind
+    if k == .int_lit:
+        add_flag(n, NF_LITERAL)
+        nodes[n].type = i32(T_INT)
+        if ex != 0 and exk == .int_:
+            coerce(n, ex)
+            t = ex
+        else if ex != 0 and exk == .float_:
+            coerce(n, ex)
+            t = ex
+        else if ex != 0 and exk == .opt and is_numeric(int(types[ex].elem)):
+            coerce(n, prune(int(types[ex].elem)))
+            t = ntype(n)
+        else: t = T_INT
+    else if k == .float_lit:
+        if ex != 0 and exk == .float_:
+            clear_flag(n, NF_LITERAL)
+            t = ex
+        else if ex != 0 and exk == .opt and is_float(int(types[ex].elem)):
+            clear_flag(n, NF_LITERAL)
+            t = prune(int(types[ex].elem))
+        else:
+            add_flag(n, NF_LITERAL)
+            t = T_FLOAT
+    else if k == .str_lit:
+        if nodes[n].aux != 0:
+            for i in 0..nkids(n):
+                part := kid(n, i)
+                if nodes[part].kind != .pair: continue
+                e := int(nodes[part].a)
+                check_expr(e, 0)
+                finalize_literal(e)
+                fmt_part(part, nodes[part].pos)
+        t = T_STR
+    else if k == .bool_lit: t = T_BOOL
+    else if k == .none_lit:
+        if ex != 0 and exk == .opt: t = ex
+        else: t = mk_opt(mk_var())
+    else if k == .null_lit:
+        if ex != 0 and (exk == .ptr or exk == .cfn): t = ex
+        else: t = T_NULL
+    else if k == .ident:
+        nm := int(nodes[n].name)
+        s := lookup(nm)
+        if s == 0: fatal(nodes[n].pos, "unknown name '{name_of(nm)}'")
+        sk := syms[s].kind
+        nodes[n].aux = i32(int(sk))
+        if sk == .local:
+            l := capture_local(int(syms[s].ref))
+            nodes[n].sym = i32(l)
+            t = int(locals[l].type)
+        else if sk == .global:
+            g := int(syms[s].ref)
+            ensure_global(g, nodes[n].pos)
+            nodes[n].sym = i32(g)
+            t = int(globals[g].type)
+        else if sk == .const_:
+            g := int(syms[s].ref)
+            if globals[g].decl != 0: ensure_global(g, nodes[n].pos)
+            v := clone(int(globals[g].init))
+            p := nodes[n].pos
+            nodes[n] = nodes[v]
+            nodes[n].pos = p
+            vt := check_expr(n, expected)
+            if not is_lit(n) and globals[g].type != 0 and not has_var(prune(int(globals[g].type))): coerce(n, int(globals[g].type))
+            last_checked = n
+            return ntype(n)
+        else if sk == .fns:
+            t = fn_value(n, expected)
+            last_checked = n
+            return t
+        else if sk == .struct_ or sk == .enum_:
+            d := int(syms[s].ref)
+            if nkids2(d) > 0: t = mk_typeval(0)
+            else: t = mk_typeval(get_struct_inst(d, []))
+        else if sk == .type_: t = mk_typeval(int(syms[s].ref))
+        else if sk == .module: t = mk_modval(int(syms[s].ref))
+        else if sk == .builtin: fatal(nodes[n].pos, "'{name_of(nm)}' must be called")
+        else: fatal(nodes[n].pos, "invalid use of '{name_of(nm)}'")
+    else if k == .field:
+        bt := prune(check_expr(int(nodes[n].a), 0))
+        fname := int(nodes[n].name)
+        bk := types[bt].kind
+        if bk == .module:
+            m := int(types[bt].mod)
+            s := module_lookup(m, fname)
+            if s == 0: fatal(nodes[n].pos, "module '{name_of(int(modules[m].name))}' has no member '{name_of(fname)}'")
+            nodes[n] = Node(kind = .ident, pos = nodes[n].pos, name = i32(fname))
+            t = check_expr_in_module(n, m)
+            last_checked = n
+            return t
+        if bk == .typeval:
+            tt := prune(int(types[bt].elem))
+            if tt != 0 and types[tt].kind == .enum_:
+                vi := find_variant(int(types[tt].st), fname)
+                if vi < 0: fatal(nodes[n].pos, "{type_str(tt)} has no variant '{name_of(fname)}'")
+                if variants[int(structs[int(types[tt].st)].variants) + vi].nfields != 0: fatal(nodes[n].pos, "variant '{name_of(fname)}' needs arguments")
+                nodes[n].kind = .dotname
+                nodes[n].aux = i32(vi)
+                nodes[n].a = 0
+                t = tt
+            else: fatal(nodes[n].pos, "type has no member '{name_of(fname)}'")
+        else if nodes[n].aux == -2:
+            if bk != .tuple: fatal(nodes[n].pos, "'.{nodes[n].ival}' needs a tuple, found {type_str(bt)}")
+            if nodes[n].ival < 0 or nodes[n].ival >= int(types[bt].nargs): fatal(nodes[n].pos, "tuple index out of range")
+            t = targ(bt, nodes[n].ival)
+        else if bk == .vec:
+            t = check_swizzle(n, bt)
+        else:
+            st := bt
+            if bk == .ptr: st = prune(int(types[bt].elem))
+            if types[st].kind == .struct_:
+                si := int(types[st].st)
+                check_struct_fields(si)
+                fi := -1
+                for i in 0..int(structs[si].nfields):
+                    if int(fields[int(structs[si].fields) + i].name) == fname: fi = i
+                if fi >= 0:
+                    nodes[n].aux = i32(fi)
+                    t = int(fields[int(structs[si].fields) + fi].type)
+            if t == 0: fatal(nodes[n].pos, "{type_str(bt)} has no field '{name_of(fname)}'")
+    else if k == .dotname:
+        et := ex
+        if et != 0 and exk == .opt: et = prune(int(types[et].elem))
+        if et == 0 or types[et].kind != .enum_: fatal(nodes[n].pos, "cannot infer the enum type for '.{name_of(int(nodes[n].name))}'")
+        vi := find_variant(int(types[et].st), int(nodes[n].name))
+        if vi < 0: fatal(nodes[n].pos, "{type_str(et)} has no variant '{name_of(int(nodes[n].name))}'")
+        if variants[int(structs[int(types[et].st)].variants) + vi].nfields != 0: fatal(nodes[n].pos, "variant '{name_of(int(nodes[n].name))}' needs arguments")
+        nodes[n].aux = i32(vi)
+        t = et
+    else if k == .call: t = check_call(n, expected)
+    else if k == .index:
+        bt := prune(check_expr(int(nodes[n].a), 0))
+        bk := types[bt].kind
+        b := int(nodes[n].b)
+        if bk == .typeval: t = mk_typeval(expr_as_type(n))
+        else if b != 0 and nodes[b].kind == .range:
+            if nodes[b].a != 0: check_to(int(nodes[b].a), T_INT)
+            if nodes[b].b != 0: check_to(int(nodes[b].b), T_INT)
+            nodes[b].type = i32(T_RANGE)
+            if bk != .array and bk != .str_: fatal(nodes[n].pos, "cannot slice {type_str(bt)}")
+            nodes[n].aux = 1
+            t = bt
+        else:
+            if b == 0: fatal(nodes[n].pos, "invalid index")
+            if bk == .array:
+                check_to(b, T_INT)
+                t = int(types[bt].elem)
+            else if bk == .str_:
+                check_to(b, T_INT)
+                t = T_U8
+            else if bk == .ptr:
+                check_to(b, T_INT)
+                t = int(types[bt].elem)
+            else if bk == .vec:
+                check_to(b, T_INT)
+                if bt == T_MAT4: t = T_VEC4
+                else: t = vec_comp_type(bt)
+            else if bk == .struct_:
+                call := mk(.call, nodes[n].pos)
+                callee := mk(.ident, nodes[n].pos)
+                nodes[callee].name = i32(intern("[]"))
+                nodes[call].a = i32(callee)
+                add_flag(int(nodes[n].a), NF_CHECKED)
+                set_list(call, [int(nodes[n].a), b])
+                nodes[n] = nodes[call]
+                t = check_expr(n, expected)
+                last_checked = n
+                return t
+            else: fatal(nodes[n].pos, "cannot index a value of type {type_str(bt)}")
+    else if k == .unary:
+        hint := 0
+        if ex != 0 and (is_numeric(ex) or is_vec(ex)): hint = ex
+        at := prune(check_expr(int(nodes[n].a), hint))
+        if nodes[n].op == i32(int(Tok.minus)):
+            if is_struct_like(at):
+                r := op_overload(n, "-")
+                if r != 0:
+                    last_checked = n
+                    return r
+            if not is_numeric(at) and not is_vec(at): fatal(nodes[n].pos, "cannot negate {type_str(at)}")
+            if is_lit(int(nodes[n].a)): add_flag(n, NF_LITERAL)
+        else if nodes[n].op == i32(int(Tok.tilde)):
+            if not is_int(at): fatal(nodes[n].pos, "'~' needs an integer")
+        t = at
+    else if k == .binary: t = check_binary(n, expected)
+    else if k == .and_ or k == .or_:
+        check_to(int(nodes[n].a), T_BOOL)
+        check_to(int(nodes[n].b), T_BOOL)
+        t = T_BOOL
+    else if k == .not_:
+        check_to(int(nodes[n].a), T_BOOL)
+        t = T_BOOL
+    else if k == .coalesce:
+        h := 0
+        if ex != 0:
+            if exk == .opt: h = ex
+            else: h = mk_opt(ex)
+        at := prune(check_expr(int(nodes[n].a), h))
+        if types[at].kind != .opt: fatal(nodes[n].pos, "'??' needs an optional on the left, found {type_str(at)}")
+        inner := int(types[at].elem)
+        h2 := inner
+        if ex != 0: h2 = ex
+        btt := prune(check_expr(int(nodes[n].b), h2))
+        if types[btt].kind == .opt:
+            coerce(int(nodes[n].b), at)
+            t = at
+            nodes[n].aux = 1
+        else:
+            coerce(int(nodes[n].b), inner)
+            t = inner
+    else if k == .unwrap:
+        h := 0
+        if ex != 0: h = mk_opt(ex)
+        at := prune(check_expr(int(nodes[n].a), h))
+        if types[at].kind != .opt: fatal(nodes[n].pos, "'!' needs an optional value, found {type_str(at)}")
+        t = int(types[at].elem)
+    else if k == .lambda: t = check_lambda(n, expected)
+    else if k == .array:
+        et := 0
+        if ex != 0 and exk == .array: et = int(types[ex].elem)
+        if nodes[n].b != 0:
+            v := kid(n, 0)
+            vt := check_expr(v, et)
+            if et != 0: coerce(v, et)
+            else: vt = finalize_literal(v)
+            check_to(int(nodes[n].b), T_INT)
+            if et != 0: t = mk_array(et)
+            else: t = mk_array(vt)
+            nodes[n].aux = 1
+        else if nkids(n) == 0:
+            if ex != 0 and exk == .array: t = ex
+            else: t = mk_array(mk_var())
+        else if et != 0:
+            for i in 0..nkids(n): check_to(kid(n, i), et)
+            t = ex
+        else:
+            elt := 0
+            anyfloat := false
+            for i in 0..nkids(n):
+                c := kid(n, i)
+                it := check_expr(c, elt)
+                if is_lit(c):
+                    if nodes[c].kind == .float_lit: anyfloat = true
+                else if elt == 0: elt = it
+            if elt == 0:
+                if anyfloat: elt = T_FLOAT
+                else: elt = T_INT
+            for i in 0..nkids(n): coerce(kid(n, i), elt)
+            t = mk_array(elt)
+    else if k == .map_lit:
+        ms := prelude.get(intern("Map")) ?? 0
+        if ms == 0: fatal(nodes[n].pos, "Map is not available")
+        md := int(syms[ms].ref)
+        kt := 0
+        vt := 0
+        if ex != 0 and exk == .struct_ and int(structs[int(types[ex].st)].decl) == md:
+            kt = struct_targ(int(types[ex].st), 0)
+            vt = struct_targ(int(types[ex].st), 1)
+        if kt == 0:
+            if nkids(n) == 0: fatal(nodes[n].pos, "cannot infer the type of an empty map; add a type annotation: `m: \{K: V} = \{}`")
+            p0 := kid(n, 0)
+            check_expr(int(nodes[p0].a), 0)
+            kt = finalize_literal(int(nodes[p0].a))
+            check_expr(int(nodes[p0].b), 0)
+            vt = finalize_literal(int(nodes[p0].b))
+        for i in 0..nkids(n):
+            p := kid(n, i)
+            check_to(int(nodes[p].a), kt)
+            check_to(int(nodes[p].b), vt)
+        t = get_struct_inst(md, [kt, vt])
+        if nkids(n) > 0: nodes[n].sym = i32(resolve_by_types(intern("[]="), [t, kt, vt], nodes[n].pos, true))
+    else if k == .tuple:
+        if nkids(n) == 0: t = T_VOID
+        else:
+            el: [int]
+            for i in 0..nkids(n):
+                c := kid(n, i)
+                e := 0
+                if ex != 0 and exk == .tuple and int(types[ex].nargs) == nkids(n): e = targ(ex, i)
+                check_expr(c, e)
+                if e != 0: coerce(c, e)
+                else: finalize_literal(c)
+                el.push(ntype(c))
+            t = mk_tuple(el)
+    else if k == .if_: t = check_if(n, ex)
+    else if k == .iflet: t = check_iflet(n, ex)
+    else if k == .match_: t = check_match(n, expected)
+    else if k == .cast:
+        check_expr(int(nodes[n].a), 0)
+        finalize_literal(int(nodes[n].a))
+        a := int(nodes[n].a)
+        ft := prune(ntype(a))
+        tt := prune(resolve_type(int(nodes[n].b)))
+        if has_var(ft) and unify(ft, tt):
+            nodes[n] = nodes[a]
+            last_checked = n
+            return tt
+        if type_eq(ft, tt):
+            nodes[n] = nodes[a]
+            last_checked = n
+            return tt
+        fk := types[ft].kind
+        tk := types[tt].kind
+        ok := false
+        if (fk == .ptr or fk == .int_ or fk == .null_ or fk == .cfn) and (tk == .ptr or tk == .int_ or tk == .cfn): ok = true
+        if (fk == .int_ or fk == .float_) and (tk == .int_ or tk == .float_):
+            ok = tsize(ft) == tsize(tt) or (fk == .int_ and tk == .int_)
+        if fk == .enum_ and tk == .int_: ok = true
+        if fk == .int_ and tk == .enum_: ok = true
+        if fk == .bool_ and tk == .int_: ok = true
+        if fk == .str_ and tk == .ptr: ok = true
+        if fk == .array and tk == .ptr: ok = true
+        if fk == .ptr and (tk == .str_ or tk == .array): ok = true
+        if not ok: fatal(nodes[n].pos, "cannot cast {type_str(ft)} to {type_str(tt)}")
+        t = tt
+    else if k == .range:
+        if nodes[n].a != 0: check_to(int(nodes[n].a), T_INT)
+        if nodes[n].b != 0: check_to(int(nodes[n].b), T_INT)
+        t = T_RANGE
+    else if k == .addr:
+        at := check_expr(int(nodes[n].a), 0)
+        ak := nodes[int(nodes[n].a)].kind
+        if ak != .ident and ak != .field and ak != .index: fatal(nodes[n].pos, "can only take the address of a variable, field or element")
+        if ak == .ident and nodes[int(nodes[n].a)].aux == i32(int(SK.local)):
+            l := int(nodes[int(nodes[n].a)].sym)
+            if int(locals[l].flags) & LF_CAPTURE != 0: fatal(nodes[n].pos, "cannot take the address of a captured variable")
+            locals[l].flags = i32(int(locals[l].flags) | LF_ADDR)
+        t = mk_ptr(at)
+    else if k == .hole: fatal(nodes[n].pos, "'_' can only be used as a function argument (partial application)")
+    else if k == .namedarg: fatal(nodes[n].pos, "named arguments are only allowed in calls")
+    else if k == .fnref or k == .conv: t = ntype(n)
+    else if k == .block: t = check_block(n, expected, true)
+    else: fatal(nodes[n].pos, "invalid expression")
+    nodes[n].type = i32(t)
+    add_flag(n, NF_CHECKED)
+    last_checked = n
+    t
+
+fn check_swizzle(n: int, bt: int) -> int:
+    s := name_of(int(nodes[n].name))
+    nb := vec_n(bt)
+    if bt == T_MAT4: fatal(nodes[n].pos, "use m[i] to access matrix columns")
+    if len(s) < 1 or len(s) > 4: fatal(nodes[n].pos, "invalid vector component '{s}'")
+    for i in 0..len(s):
+        ci := swizzle_index(s[i])
+        if ci < 0 or ci >= nb: fatal(nodes[n].pos, "{type_str(bt)} has no component '{chr(int(s[i]))}'")
+    nodes[n].aux = -4
+    if len(s) == 1: return vec_comp_type(bt)
+    if types[bt].sign:
+        if len(s) == 2: return T_IVEC2
+        fatal(nodes[n].pos, "only ivec2 swizzles are supported")
+    if len(s) == 2: return T_VEC2
+    if len(s) == 3: return T_VEC3
+    T_VEC4
+
+fn check_if(n: int, ex: int) -> int:
+    is_stmt := has_flag(n, NF_STMT)
+    check_to(int(nodes[n].a), T_BOOL)
+    b := int(nodes[n].b)
+    c := int(nodes[n].c)
+    if is_stmt:
+        check_block(b, 0, false)
+        if c != 0: check_block(c, 0, false)
+        return T_VOID
+    if c == 0: fatal(nodes[n].pos, "an if expression needs an else branch")
+    t1 := check_block(b, ex, true)
+    t2 := check_block(c, ex, true)
+    if t1 == T_NEVER and t2 == T_NEVER: return T_NEVER
+    if t1 != T_NEVER and nodes[b].aux == 0 and tkind(t1) == .void_: return T_VOID
+    if t2 != T_NEVER and nodes[c].aux == 0 and tkind(t2) == .void_ and ex == 0: return T_VOID
+    if t1 == T_NEVER:
+        v := block_value(c)
+        if ex != 0: coerce(v, ex)
+        else: finalize_literal(v)
+        return ntype(v)
+    if t2 == T_NEVER:
+        v := block_value(b)
+        if ex != 0: coerce(v, ex)
+        else: finalize_literal(v)
+        return ntype(v)
+    if nodes[b].aux == 0 or nodes[c].aux == 0: fatal(nodes[n].pos, "both branches of an if expression need a value")
+    va := block_value(b)
+    vb := block_value(c)
+    if ex != 0:
+        coerce(va, ex)
+        coerce(vb, ex)
+        return ex
+    join_types(va, vb, nodes[n].pos)
+
+fn check_iflet(n: int, ex: int) -> int:
+    is_stmt := has_flag(n, NF_STMT)
+    ot := prune(check_expr(int(nodes[n].a), 0))
+    if types[ot].kind != .opt: fatal(nodes[int(nodes[n].a)].pos, "'if x := value' needs an optional value, found {type_str(ot)}")
+    mark := scope_mark()
+    l := new_local(int(nodes[n].name), int(types[ot].elem), nodes[n].pos)
+    nodes[n].sym = i32(l)
+    b := int(nodes[n].b)
+    c := int(nodes[n].c)
+    e1 := ex
+    if is_stmt: e1 = 0
+    t1 := check_block(b, e1, not is_stmt)
+    scope_reset(mark)
+    t2 := T_VOID
+    if c != 0:
+        e2 := ex
+        if e2 == 0: e2 = t1
+        if is_stmt: e2 = 0
+        t2 = check_block(c, e2, not is_stmt)
+    if is_stmt: return T_VOID
+    if c == 0: fatal(nodes[n].pos, "an if expression needs an else branch")
+    if t1 == T_NEVER: return t2
+    if t2 == T_NEVER: return t1
+    va := block_value(b)
+    vb := block_value(c)
+    if ex != 0:
+        coerce(va, ex)
+        coerce(vb, ex)
+        return ex
+    join_types(va, vb, nodes[n].pos)

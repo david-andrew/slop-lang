@@ -1,0 +1,30 @@
+42
+[2, 4, 6]
+105
+item-3 item-4
+7 20
+[2, 2, 101, 11]
+4.5
+["fig", "pear", "banana"]
+13
+true false
+3 a 7
+b ["a"]
+hello, ann! hello, bob? hi, cy!
+2 3 true false
+one 1
+two 22
+three 3
+-1
+{"three": 3, "two": 22}
+{"ann": 31, "bob": 25}
+{1: 1, 2: 2, 3: 3}
+3628800 10
+working
+deferred
+42
+got 3
+got 2
+got 1
+[10, 20, 30]
+[P(x=101), P(x=102)]

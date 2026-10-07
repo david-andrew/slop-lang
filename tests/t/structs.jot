@@ -1,0 +1,90 @@
+struct Vec2:
+    x: float
+    y: float
+
+fn +(a: Vec2, b: Vec2) -> Vec2: Vec2(a.x + b.x, a.y + b.y)
+fn length(v: Vec2) -> float: sqrt(v.x * v.x + v.y * v.y)
+
+struct Player:
+    name: str
+    pos: Vec2
+    hp := 100
+    items: [str]
+
+p := Player("ann", Vec2(3, 4))
+print(p.name, p.hp, p.pos.length())
+p.items.push("sword")
+q := p
+q.items.push("shield")
+q.name = "bob"
+print(p)
+print(q)
+p.pos = p.pos + Vec2(1, 1)
+print(p.pos)
+r := Player(name = "cy", pos = Vec2(0, 0), hp = 5)
+print(r.hp, r == r, r == p)
+
+enum Shape:
+    circle(r: float)
+    rect(w: float, h: float)
+    empty
+
+fn area(s: Shape) -> float:
+    match s:
+        circle(r): 3.0 * r * r
+        rect(w, h): w * h
+        empty: 0.0
+
+shapes := [Shape.circle(1.0), Shape.rect(2.0, 3.0), Shape.empty]
+for s in shapes: print(s, area(s))
+
+enum Dir: north, east, south, west
+d := Dir.east
+if d == .east: print("east!")
+print(d, int(Dir.west))
+fn turn(d: Dir) -> Dir:
+    match d:
+        north: .east
+        east: .south
+        south: .west
+        west: .north
+print(turn(turn(d)))
+
+# optionals
+fn find_idx(xs: [int], v: int) -> int?:
+    for i, x in xs:
+        if x == v: return i
+    none
+xs := [4, 8, 15, 16]
+print(find_idx(xs, 15), find_idx(xs, 99))
+if i := find_idx(xs, 16): print("found at", i)
+print(find_idx(xs, 99) ?? -1)
+o: str? = none
+print(o == none, o)
+o = "yes"
+print(o!, o != none)
+
+# tuples
+fn divmod(a: int, b: int) -> (int, int): (a / b, a % b)
+qq, rr := divmod(17, 5)
+print(qq, rr, divmod(9, 4))
+aa := 1
+bb := 2
+aa, bb = bb, aa
+print(aa, bb)
+t := (1, "two", 3.0)
+print(t.1, t)
+
+# match on ints and strings
+fn classify(n: int) -> str:
+    match n:
+        0: "zero"
+        1, 2, 3: "small"
+        4..=9: "medium"
+        _: "large"
+for n in [0, 2, 7, 42]: print(n, classify(n))
+fn greet(s: str) -> str:
+    match s:
+        "hi": "hello!"
+        _: "what?"
+print(greet("hi"), greet("yo"))

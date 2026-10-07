@@ -1,0 +1,125 @@
+# Abstract syntax tree. Nodes live in one global array and refer to each other by index.
+# Node 0 is the "no node" sentinel.
+
+use util
+
+enum NK:
+    nil,
+    # expressions
+    int_lit, float_lit, str_lit, bool_lit, none_lit, null_lit, ident, field, dotname, call, index,
+    unary, binary, and_, or_, not_, coalesce, unwrap, lambda, array, map_lit, tuple, if_, match_, cast,
+    range, addr, hole, namedarg, pair, block, iflet,
+    # produced by the checker
+    conv, fnref, partial, intrinsic,
+    # statements
+    vardecl, assign, exprstmt, while_, for_, return_, break_, continue_, defer_, when_, arm,
+    # declarations
+    fn_, param, struct_, enum_, variant, const_, import_, test_, build_,
+    # type expressions
+    tname, tarray, tmap, ttuple, topt, tptr, tfn,
+    # patterns
+    pwild, plit, prange, pvariant
+
+# node flags
+const NF_MUT = 1
+const NF_INCLUSIVE = 2
+const NF_EXTERN = 4
+const NF_STMT = 16
+const NF_TERMINATED = 32
+const NF_GENERIC = 64
+const NF_CHECKED = 128
+const NF_LITERAL = 256
+const NF_GLOBAL = 2048
+const NF_FNREF_ARG = 4096
+const NF_CABI = 8192
+
+struct Node:
+    kind: NK
+    op: i32
+    flags: i32
+    pos: int
+    a: i32
+    b: i32
+    c: i32
+    d: i32
+    list: i32
+    nlist: i32
+    list2: i32
+    nlist2: i32
+    name: i32
+    sval: i32
+    ival: int
+    fval: float
+    type: i32
+    sym: i32
+    aux: i32
+    aux2: i32
+    mod: i32
+
+nodes: [Node] = [Node()]
+lists: [i32]
+
+fn mk(kind: NK, pos: int) -> int:
+    nodes.push(Node(kind = kind, pos = pos))
+    nodes.len() - 1
+
+fn mklist(xs: [int]) -> int:
+    start := lists.len()
+    for x in xs: lists.push(i32(x))
+    start
+
+fn set_list(n: int, xs: [int]):
+    nodes[n].list = i32(mklist(xs))
+    nodes[n].nlist = i32(xs.len())
+
+fn set_list2(n: int, xs: [int]):
+    nodes[n].list2 = i32(mklist(xs))
+    nodes[n].nlist2 = i32(xs.len())
+
+fn kid(n: int, i: int) -> int: int(lists[int(nodes[n].list) + i])
+fn kid2(n: int, i: int) -> int: int(lists[int(nodes[n].list2) + i])
+fn nkids(n: int) -> int: int(nodes[n].nlist)
+fn nkids2(n: int) -> int: int(nodes[n].nlist2)
+fn set_kid(n: int, i: int, v: int): lists[int(nodes[n].list) + i] = i32(v)
+fn set_kid2(n: int, i: int, v: int): lists[int(nodes[n].list2) + i] = i32(v)
+
+fn kids(n: int) -> [int]:
+    out: [int]
+    s := int(nodes[n].list)
+    for i in 0..int(nodes[n].nlist): out.push(int(lists[s + i]))
+    out
+
+fn kids2(n: int) -> [int]:
+    out: [int]
+    s := int(nodes[n].list2)
+    for i in 0..int(nodes[n].nlist2): out.push(int(lists[s + i]))
+    out
+
+fn has_flag(n: int, f: int) -> bool: int(nodes[n].flags) & f != 0
+fn add_flag(n: int, f: int): nodes[n].flags = i32(int(nodes[n].flags) | f)
+fn clear_flag(n: int, f: int): nodes[n].flags = i32(int(nodes[n].flags) & ~f)
+
+# deep copy of a subtree (used to instantiate generic functions)
+fn clone(n: int) -> int:
+    if n == 0: return 0
+    c := nodes.len()
+    nodes.push(nodes[n])
+    k := nodes[n].kind
+    nodes[c].a = i32(clone(int(nodes[n].a)))
+    nodes[c].b = i32(clone(int(nodes[n].b)))
+    nodes[c].c = i32(clone(int(nodes[n].c)))
+    nodes[c].d = i32(clone(int(nodes[n].d)))
+    nl := int(nodes[n].nlist)
+    if nl > 0:
+        xs: [int]
+        for i in 0..nl: xs.push(clone(kid(n, i)))
+        set_list(c, xs)
+    nl2 := int(nodes[n].nlist2)
+    if nl2 > 0:
+        xs: [int]
+        for i in 0..nl2: xs.push(clone(kid2(n, i)))
+        set_list2(c, xs)
+    if k != .fn_ and k != .struct_ and k != .enum_: nodes[c].sym = 0
+    if k != .conv: nodes[c].type = 0
+    clear_flag(c, NF_CHECKED)
+    c

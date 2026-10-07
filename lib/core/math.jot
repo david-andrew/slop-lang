@@ -1,0 +1,265 @@
+# Math basics.
+
+const PI = 3.141592653589793
+const TAU = 6.283185307179586
+const E = 2.718281828459045
+const INF = 1e308 * 10.0
+const MAX_INT = 9223372036854775807
+const MIN_INT = -9223372036854775807 - 1
+
+fn abs(x: int) -> int:
+    if x < 0: return -x
+    x
+fn abs(x: float) -> float:
+    if x < 0.0: return -x
+    x
+fn abs(x: f32) -> f32:
+    if x < 0.0: return -x
+    x
+
+fn min(a: int, b: int) -> int:
+    if a < b: return a
+    b
+fn max(a: int, b: int) -> int:
+    if a > b: return a
+    b
+fn min(a: float, b: float) -> float:
+    if a < b: return a
+    b
+fn max(a: float, b: float) -> float:
+    if a > b: return a
+    b
+fn min(a: f32, b: f32) -> f32:
+    if a < b: return a
+    b
+fn max(a: f32, b: f32) -> f32:
+    if a > b: return a
+    b
+fn clamp(x: int, lo: int, hi: int) -> int:
+    if x < lo: return lo
+    if x > hi: return hi
+    x
+fn clamp(x: float, lo: float, hi: float) -> float:
+    if x < lo: return lo
+    if x > hi: return hi
+    x
+fn clamp(x: f32, lo: f32, hi: f32) -> f32:
+    if x < lo: return lo
+    if x > hi: return hi
+    x
+fn sign(x: float) -> float:
+    if x > 0.0: return 1.0
+    if x < 0.0: return -1.0
+    0.0
+fn sign(x: int) -> int:
+    if x > 0: return 1
+    if x < 0: return -1
+    0
+
+fn floor(x: float) -> float:
+    if x != x or x >= 4503599627370496.0 or x <= -4503599627370496.0: return x
+    i := float(int(x))
+    if i > x: return i - 1.0
+    i
+fn ceil(x: float) -> float:
+    if x != x or x >= 4503599627370496.0 or x <= -4503599627370496.0: return x
+    i := float(int(x))
+    if i < x: return i + 1.0
+    i
+fn round(x: float) -> float:
+    if x < 0.0: return -floor(-x + 0.5)
+    floor(x + 0.5)
+fn trunc(x: float) -> float:
+    if x != x or x >= 4503599627370496.0 or x <= -4503599627370496.0: return x
+    float(int(x))
+fn fract(x: float) -> float: x - floor(x)
+fn mod(x: float, y: float) -> float: x - y * floor(x / y)
+fn mod(x: int, y: int) -> int:
+    r := x % y
+    if r < 0: return r + y
+    r
+fn is_nan(x: float) -> bool: x != x
+fn lerp(a: float, b: float, t: float) -> float: a + (b - a) * t
+fn smoothstep(e0: float, e1: float, x: float) -> float:
+    t := clamp((x - e0) / (e1 - e0), 0.0, 1.0)
+    t * t * (3.0 - 2.0 * t)
+
+# reduce x to [-pi, pi]
+fn __reduce_angle(x: float) -> float:
+    if x >= -PI and x <= PI: return x
+    k := floor((x + PI) / TAU)
+    x - k * TAU
+
+fn sin(x: float) -> float:
+    r := __reduce_angle(x)
+    # fold to [-pi/2, pi/2]
+    if r > PI / 2.0: r = PI - r
+    else if r < -PI / 2.0: r = -PI - r
+    r2 := r * r
+    # Taylor/minimax polynomial, accurate to ~1e-16 on [-pi/2, pi/2]
+    r * (1.0 + r2 * (-0.16666666666666666 + r2 * (0.008333333333333333 + r2 * (-0.0001984126984126984 + r2 * (2.7557319223985893e-06 + r2 * (-2.505210838544172e-08 + r2 * (1.6059043836821613e-10 + r2 * (-7.647163731819816e-13 + r2 * 2.8114572543455206e-15))))))))
+
+fn cos(x: float) -> float: sin(x + PI / 2.0)
+fn tan(x: float) -> float: sin(x) / cos(x)
+
+fn atan(x: float) -> float:
+    if x != x: return x
+    neg := x < 0.0
+    a := abs(x)
+    inv := a > 1.0
+    if inv: a = 1.0 / a
+    # reduce further: atan(a) = pi/6 + atan((a*sqrt3 - 1)/(a + sqrt3)) for a > 2-sqrt3
+    off := 0.0
+    if a > 0.2679491924311227:
+        a = (a * 1.7320508075688772 - 1.0) / (a + 1.7320508075688772)
+        off = PI / 6.0
+    a2 := a * a
+    r := a * (1.0 + a2 * (-0.3333333333333333 + a2 * (0.2 + a2 * (-0.14285714285714285 + a2 * (0.1111111111111111 + a2 * (-0.09090909090909091 + a2 * (0.07692307692307693 + a2 * -0.06666666666666667)))))))
+    r = r + off
+    if inv: r = PI / 2.0 - r
+    if neg: return -r
+    r
+
+fn atan2(y: float, x: float) -> float:
+    if x > 0.0: return atan(y / x)
+    if x < 0.0:
+        if y >= 0.0: return atan(y / x) + PI
+        return atan(y / x) - PI
+    if y > 0.0: return PI / 2.0
+    if y < 0.0: return -PI / 2.0
+    0.0
+
+fn asin(x: float) -> float:
+    if x >= 1.0: return PI / 2.0
+    if x <= -1.0: return -PI / 2.0
+    atan2(x, sqrt(1.0 - x * x))
+fn acos(x: float) -> float: PI / 2.0 - asin(x)
+
+fn exp(x: float) -> float:
+    if x != x: return x
+    if x > 709.0: return INF
+    if x < -745.0: return 0.0
+    # exp(x) = 2^k * exp(r), r in [-ln2/2, ln2/2]
+    k := floor(x / 0.6931471805599453 + 0.5)
+    r := x - k * 0.6931471805599453
+    s := 1.0 + r * (1.0 + r * (0.5 + r * (0.16666666666666666 + r * (0.041666666666666664 + r * (0.008333333333333333 + r * (0.001388888888888889 + r * (0.0001984126984126984 + r * (2.48015873015873e-05 + r * (2.7557319223985893e-06 + r * 2.755731922398589e-07)))))))))
+    ki := int(k)
+    if ki > 1000:
+        s = s * __pow2(1000)
+        ki -= 1000
+    if ki < -1000:
+        s = s * __pow2(-1000)
+        ki += 1000
+    s * __pow2(ki)
+
+fn __pow2(k: int) -> float:
+    if k < -1022: return __pow2(k + 60) / 1152921504606846976.0
+    if k > 1023: return INF
+    (u64(k + 1023) << 52) as float
+
+fn log(x: float) -> float:
+    if x != x or x < 0.0: return 0.0 / 0.0
+    if x == 0.0: return -INF
+    if x > 1.7976931348623157e308: return x
+    # x = m * 2^e with m in [sqrt(1/2), sqrt(2))
+    bits := x as u64
+    e := int((bits >> 52) & 0x7FF) - 1023
+    m := ((bits & 0x000FFFFFFFFFFFFF) | 0x3FF0000000000000) as float
+    if e == -1023:
+        # subnormal
+        return log(x * 4503599627370496.0) - 36.04365338911715
+    if m > 1.4142135623730951:
+        m = m / 2.0
+        e += 1
+    f := (m - 1.0) / (m + 1.0)
+    f2 := f * f
+    s := f * (2.0 + f2 * (0.6666666666666666 + f2 * (0.4 + f2 * (0.2857142857142857 + f2 * (0.2222222222222222 + f2 * (0.18181818181818182 + f2 * (0.15384615384615385 + f2 * 0.13333333333333333)))))))
+    s + float(e) * 0.6931471805599453
+
+fn log2(x: float) -> float: log(x) / 0.6931471805599453
+fn log10(x: float) -> float: log(x) / 2.302585092994046
+
+fn pow(x: float, y: float) -> float:
+    if y == 0.0: return 1.0
+    if x == 0.0: return 0.0
+    yi := int(y)
+    if float(yi) == y and yi >= -64 and yi <= 64:
+        r := 1.0
+        b := x
+        n := yi
+        if n < 0: n = -n
+        while n > 0:
+            if n & 1 == 1: r = r * b
+            b = b * b
+            n = n >> 1
+        if yi < 0: return 1.0 / r
+        return r
+    if x < 0.0: return 0.0 / 0.0
+    exp(y * log(x))
+
+fn pow(x: int, n: int) -> int:
+    r := 1
+    b := x
+    e := n
+    while e > 0:
+        if e & 1 == 1: r = r * b
+        b = b * b
+        e = e >> 1
+    r
+
+fn hypot(x: float, y: float) -> float: sqrt(x * x + y * y)
+fn radians(deg: float) -> float: deg * PI / 180.0
+fn degrees(rad: float) -> float: rad * 180.0 / PI
+
+# ---------------- random numbers (xoshiro256**) ----------------
+struct Rng:
+    s0: u64 = 0x9E3779B97F4A7C15
+    s1: u64 = 0xBF58476D1CE4E5B9
+    s2: u64 = 0x94D049BB133111EB
+    s3: u64 = 0x2545F4914F6CDD1D
+
+fn __rotl(x: u64, k: int) -> u64: (x << u64(k)) | (x >> u64(64 - k))
+
+fn rng(seed: int) -> Rng:
+    r := Rng()
+    z := u64(seed) + 0x9E3779B97F4A7C15
+    r.s0 = __splitmix(z)
+    r.s1 = __splitmix(r.s0)
+    r.s2 = __splitmix(r.s1)
+    r.s3 = __splitmix(r.s2)
+    r
+
+fn __splitmix(x: u64) -> u64:
+    z := x + 0x9E3779B97F4A7C15
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+    z ^ (z >> 31)
+
+fn next_u64(r: mut Rng) -> u64:
+    result := __rotl(r.s1 * 5, 7) * 9
+    t := r.s1 << 17
+    r.s2 = r.s2 ^ r.s0
+    r.s3 = r.s3 ^ r.s1
+    r.s1 = r.s1 ^ r.s2
+    r.s0 = r.s0 ^ r.s3
+    r.s2 = r.s2 ^ t
+    r.s3 = __rotl(r.s3, 45)
+    result
+
+# uniform float in [0, 1)
+fn next_float(r: mut Rng) -> float: float(next_u64(r) >> 11) * (1.0 / 9007199254740992.0)
+
+# uniform int in [lo, hi)
+fn next_int(r: mut Rng, lo: int, hi: int) -> int:
+    if hi <= lo: return lo
+    lo + int(next_u64(r) % u64(hi - lo))
+
+__global_rng := rng(12345)
+
+fn seed_random(seed: int): __global_rng = rng(seed)
+# random float in [0, 1)
+fn random() -> float: next_float(__global_rng)
+# random float in [lo, hi)
+fn random(lo: float, hi: float) -> float: lo + (hi - lo) * next_float(__global_rng)
+# random int in [lo, hi)
+fn random_int(lo: int, hi: int) -> int: next_int(__global_rng, lo, hi)

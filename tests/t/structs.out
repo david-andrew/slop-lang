@@ -1,0 +1,24 @@
+ann 100 5.0
+Player(name="ann", pos=Vec2(x=3.0, y=4.0), hp=100, items=["sword"])
+Player(name="bob", pos=Vec2(x=3.0, y=4.0), hp=100, items=["sword", "shield"])
+Vec2(x=4.0, y=5.0)
+5 true false
+circle(1.0) 3.0
+rect(2.0, 3.0) 6.0
+empty 0.0
+east!
+east 3
+west
+2 none
+found at 3
+-1
+true none
+yes true
+3 2 (2, 1)
+2 1
+two (1, "two", 3.0)
+0 zero
+2 small
+7 medium
+42 large
+hello! what?

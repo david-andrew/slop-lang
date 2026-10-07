@@ -1,0 +1,277 @@
+# String utilities. Strings are immutable UTF-8 byte sequences; indexing gives bytes.
+
+fn is_digit(c: u8) -> bool: c >= '0' and c <= '9'
+fn is_alpha(c: u8) -> bool: (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_'
+fn is_alnum(c: u8) -> bool: is_alpha(c) or is_digit(c)
+fn is_space(c: u8) -> bool: c == ' ' or c == '\t' or c == '\n' or c == '\r'
+fn is_upper(c: u8) -> bool: c >= 'A' and c <= 'Z'
+fn is_lower(c: u8) -> bool: c >= 'a' and c <= 'z'
+
+# string made of a single byte
+fn chr(c: int) -> str:
+    b: [u8]
+    b.push(u8(c & 255))
+    str_from_bytes(b)
+
+fn find(s: str, sub: str, start: int = 0) -> int:
+    n := len(s)
+    m := len(sub)
+    if m == 0: return start
+    i := start
+    first := sub[0]
+    while i + m <= n:
+        if s[i] == first and __mem_eq(data(s) + i, data(sub), m): return i
+        i += 1
+    -1
+
+fn rfind(s: str, sub: str) -> int:
+    n := len(s)
+    m := len(sub)
+    i := n - m
+    while i >= 0:
+        if __mem_eq(data(s) + i, data(sub), m): return i
+        i -= 1
+    -1
+
+fn find_byte(s: str, c: u8, start: int = 0) -> int:
+    i := start
+    n := len(s)
+    p := data(s)
+    while i < n:
+        if p[i] == c: return i
+        i += 1
+    -1
+
+fn contains(s: str, sub: str) -> bool: find(s, sub) >= 0
+
+fn starts_with(s: str, prefix: str) -> bool:
+    m := len(prefix)
+    if m > len(s): return false
+    __mem_eq(data(s), data(prefix), m)
+
+fn ends_with(s: str, suffix: str) -> bool:
+    m := len(suffix)
+    n := len(s)
+    if m > n: return false
+    __mem_eq(data(s) + n - m, data(suffix), m)
+
+fn trim(s: str) -> str:
+    a := 0
+    b := len(s)
+    while a < b and is_space(s[a]): a += 1
+    while b > a and is_space(s[b - 1]): b -= 1
+    s[a..b]
+
+fn trim_start(s: str) -> str:
+    a := 0
+    while a < len(s) and is_space(s[a]): a += 1
+    s[a..]
+
+fn trim_end(s: str) -> str:
+    b := len(s)
+    while b > 0 and is_space(s[b - 1]): b -= 1
+    s[..b]
+
+fn split(s: str, sep: str) -> [str]:
+    out: [str]
+    if len(sep) == 0:
+        for c in s: out.push(chr(int(c)))
+        return out
+    start := 0
+    while true:
+        i := find(s, sep, start)
+        if i < 0:
+            out.push(s[start..])
+            return out
+        out.push(s[start..i])
+        start = i + len(sep)
+    out
+
+# split on runs of whitespace
+fn words(s: str) -> [str]:
+    out: [str]
+    i := 0
+    n := len(s)
+    while i < n:
+        while i < n and is_space(s[i]): i += 1
+        if i >= n: break
+        j := i
+        while j < n and not is_space(s[j]): j += 1
+        out.push(s[i..j])
+        i = j
+    out
+
+fn lines(s: str) -> [str]:
+    out := split(s, "\n")
+    if out.len() > 0 and len(out[out.len() - 1]) == 0: out.pop()
+    for mut l in out:
+        if len(l) > 0 and l[len(l) - 1] == '\r': l = l[..len(l) - 1]
+    out
+
+fn join(parts: [str], sep: str = "") -> str:
+    buf: [u8]
+    for i, p in parts:
+        if i > 0: __buf_append_str(buf, sep)
+        __buf_append_str(buf, p)
+    __buf_finish_val(buf)
+
+fn __buf_finish_val(buf: [u8]) -> str: str_from_bytes(buf)
+
+fn replace(s: str, old: str, new: str) -> str:
+    if len(old) == 0: return s
+    buf: [u8]
+    start := 0
+    while true:
+        i := find(s, old, start)
+        if i < 0: break
+        __buf_append_raw(buf, data(s) + start, i - start)
+        __buf_append_str(buf, new)
+        start = i + len(old)
+    __buf_append_raw(buf, data(s) + start, len(s) - start)
+    str_from_bytes(buf)
+
+fn repeat(s: str, n: int) -> str:
+    buf: [u8]
+    for i in 0..n: __buf_append_str(buf, s)
+    str_from_bytes(buf)
+
+fn upper(s: str) -> str:
+    b := bytes(s)
+    for mut c in b:
+        if c >= 'a' and c <= 'z': c = c - 32
+    str_from_bytes(b)
+
+fn lower(s: str) -> str:
+    b := bytes(s)
+    for mut c in b:
+        if c >= 'A' and c <= 'Z': c = c + 32
+    str_from_bytes(b)
+
+fn to_int(s: str) -> int?:
+    t := trim(s)
+    n := len(t)
+    if n == 0: return none
+    i := 0
+    neg := false
+    if t[0] == '-' or t[0] == '+':
+        neg = t[0] == '-'
+        i = 1
+    if i >= n: return none
+    base := 10
+    if i + 1 < n and t[i] == '0' and (t[i + 1] == 'x' or t[i + 1] == 'X'):
+        base = 16
+        i += 2
+    v := 0
+    any := false
+    while i < n:
+        c := t[i]
+        d := -1
+        if c >= '0' and c <= '9': d = int(c) - 48
+        else if c >= 'a' and c <= 'f': d = int(c) - 87
+        else if c >= 'A' and c <= 'F': d = int(c) - 55
+        else if c == '_':
+            i += 1
+            continue
+        if d < 0 or d >= base: return none
+        v = v * base + d
+        any = true
+        i += 1
+    if not any: return none
+    if neg: return -v
+    v
+
+fn to_float(s: str) -> float?:
+    t := trim(s)
+    n := len(t)
+    if n == 0: return none
+    i := 0
+    neg := false
+    if t[0] == '-' or t[0] == '+':
+        neg = t[0] == '-'
+        i = 1
+    if t[i..] == "inf":
+        if neg: return -1e308 * 10.0
+        return 1e308 * 10.0
+    if t[i..] == "nan": return 0.0 / 0.0
+    mant: u64 = 0
+    exp := 0
+    digits := 0
+    any := false
+    while i < n and is_digit(t[i]):
+        if digits < 19:
+            mant = mant * 10 + u64(t[i] - '0')
+            digits += 1
+        else: exp += 1
+        any = true
+        i += 1
+    if i < n and t[i] == '.':
+        i += 1
+        while i < n and is_digit(t[i]):
+            if digits < 19:
+                mant = mant * 10 + u64(t[i] - '0')
+                digits += 1
+                exp -= 1
+            any = true
+            i += 1
+    if not any: return none
+    if i < n and (t[i] == 'e' or t[i] == 'E'):
+        i += 1
+        eneg := false
+        if i < n and (t[i] == '-' or t[i] == '+'):
+            eneg = t[i] == '-'
+            i += 1
+        e := 0
+        if i >= n: return none
+        while i < n and is_digit(t[i]):
+            e = e * 10 + int(t[i]) - 48
+            i += 1
+        if eneg: exp -= e
+        else: exp += e
+    if i != n: return none
+    v := __scale10(float(mant), exp)
+    if neg: return -v
+    v
+
+fn reverse(s: str) -> str:
+    b := bytes(s)
+    n := b.len()
+    i := 0
+    while i < n / 2:
+        t := b[i]
+        b[i] = b[n - 1 - i]
+        b[n - 1 - i] = t
+        i += 1
+    str_from_bytes(b)
+
+# number of unicode code points
+fn char_count(s: str) -> int:
+    n := 0
+    for c in s:
+        if c & 0xC0 != 0x80: n += 1
+    n
+
+# unicode code points of s
+fn chars(s: str) -> [int]:
+    out: [int]
+    i := 0
+    n := len(s)
+    while i < n:
+        c := int(s[i])
+        if c < 0x80:
+            out.push(c)
+            i += 1
+        else if c < 0xE0 and i + 1 < n:
+            out.push(((c & 0x1F) << 6) | (int(s[i + 1]) & 0x3F))
+            i += 2
+        else if c < 0xF0 and i + 2 < n:
+            out.push(((c & 0x0F) << 12) | ((int(s[i + 1]) & 0x3F) << 6) | (int(s[i + 2]) & 0x3F))
+            i += 3
+        else if i + 3 < n:
+            out.push(((c & 0x07) << 18) | ((int(s[i + 1]) & 0x3F) << 12) | ((int(s[i + 2]) & 0x3F) << 6) | (int(s[i + 3]) & 0x3F))
+            i += 4
+        else:
+            out.push(0xFFFD)
+            i += 1
+    out
+
+fn hash(s: str) -> u64: __str_hash(s)

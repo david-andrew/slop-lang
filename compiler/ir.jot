@@ -1,0 +1,164 @@
+# Intermediate representation: register-based with structured control flow (wasm-like).
+# Integer vregs are always 64-bit; floats are f64 or f32. Aggregates live in frame slots
+# or on the heap and are handled through addresses.
+
+enum Op:
+    nop,
+    iconst, fconst, mov,
+    add, sub, mul, divs, divu, rems, remu, and_, or_, xor, shl, shrs, shru, neg, not_,
+    eq, ne, lts, les, gts, ges, ltu, leu, gtu, geu,
+    fadd, fsub, fmul, fdiv, fneg, fsqrt, fmin, fmax, ffloor, fceil, fabs, ftrunc,
+    feq, fne, flt, fle, fgt, fge,
+    sext8, sext16, sext32, zext8, zext16, zext32,
+    i2f, u2f, f2i, f2f, bits2f, f2bits,
+    load, store, slot, gaddr, daddr, faddr, copy, zero, memcpy, memset, zeroslots,
+    call, calli, callc, syscall, intr,
+    block, loop, if_, else_, end, br, brif, ret, trap, select
+
+const VI = 0
+const VF = 1
+const VS = 2
+
+# memory access encodings (Ins.c for load/store)
+const M_SIGNED = 16
+const M_FLOAT = 32
+
+struct Ins:
+    op: Op
+    ty: i32
+    dst: i32
+    a: i32
+    b: i32
+    c: i32
+    imm: int
+
+struct IrFn:
+    name: str
+    nparams: int
+    ret: int          # VI/VF/VS or -1 for none
+    vtypes: [i8]
+    slot_size: [i32]
+    slot_align: [i32]
+    code: [Ins]
+    args: [i32]
+    cabi: bool
+    export_name: str
+    fn_index: int
+
+# current function being built
+ir: IrFn
+
+fn ir_begin(name: str, fn_index: int):
+    ir = IrFn(name = name, ret = -1, fn_index = fn_index)
+
+fn vreg(ty: int) -> int:
+    ir.vtypes.push(i8(ty))
+    ir.vtypes.len() - 1
+
+fn vtype(v: int) -> int: int(ir.vtypes[v])
+
+fn new_slot(size: int, align: int) -> int:
+    ir.slot_size.push(i32(size))
+    a := align
+    if a < 8: a = 8
+    ir.slot_align.push(i32(a))
+    ir.slot_size.len() - 1
+
+fn emit(op: Op, ty: int, dst: int, a: int, b: int, c: int, imm: int) -> int:
+    ir.code.push(Ins(op, i32(ty), i32(dst), i32(a), i32(b), i32(c), imm))
+    ir.code.len() - 1
+
+fn e_iconst(v: int) -> int:
+    d := vreg(VI)
+    emit(.iconst, VI, d, 0, 0, 0, v)
+    d
+
+fn e_fconst(f: float, ty: int) -> int:
+    d := vreg(ty)
+    bits := f as int
+    if ty == VS: bits = int((f32(f) as i32) as u32)
+    emit(.fconst, ty, d, 0, 0, 0, bits)
+    d
+
+fn e_bin(op: Op, ty: int, a: int, b: int) -> int:
+    rt := ty
+    if op == .eq or op == .ne or op == .lts or op == .les or op == .gts or op == .ges or op == .ltu or op == .leu or op == .gtu or op == .geu or op == .feq or op == .fne or op == .flt or op == .fle or op == .fgt or op == .fge: rt = VI
+    d := vreg(rt)
+    emit(op, ty, d, a, b, 0, 0)
+    d
+
+fn e_un(op: Op, ty: int, a: int) -> int:
+    rt := ty
+    if op == .i2f or op == .u2f: rt = ty
+    d := vreg(rt)
+    emit(op, ty, d, a, 0, 0, 0)
+    d
+
+fn e_mov(dst: int, src: int): emit(.mov, vtype(dst), dst, src, 0, 0, 0)
+
+fn e_addi(a: int, k: int) -> int:
+    if k == 0: return a
+    e_bin(.add, VI, a, e_iconst(k))
+
+# load size bytes from [addr + off]; mode = size | M_SIGNED | M_FLOAT
+fn e_load(ty: int, addr: int, off: int, mode: int) -> int:
+    d := vreg(ty)
+    emit(.load, ty, d, addr, 0, mode, off)
+    d
+
+fn e_store(addr: int, off: int, val: int, mode: int): emit(.store, vtype(val), 0, addr, val, mode, off)
+
+fn e_slot(s: int) -> int:
+    d := vreg(VI)
+    emit(.slot, VI, d, s, 0, 0, 0)
+    d
+
+fn e_copy(dst: int, src: int, size: int): emit(.copy, VI, 0, dst, src, 0, size)
+fn e_zero(dst: int, size: int): emit(.zero, VI, 0, dst, 0, 0, size)
+
+fn e_call(f: int, args: [int], rt: int) -> int:
+    start := ir.args.len()
+    for a in args: ir.args.push(i32(a))
+    d := -1
+    if rt >= 0: d = vreg(rt)
+    emit(.call, rt, d, i32(start), i32(args.len()), 0, f)
+    d
+
+fn e_calli(fp: int, args: [int], rt: int, cabi: bool) -> int:
+    start := ir.args.len()
+    for a in args: ir.args.push(i32(a))
+    d := -1
+    if rt >= 0: d = vreg(rt)
+    op := Op.calli
+    if cabi: op = .callc
+    emit(op, rt, d, i32(start), i32(args.len()), i32(fp), 0)
+    d
+
+fn e_block(): emit(.block, 0, 0, 0, 0, 0, 0)
+fn e_loop(): emit(.loop, 0, 0, 0, 0, 0, 0)
+fn e_if(c: int): emit(.if_, 0, 0, c, 0, 0, 0)
+fn e_else(): emit(.else_, 0, 0, 0, 0, 0, 0)
+fn e_end(): emit(.end, 0, 0, 0, 0, 0, 0)
+fn e_br(depth: int): emit(.br, 0, 0, 0, 0, 0, depth)
+fn e_brif(c: int, depth: int): emit(.brif, 0, 0, c, 0, 0, depth)
+fn e_ret(v: int): emit(.ret, 0, 0, v, 0, 0, 0)
+fn e_trap(): emit(.trap, 0, 0, 0, 0, 0, 0)
+
+fn op_name(op: Op) -> str: "{op}"
+
+fn dump_ir():
+    print("fn {ir.name} (params {ir.nparams}, ret {ir.ret}):")
+    for i, s in ir.slot_size: print("  slot{i}: size {s} align {ir.slot_align[i]}")
+    ind := 1
+    for ins in ir.code:
+        if ins.op == .end or ins.op == .else_: ind -= 1
+        pad := repeat("  ", ind)
+        line := "{pad}{ins.op}"
+        if ins.dst >= 0 and ins.op != .store and ins.op != .br and ins.op != .brif and ins.op != .block and ins.op != .loop and ins.op != .end and ins.op != .if_ and ins.op != .else_ and ins.op != .ret: line = "{pad}v{ins.dst} = {ins.op}"
+        line += " a={ins.a} b={ins.b} c={ins.c} imm={ins.imm} ty={ins.ty}"
+        if ins.op == .call or ins.op == .calli or ins.op == .callc or ins.op == .syscall or ins.op == .intr:
+            al := ""
+            for k in 0..int(ins.b): al += " v{ir.args[int(ins.a) + k]}"
+            line += " args:{al}"
+        print(line)
+        if ins.op == .block or ins.op == .loop or ins.op == .if_ or ins.op == .else_: ind += 1

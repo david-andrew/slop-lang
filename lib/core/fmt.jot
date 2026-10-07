@@ -1,0 +1,335 @@
+# Value formatting used by string interpolation, print() and str().
+# `__fmt(buf, x)` appends x to a byte buffer; overload it to customize how a type prints.
+
+fn __fmt(buf: mut [u8], s: str): __buf_append_str(buf, s)
+
+fn __fmt(buf: mut [u8], b: bool):
+    if b: __buf_append_str(buf, "true")
+    else: __buf_append_str(buf, "false")
+
+fn __fmt_u64(buf: mut [u8], v: u64, neg: bool, minw: int, pad: int):
+    # write digits backwards into a small scratch area at the end of the buffer
+    ndig := 1
+    t := v
+    while t >= 10:
+        t = t / 10
+        ndig += 1
+    width := ndig
+    if neg: width += 1
+    if width < minw: width = minw
+    old := len(buf)
+    p := __buf_reserve(buf, width)
+    d := p + 24 + old
+    i := 0
+    if neg and pad == '0':
+        d[0] = '-'
+        i = 1
+    while i < width - ndig - (if neg and pad != '0': 1 else: 0):
+        d[i] = u8(pad)
+        i += 1
+    if neg and pad != '0':
+        d[i] = '-'
+        i += 1
+    k := width - 1
+    t = v
+    while k >= i:
+        d[k] = u8(48 + int(t % 10))
+        t = t / 10
+        k -= 1
+    (p as *int)[1] = old + width
+
+fn __fmt(buf: mut [u8], x: int):
+    if x < 0: __fmt_u64(buf, u64(0) - u64(x), true, 0, ' ')
+    else: __fmt_u64(buf, u64(x), false, 0, ' ')
+
+fn __fmt(buf: mut [u8], x: u64): __fmt_u64(buf, x, false, 0, ' ')
+
+fn __fmt_hex(buf: mut [u8], x: u64, minw: int, upper: bool):
+    digits := "0123456789abcdef"
+    if upper: digits = "0123456789ABCDEF"
+    n := 1
+    t := x
+    while t >= 16:
+        t = t >> 4
+        n += 1
+    w := n
+    if w < minw: w = minw
+    old := len(buf)
+    p := __buf_reserve(buf, w)
+    d := p + 24 + old
+    k := w - 1
+    t = x
+    while k >= 0:
+        d[k] = digits[int(t & 15)]
+        t = t >> 4
+        k -= 1
+    (p as *int)[1] = old + w
+
+# ---------------- floats ----------------
+fn __pow10(k: int) -> float:
+    r := 1.0
+    b := 10.0
+    e := k
+    while e > 0:
+        if e & 1 == 1: r = r * b
+        b = b * b
+        e = e >> 1
+    r
+
+fn __scale10(x: float, k: int) -> float:
+    if k >= 0:
+        if k > 300: return x * __pow10(300) * __pow10(k - 300)
+        return x * __pow10(k)
+    if k < -300: return x / __pow10(300) / __pow10(-k - 300)
+    x / __pow10(-k)
+
+# decimal exponent e such that 10^e <= x < 10^(e+1)
+fn __exp10(x: float) -> int:
+    e := 0
+    v := x
+    if v >= 10.0:
+        while v >= 1e100:
+            v = v / 1e100
+            e += 100
+        while v >= 1e10:
+            v = v / 1e10
+            e += 10
+        while v >= 10.0:
+            v = v / 10.0
+            e += 1
+    else if v < 1.0:
+        while v < 1e-100:
+            v = v * 1e100
+            e -= 100
+        while v < 1e-10:
+            v = v * 1e10
+            e -= 10
+        while v < 1.0:
+            v = v * 10.0
+            e -= 1
+    e
+
+# writes the shortest digit string that round-trips; returns (digits, decimal exponent)
+fn __shortest(x: float, is_f32: bool) -> (u64, int):
+    e := __exp10(x)
+    p := 1
+    while p <= 17:
+        shift := p - 1 - e
+        scaled := __scale10(x, shift)
+        d := u64(scaled + 0.5)
+        ee := e
+        lim := u64(__pow10(p))
+        if d >= lim:
+            d = d / 10
+            ee = e + 1
+        back := __scale10(float(d), -(p - 1 - ee))
+        if is_f32:
+            if f32(back) == f32(x): return (d, ee)
+        else if back == x: return (d, ee)
+        p += 1
+    (u64(__scale10(x, 16 - e) + 0.5), e)
+
+fn __fmt_float(buf: mut [u8], x: float, is_f32: bool):
+    if x != x:
+        __buf_append_str(buf, "nan")
+        return
+    if x == 0.0:
+        if (x as u64) >> 63 == 1: __buf_append_str(buf, "-0.0")
+        else: __buf_append_str(buf, "0.0")
+        return
+    v := x
+    if v < 0.0:
+        __buf_byte(buf, '-')
+        v = -v
+    if v > 1.7976931348623157e308:
+        __buf_append_str(buf, "inf")
+        return
+    d, e := __shortest(v, is_f32)
+    # digits of d
+    ds: [u8]
+    t := d
+    while t > 0:
+        ds.push(u8(48 + int(t % 10)))
+        t = t / 10
+    if ds.len() == 0: ds.push('0')
+    nd := ds.len()
+    # ds is reversed; ds[nd-1] is the most significant digit
+    if e >= 16 or e < -5:
+        __buf_byte(buf, int(ds[nd - 1]))
+        if nd > 1:
+            __buf_byte(buf, '.')
+            i := nd - 2
+            while i >= 0:
+                __buf_byte(buf, int(ds[i]))
+                i -= 1
+        __buf_byte(buf, 'e')
+        if e < 0:
+            __buf_byte(buf, '-')
+            __fmt(buf, -e)
+        else:
+            __buf_byte(buf, '+')
+            __fmt(buf, e)
+        return
+    if e < 0:
+        __buf_append_str(buf, "0.")
+        z := -e - 1
+        while z > 0:
+            __buf_byte(buf, '0')
+            z -= 1
+        i := nd - 1
+        while i >= 0:
+            __buf_byte(buf, int(ds[i]))
+            i -= 1
+        return
+    # integer part: digits [0..e]
+    k := 0
+    while k <= e:
+        if k < nd: __buf_byte(buf, int(ds[nd - 1 - k]))
+        else: __buf_byte(buf, '0')
+        k += 1
+    __buf_byte(buf, '.')
+    if nd <= e + 1:
+        __buf_byte(buf, '0')
+        return
+    while k < nd:
+        __buf_byte(buf, int(ds[nd - 1 - k]))
+        k += 1
+
+fn __fmt(buf: mut [u8], x: float): __fmt_float(buf, x, false)
+fn __fmt(buf: mut [u8], x: f32): __fmt_float(buf, float(x), true)
+
+fn __fmt_fixed(buf: mut [u8], x: float, prec: int):
+    if x != x:
+        __buf_append_str(buf, "nan")
+        return
+    v := x
+    neg := v < 0.0
+    if neg: v = -v
+    scaled := __scale10(v, prec) + 0.5
+    if scaled >= 9.0e18:
+        if neg: __buf_byte(buf, '-')
+        __fmt_float(buf, v, false)
+        return
+    d := u64(scaled)
+    ip := d / u64(__pow10(prec))
+    fp := d % u64(__pow10(prec))
+    if neg and d != 0: __buf_byte(buf, '-')
+    __fmt_u64(buf, ip, false, 0, ' ')
+    if prec > 0:
+        __buf_byte(buf, '.')
+        __fmt_u64(buf, fp, false, prec, '0')
+
+# ---------------- format specs: {x:.2} {x:5} {x:05} {x:x} ----------------
+fn __spec_parse(spec: str) -> (int, int, int, int):
+    # returns (width, precision, pad char, kind) kind: 0 default, 1 hex, 2 HEX
+    width := 0
+    prec := -1
+    pad := ' '
+    kind := 0
+    i := 0
+    n := len(spec)
+    if i < n and spec[i] == '0':
+        pad = '0'
+        i += 1
+    while i < n and spec[i] >= '0' and spec[i] <= '9':
+        width = width * 10 + int(spec[i]) - 48
+        i += 1
+    if i < n and spec[i] == '.':
+        i += 1
+        prec = 0
+        while i < n and spec[i] >= '0' and spec[i] <= '9':
+            prec = prec * 10 + int(spec[i]) - 48
+            i += 1
+    if i < n and spec[i] == 'x': kind = 1
+    if i < n and spec[i] == 'X': kind = 2
+    (width, prec, pad, kind)
+
+fn __pad_to(buf: mut [u8], start: int, width: int, pad: int):
+    n := len(buf) - start
+    if n >= width: return
+    extra := width - n
+    old := len(buf)
+    p := __buf_reserve(buf, extra)
+    __mem_move(p + 24 + start + extra, p + 24 + start, n)
+    i := 0
+    while i < extra:
+        p[24 + start + i] = u8(pad)
+        i += 1
+    (p as *int)[1] = old + extra
+
+fn __fmt_spec(buf: mut [u8], x: float, spec: str):
+    w, prec, pad, kind := __spec_parse(spec)
+    start := len(buf)
+    if prec >= 0: __fmt_fixed(buf, x, prec)
+    else: __fmt(buf, x)
+    __pad_to(buf, start, w, pad)
+
+fn __fmt_spec(buf: mut [u8], x: f32, spec: str): __fmt_spec(buf, float(x), spec)
+
+fn __fmt_spec(buf: mut [u8], x: int, spec: str):
+    w, prec, pad, kind := __spec_parse(spec)
+    start := len(buf)
+    if kind > 0: __fmt_hex(buf, u64(x), 0, kind == 2)
+    else if prec >= 0: __fmt_fixed(buf, float(x), prec)
+    else: __fmt(buf, x)
+    if pad == '0' and x < 0 and kind == 0:
+        # zero padding goes after the sign
+        n := len(buf) - start
+        if n < w:
+            __pad_to(buf, start + 1, w - 1, '0')
+        return
+    __pad_to(buf, start, w, pad)
+
+fn __fmt_spec(buf: mut [u8], x: u64, spec: str):
+    w, prec, pad, kind := __spec_parse(spec)
+    start := len(buf)
+    if kind > 0: __fmt_hex(buf, x, 0, kind == 2)
+    else: __fmt(buf, x)
+    __pad_to(buf, start, w, pad)
+
+fn __fmt_spec(buf: mut [u8], x: str, spec: str):
+    w, prec, pad, kind := __spec_parse(spec)
+    start := len(buf)
+    __buf_append_str(buf, x)
+    # strings pad on the right
+    n := len(buf) - start
+    while n < w:
+        __buf_byte(buf, ' ')
+        n += 1
+
+fn __fmt_spec(buf: mut [u8], x, spec: str):
+    w, prec, pad, kind := __spec_parse(spec)
+    start := len(buf)
+    __fmt(buf, x)
+    __pad_to(buf, start, w, pad)
+
+# ---------------- containers ----------------
+fn __fmt_elem(buf: mut [u8], s: str):
+    __buf_byte(buf, '"')
+    for c in s:
+        if c == '"': __buf_append_str(buf, "\\\"")
+        else if c == '\\': __buf_append_str(buf, "\\\\")
+        else if c == '\n': __buf_append_str(buf, "\\n")
+        else if c == '\t': __buf_append_str(buf, "\\t")
+        else: __buf_byte(buf, int(c))
+    __buf_byte(buf, '"')
+
+fn __fmt_elem(buf: mut [u8], x): __fmt(buf, x)
+
+fn __fmt[T](buf: mut [u8], xs: [T]):
+    __buf_byte(buf, '[')
+    for i, x in xs:
+        if i > 0: __buf_append_str(buf, ", ")
+        __fmt_elem(buf, x)
+    __buf_byte(buf, ']')
+
+fn __fmt[T](buf: mut [u8], x: T?):
+    if v := x: __fmt_elem(buf, v)
+    else: __buf_append_str(buf, "none")
+
+fn __fmt[T](buf: mut [u8], p: *T):
+    __buf_append_str(buf, "0x")
+    __fmt_hex(buf, p as u64, 0, false)
+
+# structs, enums, tuples
+fn __fmt(buf: mut [u8], x): __fmt_fields(buf, x)

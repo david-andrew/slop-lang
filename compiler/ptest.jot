@@ -1,0 +1,13 @@
+use util
+use lex
+use ast
+use parse
+
+a := args()
+path := a[1]
+src := read_file(path) ?? ""
+files.push(SrcFile(path, ".", src))
+t0 := time()
+decls := parse_file(0)
+t1 := time()
+print("decls:", decls.len(), "nodes:", nodes.len(), "time ms:", (t1 - t0) * 1000.0)
