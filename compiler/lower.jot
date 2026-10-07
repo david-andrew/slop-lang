@@ -1886,26 +1886,101 @@ fn const_array(e: int, et: int) -> int:
         for b in 0..sz: rodata.push(u8((bits >> (8 * b)) & 255))
     o
 
+# ---------------- conditions as branches ----------------
+# `and` / `or` / `not` in if/while conditions become jumps instead of boolean values.
+# Each leaf is its own small statement, so its temporaries are dropped before branching.
+fn cond_leaf(e: int) -> int:
+    stmt_begin()
+    c := gen_expr(e).v
+    if tl_items[tl_items.len() - 1].len() == 0:
+        stmt_end()
+        return c
+    cv := vreg(VI)
+    e_mov(cv, c)
+    stmt_end()
+    cv
+
+fn negate_cmp(op: Op) -> Op:
+    match op:
+        eq: .ne
+        ne: .eq
+        lts: .ges
+        les: .gts
+        gts: .les
+        ges: .lts
+        ltu: .geu
+        leu: .gtu
+        gtu: .leu
+        geu: .ltu
+        _: .nop
+
+# continue when e is true, branch to `level` when it is false
+fn jump_if_false(e: int, level: int):
+    k := nodes[e].kind
+    if k == .and_:
+        jump_if_false(int(nodes[e].a), level)
+        jump_if_false(int(nodes[e].b), level)
+        return
+    if k == .or_:
+        blk()
+        t := ctl
+        jump_if_true(int(nodes[e].a), t)
+        jump_if_false(int(nodes[e].b), level)
+        endc()
+        return
+    if k == .not_:
+        jump_if_true(int(nodes[e].a), level)
+        return
+    start := ir.code.len()
+    c := cond_leaf(e)
+    last := ir.code.len() - 1
+    if last >= start and int(ir.code[last].dst) == c and negate_cmp(ir.code[last].op) != .nop:
+        # flip an integer comparison so the branch can use it directly
+        ir.code[last].op = negate_cmp(ir.code[last].op)
+        brif_to(c, level)
+        return
+    brif_to(e_bin(.eq, VI, c, e_iconst(0)), level)
+
+# continue when e is false, branch to `level` when it is true
+fn jump_if_true(e: int, level: int):
+    k := nodes[e].kind
+    if k == .or_:
+        jump_if_true(int(nodes[e].a), level)
+        jump_if_true(int(nodes[e].b), level)
+        return
+    if k == .and_:
+        blk()
+        f := ctl
+        jump_if_false(int(nodes[e].a), f)
+        jump_if_true(int(nodes[e].b), level)
+        endc()
+        return
+    if k == .not_:
+        jump_if_false(int(nodes[e].a), level)
+        return
+    brif_to(cond_leaf(e), level)
+
 fn gen_if(e: int, t: int) -> Val:
     val := vc(t) != VC_VOID and t != T_NEVER and not has_flag(e, NF_STMT)
     rs := -1
     if val:
         rs = new_temp(t)
         e_zero(e_slot(rs), tsize(t))
-    stmt_begin()
-    c := gen_expr(int(nodes[e].a)).v
-    cv := vreg(VI)
-    e_mov(cv, c)
-    stmt_end()
-    iff(cv)
+    has_else := nodes[e].c != 0
+    blk()
+    end_level := ctl
+    if has_else: blk()
+    else_level := ctl
+    jump_if_false(int(nodes[e].a), else_level)
     enter_cond()
     if val: gen_value_block(int(nodes[e].b), rs, t)
     else:
         scope_push()
         gen_block_stmts(int(nodes[e].b))
         scope_pop()
-    if nodes[e].c != 0:
-        els()
+    if has_else:
+        br_to(end_level)
+        endc()
         if val: gen_value_block(int(nodes[e].c), rs, t)
         else:
             scope_push()
@@ -2217,11 +2292,7 @@ fn gen_while(s: int):
         scope_pop()
         br_to(top)
     else:
-        cv := vreg(VI)
-        stmt_begin()
-        e_mov(cv, gen_expr(int(nodes[s].a)).v)
-        stmt_end()
-        brif_to(e_bin(.eq, VI, cv, e_iconst(0)), brk)
+        jump_if_false(int(nodes[s].a), brk)
         blk()
         cont := ctl
         loops.push(LoopInfo(brk, cont, scope_locals.len()))

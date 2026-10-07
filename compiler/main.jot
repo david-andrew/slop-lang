@@ -51,17 +51,22 @@ cli_target := ""
 
 fn scan_build_block(path: str):
     src := read_file(path) ?? ""
-    in_build := false
-    for line in lines(src):
+    # find a top-level `build:` line, then read its indented lines
+    at := -1
+    if starts_with(src, "build:"): at = 0
+    else:
+        k := find(src, "\nbuild:")
+        if k >= 0: at = k + 1
+    if at < 0: return
+    i := find_byte(src, '\n', at)
+    while i >= 0 and i < len(src):
+        j := find_byte(src, '\n', i + 1)
+        if j < 0: j = len(src)
+        line := src[i + 1..j]
+        i = j
         t := trim(line)
-        if starts_with(line, "build:"):
-            in_build = true
-            continue
-        if not in_build: continue
         if len(t) == 0 or t[0] == '#': continue
-        if line[0] != ' ' and line[0] != '\t':
-            in_build = false
-            continue
+        if line[0] != ' ' and line[0] != '\t': break
         eq := find(t, "=")
         if eq < 0: continue
         key := trim(t[..eq])

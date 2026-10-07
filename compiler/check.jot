@@ -142,9 +142,11 @@ fn new_sym(name: int, kind: SK, r: int, decl: int) -> int:
     syms.len() - 1
 
 fn scope_add_module(m: int, name: int, kind: SK, r: int, decl: int) -> int:
-    table := prelude
-    if not modules[m].is_prelude: table = modules[m].names
-    if ex := table.get(name):
+    # (look the name up in place: holding a copy of the table would make the insert below copy it)
+    found: int? = none
+    if modules[m].is_prelude: found = prelude.get(name)
+    else: found = modules[m].names.get(name)
+    if ex := found:
         if syms[ex].kind == .fns and kind == .fns:
             s := new_sym(name, kind, r, decl)
             e := ex

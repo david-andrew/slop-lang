@@ -1432,8 +1432,21 @@ fn x64_function():
     fused_cc = -1
     emit_prologue()
     ci := 0
+    save_list.sort_by(fn(v: int): live_start(v))
+    save_next = 0
+    save_active.clear()
     for pos, ins in ir.code:
         if ci < call_pos.len() and call_pos[ci] == pos and save_list.len() > 0:
+            # values in caller-saved registers live across this call (a sweep: calls come in order)
+            while save_next < save_list.len() and live_start(save_list[save_next]) < pos:
+                save_active.push(save_list[save_next])
+                save_next += 1
+            k := 0
+            while k < save_active.len():
+                if v_last[save_active[k]] <= pos:
+                    save_active[k] = save_active[save_active.len() - 1]
+                    save_active.pop()
+                else: k += 1
             save_around_call(pos, true, -1)
             emit_ins(pos, ins)
             d := -1
@@ -1444,9 +1457,12 @@ fn x64_function():
     elf_syms.push((ir.name, fn_start, code.len() - fn_start))
 
 # store (before) or reload (after) caller-saved registers holding values live across the call at pos
+save_next := 0
+save_active: [int]
+
 fn save_around_call(pos: int, before: bool, dst: int):
-    for v in save_list:
-        if live_start(v) < pos and v_last[v] > pos and v != dst:
+    for v in save_active:
+        if v != dst:
             r := vloc[v]
             if r >= XMM:
                 op := 0x10

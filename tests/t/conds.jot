@@ -1,0 +1,35 @@
+# conditions lowered as branches: and/or/not chains, temporaries in conditions, flags
+fn main():
+    a := 3
+    b := 5
+    flag := a < b
+    if flag: print("yes")
+    else: print("no")
+    print(flag)
+    n := 0
+    while n < 10 and not (n > 5 or n == 4): n += 1
+    print(n)
+    s := "abc"
+    if s.len() > 2 and s + "d" == "abcd": print("temps ok")
+    x := if a > 2 or b < 0: "big" else: "small"
+    print(x)
+    count := 0
+    for i in 0..100:
+        if (i % 3 == 0 or i % 5 == 0) and not (i % 15 == 0): count += 1
+    print(count)
+    f := 0.5
+    nan := 0.0 / 0.0
+    if not (nan < f): print("nan compare ok")
+    if f < 1.0 and f > 0.0: print("float range ok")
+    words := ["a", "bb", "ccc"]
+    i := 0
+    while i < words.len() and words[i].len() < 3: i += 1
+    print(i)
+    print(leaks_ok())
+
+fn leaks_ok() -> bool:
+    before := alloc_count()
+    for k in 0..10:
+        t := "x{k}"
+        if t + "y" == "x3y" or t.len() > 5: pass
+    alloc_count() == before
