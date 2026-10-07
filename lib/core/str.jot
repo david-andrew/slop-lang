@@ -17,10 +17,14 @@ fn find(s: str, sub: str, start: int = 0) -> int:
     n := len(s)
     m := len(sub)
     if m == 0: return start
+    if start < 0 or m > n: return -1
+    p := data(s)
+    q := data(sub)
+    first := q[0]
+    last := n - m
     i := start
-    first := sub[0]
-    while i + m <= n:
-        if s[i] == first and __mem_eq(data(s) + i, data(sub), m): return i
+    while i <= last:
+        if p[i] == first and __mem_eq(p + i, q, m): return i
         i += 1
     -1
 

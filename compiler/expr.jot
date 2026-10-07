@@ -924,8 +924,19 @@ fn call_by_name(n: int, name: int, mod_scope: int, args: [int], expected: int, u
     if decls.len() == 0:
         if ii >= 0 and not intrinsics[ii].arr: return check_intrinsic(n, intrinsics[ii].id, args, expected)
         if ii >= 0 and intrinsics[ii].arr and args.len() > 0: fatal(nodes[n].pos, "'{name_of(name)}' expects an array or string, found {type_str(ntype(args[0]))}")
-        if ufcs: fatal(nodes[n].pos, "no field or function '{name_of(name)}' for type {type_str(ntype(args[0]))}")
-        fatal(nodes[n].pos, "unknown function '{name_of(name)}'")
+        if ufcs:
+            t0 := prune(ntype(args[0]))
+            cands := method_names(t0)
+            if types[t0].kind == .struct_:
+                si := int(types[t0].st)
+                for i in 0..int(structs[si].nfields): cands.push(int(fields[int(structs[si].fields) + i].name))
+            tk := types[t0].kind
+            for it in intrinsics:
+                if it.arr == (tk == .array or tk == .str_): cands.push(intern(it.name))
+            fatal(nodes[n].pos, "no field or function '{name_of(name)}' for type {type_str(ntype(args[0]))}{suggestion(name_of(name), cands)}")
+        all := visible_names()
+        for it in intrinsics: all.push(intern(it.name))
+        fatal(nodes[n].pos, "unknown function '{name_of(name)}'{suggestion(name_of(name), all)}")
     resolve_fn_call(n, name, decls, args, expected)
 
 fn check_expr_in_module(n: int, m: int) -> int:
@@ -1818,7 +1829,7 @@ fn check_expr(n: int, expected: int) -> int:
     else if k == .ident:
         nm := int(nodes[n].name)
         s := lookup(nm)
-        if s == 0: fatal(nodes[n].pos, "unknown name '{name_of(nm)}'")
+        if s == 0: fatal(nodes[n].pos, "unknown name '{name_of(nm)}'{suggestion(name_of(nm), visible_names())}")
         sk := syms[s].kind
         nodes[n].aux = i32(int(sk))
         if sk == .local:
@@ -1894,7 +1905,12 @@ fn check_expr(n: int, expected: int) -> int:
                 if fi >= 0:
                     nodes[n].aux = i32(fi)
                     t = int(fields[int(structs[si].fields) + fi].type)
-            if t == 0: fatal(nodes[n].pos, "{type_str(bt)} has no field '{name_of(fname)}'")
+            if t == 0:
+                cands: [int]
+                if types[bt].kind == .struct_:
+                    si := int(types[bt].st)
+                    for i in 0..int(structs[si].nfields): cands.push(int(fields[int(structs[si].fields) + i].name))
+                fatal(nodes[n].pos, "{type_str(bt)} has no field '{name_of(fname)}'{suggestion(name_of(fname), cands)}")
     else if k == .dotname:
         et := ex
         if et != 0 and exk == .opt: et = prune(int(types[et].elem))

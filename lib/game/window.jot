@@ -236,8 +236,11 @@ else:
     __egl_surf: *u8 = null
     __xev: *u8 = null
 
+    # a missing display or driver is an environment problem, not a program bug: say so and exit
     fn __need(ok: bool, what: str):
-        if not ok: panic("cannot open a window: {what}")
+        if not ok:
+            eprint("error: cannot open a window: {what}")
+            exit(1)
 
     fn __platform_open():
         __need(lib_available("libX11.so.6"), "libX11 is not available")

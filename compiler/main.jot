@@ -92,6 +92,7 @@ fn emit_function():
 fn release_pipeline():
     for k in 0..rel_fns.len():
         ir = rel_fns[k]
+        kc_fn += 1
         optimize()
         rel_fns[k] = ir
     snap := rel_fns
@@ -99,6 +100,7 @@ fn release_pipeline():
     for k, f in snap: can[k] = inlinable(f)
     for k in 0..rel_fns.len():
         ir = rel_fns[k]
+        kc_fn += 1
         if inline_into(k, snap, can): optimize()
         emit_function()
     rel_fns = []
@@ -230,6 +232,7 @@ fn main():
     if a[1] == "check":
         # type check only
         if a.len() < 3: usage()
+        if s := env("JOT_STOP"): stop_after = s
         scan_build_block(a[2])
         target_wasm = build_target == "wasm"
         if target_wasm: ptr_size = 4

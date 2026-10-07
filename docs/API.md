@@ -46,7 +46,7 @@ The first two fields must stay `keys` and `vals` (the compiler iterates them in 
 
 ```
 struct Map[K, V]
-fn hash(x: int) -> u64
+fn hash(x: int) -> u64    # full 64-bit avalanche (murmur3 finalizer): every key bit affects the low bits used for slots, so keys like multiples of 4096 or float bit patterns spread out
 fn hash(x: u64) -> u64
 fn hash(x: bool) -> u64
 fn hash(x)

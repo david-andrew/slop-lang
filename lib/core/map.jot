@@ -7,13 +7,16 @@ struct Map[K, V]:
     slots: [i32]      # 0 = empty, otherwise entry index + 1
     hashes: [u64]
 
-fn hash(x: int) -> u64:
-    h := u64(x) * 0x9E3779B97F4A7C15
-    h ^ (h >> 32)
+# full 64-bit avalanche (murmur3 finalizer): every key bit affects the low bits used for slots,
+# so keys like multiples of 4096 or float bit patterns spread out
+fn hash(x: int) -> u64: hash(u64(x))
 
 fn hash(x: u64) -> u64:
-    h := x * 0x9E3779B97F4A7C15
-    h ^ (h >> 32)
+    h := x ^ (x >> 33)
+    h = h * 0xFF51AFD7ED558CCD
+    h = h ^ (h >> 33)
+    h = h * 0xC4CEB9FE1A85EC53
+    h ^ (h >> 33)
 
 fn hash(x: bool) -> u64:
     if x: return 1

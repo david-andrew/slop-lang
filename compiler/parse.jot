@@ -29,11 +29,17 @@ fn accept(k: Tok) -> bool:
 fn tok_src(i: int) -> str:
     s := int(toks[i].start)
     p_src[s..s + int(toks[i].len)]
+# position just after the previous token (where a missing ':' or ')' belongs)
+fn prev_end() -> int:
+    if ti == 0: return cur_pos()
+    toks[ti - 1].pos + int(toks[ti - 1].len)
+
 fn expect(k: Tok, what: str) -> int:
     if toks[ti].kind != k:
         w := what
         if len(w) == 0: w = tok_name(k)
         tk := toks[ti].kind
+        if tk == .newline or tk == .indent or tk == .dedent or tk == .eof: fatal(prev_end(), "expected {w} at the end of this line")
         if tk == .ident or tk == .int_lit: fatal(cur_pos(), "expected {w}, found '{tok_src(ti)}'")
         fatal(cur_pos(), "expected {w}, found {tok_name(tk)}")
     advance()
@@ -362,7 +368,9 @@ fn parse_primary() -> int:
         n := mk(.array, pos)
         elems: [int]
         while pk() != .rbrack:
-            elems.push(parse_expr())
+            el := parse_expr()
+            if elems.len() == 0 and pk() == .kw_for: return parse_comprehension(el, pos)
+            elems.push(el)
             if accept(.semi):
                 nodes[n].b = i32(parse_expr())
                 break
@@ -388,6 +396,8 @@ fn parse_primary() -> int:
     if k == .kw_if: return parse_if()
     if k == .kw_match: return parse_match()
     if k == .ident or k == .int_lit: fatal(pos, "unexpected '{tok_src(t)}'")
+    if k == .indent: fatal(pos, "unexpected indentation (this line is indented deeper than the lines around it)")
+    if k == .newline or k == .eof: fatal(prev_end(), "expected an expression here")
     fatal(pos, "expected an expression, found {tok_name(k)}")
     0
 
@@ -588,6 +598,73 @@ fn parse_block() -> int:
         stmts.push(parse_simple_stmt())
     set_list(b, stmts)
     b
+
+# [expr for x in xs if cond for y in ys ...] becomes a block expression:
+#     acc := []; for x in xs: if cond: for y in ys: acc.push(expr); acc
+comp_count := 0
+
+fn parse_comprehension(elem: int, pos: int) -> int:
+    clauses: [(int, int)]          # (1, for node) or (2, condition)
+    while true:
+        if pk() == .kw_for:
+            cpos := cur_pos()
+            advance()
+            f := mk(.for_, cpos)
+            vars: [int]
+            while true:
+                v := mk(.ident, cur_pos())
+                nodes[v].name = i32(expect_ident("loop variable"))
+                vars.push(v)
+                if not accept(.comma): break
+            if vars.len() > 2: fatal(cpos, "too many loop variables")
+            set_list(f, vars)
+            expect(.kw_in, "")
+            nodes[f].a = i32(parse_expr())
+            clauses.push((1, f))
+        else if pk() == .kw_if:
+            advance()
+            clauses.push((2, parse_expr()))
+        else: break
+    expect(.rbrack, "")
+    comp_count += 1
+    acc := intern("__comp{comp_count}")
+    # innermost: acc.push(elem)
+    callee := mk(.field, pos)
+    nodes[callee].a = i32(comp_ident(acc, pos))
+    nodes[callee].name = i32(intern("push"))
+    call := mk(.call, pos)
+    nodes[call].a = i32(callee)
+    set_list(call, [elem])
+    stmt := mk(.exprstmt, pos)
+    nodes[stmt].a = i32(call)
+    i := clauses.len() - 1
+    while i >= 0:
+        body := mk(.block, pos)
+        set_list(body, [stmt])
+        c := clauses[i]
+        if c.0 == 1:
+            nodes[c.1].b = i32(body)
+            stmt = c.1
+        else:
+            iff := mk(.if_, nodes[c.1].pos)
+            nodes[iff].a = i32(c.1)
+            nodes[iff].b = i32(body)
+            add_flag(iff, NF_STMT)
+            stmt = iff
+        i -= 1
+    decl := mk(.vardecl, pos)
+    nodes[decl].name = i32(acc)
+    nodes[decl].b = i32(mk(.array, pos))
+    result := mk(.exprstmt, pos)
+    nodes[result].a = i32(comp_ident(acc, pos))
+    blk := mk(.block, pos)
+    set_list(blk, [decl, stmt, result])
+    blk
+
+fn comp_ident(name: int, pos: int) -> int:
+    n := mk(.ident, pos)
+    nodes[n].name = i32(name)
+    n
 
 fn parse_if() -> int:
     pos := cur_pos()
@@ -1090,8 +1167,14 @@ fn parse_toplevel() -> int:
     end_stmt(d)
     d
 
+# profiling aid: JOT_STOP=lex or JOT_STOP=parse makes `jot check` stop after that phase
+stop_after := ""
+
 fn parse_file(file: int) -> [int]:
     toks = lex(file, files[file].src)
+    if stop_after == "lex":
+        toks = []
+        return []
     ti = 0
     p_file = file
     p_src = files[file].src

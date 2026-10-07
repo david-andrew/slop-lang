@@ -433,7 +433,7 @@ fn local_place(l: int, write: bool) -> Place:
 
 fn bounds_check(arr: int, idx: int, pos: int):
     # arr: array object pointer (may be null), idx: index
-    loc := str_data(loc_str(pos))
+    loc := loc_data(pos)
     if not opt_release:
         n := arr_len(arr)
         iff(e_bin(.geu, VI, idx, n))
@@ -447,6 +447,20 @@ fn bounds_check(arr: int, idx: int, pos: int):
     iff(e_bin(.geu, VI, idx, n))
     e_call_nr(rt("__panic_bounds"), [idx, n, e_daddr(loc)], -1)
     endc()
+
+# rodata offset of the "file:line" string for a position (consecutive checks share a line)
+loc_last_file := -1
+loc_last_line := -1
+loc_last_off := 0
+
+fn loc_data(pos: int) -> int:
+    f := pos_file(pos)
+    l, c := line_col(pos)
+    if f == loc_last_file and l == loc_last_line: return loc_last_off
+    loc_last_file = f
+    loc_last_line = l
+    loc_last_off = str_data(loc_str(pos))
+    loc_last_off
 
 fn loc_str(pos: int) -> str:
     f := pos_file(pos)
@@ -569,7 +583,7 @@ fn gen_place(e: int, write: bool) -> Place:
         addr := place_addr(base, ot)
         has := e_load(VI, addr, tsize(int(types[ot].elem)), 1)
         iff(e_bin(.eq, VI, has, e_iconst(0)))
-        e_call_nr(rt("__panic_unwrap"), [e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
+        e_call_nr(rt("__panic_unwrap"), [e_daddr(loc_data(nodes[e].pos))], -1)
         endc()
         return Place(true, addr)
     # not a place: evaluate into a temporary
@@ -1103,7 +1117,7 @@ fn gen_binary(e: int) -> Val:
     sg := (types[lt].kind == .int_ and types[lt].sign)
     if op == .slash or op == .percent:
         iff(e_bin(.eq, VI, vb, e_iconst(0)))
-        e_call_nr(rt("__div_zero"), [e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
+        e_call_nr(rt("__div_zero"), [e_daddr(loc_data(nodes[e].pos))], -1)
         endc()
     if types[lt].kind == .bool_ and (op == .amp or op == .pipe or op == .caret):
         return V(e_bin(int_op(op, false), VI, va, vb), false)
@@ -1267,21 +1281,21 @@ fn gen_intrinsic(e: int) -> Val:
         pl := gen_place(args[0], true)
         p := read_place(pl, at)
         slotp := vreg(VI)
-        # fast path: unique array with spare capacity
-        fast := vreg(VI)
-        e_mov(fast, e_iconst(0))
-        iff(e_bin(.ne, VI, p, e_iconst(0)))
-        iff(e_bin(.eq, VI, hdr_load(p, 0), e_iconst(1)))
+        # fast path: a unique array with spare capacity; anything else branches to the slow path
+        blk()
+        done := ctl
+        blk()
+        slow := ctl
+        brif_to(e_bin(.eq, VI, p, e_iconst(0)), slow)
+        brif_to(e_bin(.ne, VI, hdr_load(p, 0), e_iconst(1)), slow)
         n := hdr_load(p, 8)
-        iff(e_bin(.lts, VI, n, hdr_load(p, 16)))
+        brif_to(e_bin(.ges, VI, n, hdr_load(p, 16)), slow)
         hdr_store(p, 8, e_addi(n, 1))
         e_mov(slotp, e_bin(.add, VI, e_addi(p, 24), e_bin(.mul, VI, n, e_iconst(esz))))
-        e_mov(fast, e_iconst(1))
+        br_to(done)
         endc()
-        endc()
-        endc()
-        iff(e_bin(.eq, VI, fast, e_iconst(0)))
-        arr_unique(pl, at)
+        # slow path: copy if shared, then grow
+        write_place(pl, at, e_call(lf_helper(.arruniq, at, 0), [read_place(pl, at)], VI))
         sa := place_addr(pl, at)
         e_mov(slotp, e_call(rt("__arr_push_slot"), [sa, e_iconst(esz)], VI))
         if not pl.mem: e_mov(pl.v, e_load(VI, sa, 0, ptr_size))
@@ -1496,7 +1510,7 @@ fn gen_intrinsic(e: int) -> Val:
         m := 0
         if args.len() > 1: m = gen_borrowed(args[1]).v
         else: m = e_daddr(str_data("assertion failed"))
-        e_call_nr(rt("__assert_fail"), [m, e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
+        e_call_nr(rt("__assert_fail"), [m, e_daddr(loc_data(nodes[e].pos))], -1)
         endc()
         return V(-1, false)
     if id == .embed:
@@ -1884,7 +1898,9 @@ fn is_plain_expr(e: int) -> bool:
     k := nodes[e].kind
     if k == .int_lit or k == .float_lit or k == .bool_lit or k == .str_lit or k == .null_lit or k == .dotname: return nodes[e].nlist == 0
     if k == .ident: return nodes[e].aux == i32(int(SK.local)) or nodes[e].aux == i32(int(SK.global)) or nodes[e].aux == i32(int(SK.const_))
-    if k == .conv or k == .unary: return is_plain_expr(int(nodes[e].a))
+    if k == .conv or k == .unary or k == .not_: return is_plain_expr(int(nodes[e].a))
+    # arithmetic and reads cannot touch the array being pushed to (only calls could)
+    if k == .binary or k == .and_ or k == .or_: return nodes[e].aux == 0 and is_plain_expr(int(nodes[e].a)) and is_plain_expr(int(nodes[e].b))
     if k == .field: return nodes[e].aux >= 0 and is_plain_expr(int(nodes[e].a)) and types[prune(ntype(int(nodes[e].a)))].kind == .struct_
     false
 
@@ -2202,7 +2218,7 @@ fn gen_assign(s: int):
         sg := types[t].kind == .int_ and types[t].sign
         if op == .slash or op == .percent:
             iff(e_bin(.eq, VI, rhs, e_iconst(0)))
-            e_call_nr(rt("__div_zero"), [e_daddr(str_data(loc_str(nodes[s].pos)))], -1)
+            e_call_nr(rt("__div_zero"), [e_daddr(loc_data(nodes[s].pos))], -1)
             endc()
         if types[t].kind == .bool_: r = e_bin(int_op(op, false), VI, cur, rhs)
         else: r = norm(e_bin(int_op(op, sg), VI, cur, rhs), t)

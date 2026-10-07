@@ -60,13 +60,10 @@ fn __out_of_memory():
     __write_err("fatal: out of memory\n")
     __exit(1)
 
+# smallest c with 32 << c >= n (the exponent of float(n - 1) is floor(log2(n - 1)))
 fn __size_class(n: int) -> int:
-    c := 0
-    s := 32
-    while s < n:
-        s = s << 1
-        c += 1
-    c
+    if n <= 32: return 0
+    int((float(n - 1) as u64) >> 52) - 1027
 
 # Allocate `size` zeroed bytes (16-byte aligned).
 fn __alloc(size: int) -> *u8:

@@ -197,6 +197,93 @@ fn lookup(name: int) -> int:
         i -= 1
     module_lookup(m, name)
 
+# ---------------- "did you mean" ----------------
+# edit distance where swapping two neighbors counts once (optimal string alignment)
+fn edit_distance(a: str, b: str, limit: int) -> int:
+    n := len(a)
+    m := len(b)
+    if abs(n - m) > limit: return limit + 1
+    pp := [0; m + 1]
+    prev := [0; m + 1]
+    cur := [0; m + 1]
+    for j in 0..m + 1: prev[j] = j
+    for i in 1..n + 1:
+        cur[0] = i
+        best := i
+        for j in 1..m + 1:
+            c := 1
+            if fold_case(a[i - 1]) == fold_case(b[j - 1]): c = 0
+            v := min(min(prev[j] + 1, cur[j - 1] + 1), prev[j - 1] + c)
+            if i > 1 and j > 1 and fold_case(a[i - 1]) == fold_case(b[j - 2]) and fold_case(a[i - 2]) == fold_case(b[j - 1]): v = min(v, pp[j - 2] + 1)
+            cur[j] = v
+            if v < best: best = v
+        if best > limit: return limit + 1
+        tmp := pp
+        pp = prev
+        prev = cur
+        cur = tmp
+    prev[m]
+
+# the closest of the candidate names (" (did you mean 'x'?)"), or ""; ties go to the longest
+# common prefix, and a short name that starts the misspelling (len / lenght) counts as close
+fn suggestion(name: str, candidates: [int]) -> str:
+    limit := 1
+    if len(name) > 4: limit = 2
+    best := ""
+    bs := 1000000
+    for c in candidates:
+        cn := name_of(c)
+        if cn == name or len(cn) == 0 or cn[0] == '_': continue
+        d := edit_distance(name, cn, limit)
+        pre := 0
+        while pre < len(cn) and pre < len(name) and fold_case(cn[pre]) == fold_case(name[pre]): pre += 1
+        if d > limit and pre == len(cn) and pre >= 3: d = limit
+        if d > limit: continue
+        score := d * 100 - pre
+        if score < bs:
+            bs = score
+            best = cn
+    if len(best) > 0: return " (did you mean '{best}'?)"
+    ""
+
+fn fold_case(c: u8) -> u8:
+    if c >= 'A' and c <= 'Z': return c + 32
+    c
+
+# names visible from the current scope: locals, the module, the standard library, built-ins
+fn visible_names() -> [int]:
+    out := sc_names
+    for k, v in modules[cur_mod()].names: out.push(k)
+    for k, v in prelude: out.push(k)
+    for k, v in universe: out.push(k)
+    out
+
+fn type_names() -> [int]:
+    out: [int]
+    for tbl in [modules[cur_mod()].names, prelude, universe]:
+        for k, s in tbl:
+            sk := syms[s].kind
+            if sk == .type_ or sk == .struct_ or sk == .enum_: out.push(k)
+    out
+
+# functions that could be called as recv.f(...): their first parameter has the receiver's kind
+fn method_names(recv: int) -> [int]:
+    out: [int]
+    rt := prune(recv)
+    for tbl in [modules[cur_mod()].names, prelude]:
+        for k, s0 in tbl:
+            s := s0
+            while s != 0:
+                if syms[s].kind == .fns and syms[s].decl != 0 and nkids(int(syms[s].decl)) > 0:
+                    sig := fn_sig(int(syms[s].decl))
+                    if sig.params.len() > 0:
+                        p0 := prune(sig.params[0])
+                        if types[p0].kind != .var and (types[p0].kind == types[rt].kind or type_eq(p0, rt)):
+                            out.push(k)
+                            break
+                s = int(syms[s].next)
+    out
+
 fn cur_mod() -> int:
     if cx >= 0: return int(ctxs[cx].mod)
     0
@@ -304,7 +391,7 @@ fn resolve_type(tn: int) -> int:
             if ms == 0 or syms[ms].kind != .module: fatal(nodes[tn].pos, "unknown module '{name_of(int(nodes[tn].sval))}'")
             s = module_lookup(int(syms[ms].ref), nm)
         else: s = lookup(nm)
-        if s == 0: fatal(nodes[tn].pos, "unknown type '{name_of(nm)}'")
+        if s == 0: fatal(nodes[tn].pos, "unknown type '{name_of(nm)}'{suggestion(name_of(nm), type_names())}")
         sk := syms[s].kind
         if sk == .type_:
             if nodes[tn].nlist > 0: fatal(nodes[tn].pos, "type '{name_of(nm)}' takes no type arguments")
@@ -1367,6 +1454,7 @@ fn check_program(main_path: str):
     add_universe()
     load_prelude()
     mainm := load_module(main_path, false, -1)
+    if stop_after == "lex" or stop_after == "parse": exit(0)
     modules[mainm].is_main = true
     i := 0
     while i < modules.len():
@@ -1441,6 +1529,12 @@ fn check_program(main_path: str):
         if syms[s].kind == .fns: draw_fn = get_fn_inst(int(syms[s].decl), [], 0)
     for d in export_decls:
         if not modules[int(nodes[d].mod)].is_prelude: export_fns.push(get_fn_inst(d, [], nodes[d].pos))
+    # the program's own functions are all checked, called or not (errors should not hide in
+    # unused code); only what is reachable is compiled
+    for m in modules:
+        if m.is_prelude: continue
+        for d in m.decls:
+            if nodes[d].kind == .fn_ and not has_flag(d, NF_EXTERN) and not fn_sig(d).generic: get_fn_inst(d, [], nodes[d].pos)
     for nm in runtime_names: runtime_fn(nm)
     for nm in optional_runtime:
         if prelude.get(intern(nm)) != none: runtime_fn(nm)

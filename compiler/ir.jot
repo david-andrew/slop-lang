@@ -72,6 +72,7 @@ ir: IrFn
 
 fn ir_begin(name: str, fn_index: int):
     ir = IrFn(name = name, ret = -1, fn_index = fn_index)
+    kc_fn += 1
 
 fn vreg(ty: int) -> int:
     ir.vtypes.push(i8(ty))
@@ -85,8 +86,23 @@ fn vtype(v: int) -> int:
 fn is_kv(v: int) -> bool: int(ir.vtypes[v]) == VK
 fn kv_of(v: int) -> int: ir.kval[v]
 
+# per-function cache of constant vregs (direct mapped; constants are immutable, so sharing is safe)
+kc_val: [int] = [0; 256]
+kc_reg: [int] = [0; 256]
+kc_fn := 0
+kc_epoch: [int] = [0; 256]
+
 # a constant vreg (32-bit values only: backends use them as immediates)
 fn k_vreg(v: int) -> int:
+    slot := (v ^ (v >> 8)) & 255
+    if kc_epoch[slot] == kc_fn and kc_val[slot] == v: return kc_reg[slot]
+    d := k_vreg_new(v)
+    kc_epoch[slot] = kc_fn
+    kc_val[slot] = v
+    kc_reg[slot] = d
+    d
+
+fn k_vreg_new(v: int) -> int:
     d := ir.vtypes.len()
     ir.vtypes.push(i8(VK))
     while ir.kval.len() < d: ir.kval.push(0)

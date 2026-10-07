@@ -172,6 +172,8 @@ for x in xs: ...
 for i, x in xs: ...                    # with index
 for k, v in map: ...
 for mut x in xs: x *= 2                # x aliases the element
+evens := [x * x for x in xs if x % 2 == 0]       # list comprehension (compiles to a loop)
+pairs := [(a, b) for a in 0..3 for b in 0..3 if a < b]
 break / continue / return
 defer close(f)                         # runs when the enclosing block exits
 
