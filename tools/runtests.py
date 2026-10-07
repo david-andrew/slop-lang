@@ -27,8 +27,9 @@ for t in tests:
         cmd = [os.path.join(root, "stage0", "jot0"), t, "-o", exe]
     else:
         cmd = [os.path.join(root, "bin", "jot"), "build", t, "-o", exe] + (["--target", "wasm"] if target == "wasm" else [])
+        env = dict(os.environ, JOT_LIB=os.path.join(root, "lib"))
     t0 = time.time()
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, env=dict(os.environ, JOT_LIB=os.path.join(root, "lib")))
     if r.returncode != 0:
         print(f"FAIL {name}: compile error\n{r.stderr}")
         failed += 1

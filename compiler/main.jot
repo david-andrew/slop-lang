@@ -13,6 +13,7 @@ use ir
 use lower
 use x64
 use elf
+use wasm
 
 fn usage():
     eprint("usage: jot file.jot [args...]\n       jot build file.jot [-o output] [--target native|wasm] [--ir]")
@@ -31,8 +32,46 @@ fn find_lib_dir() -> str:
 dump := false
 timing := false
 
-fn compile(path: str, out: str) -> bool:
+# build options written in the program itself:
+#   build:
+#       target = wasm
+#       output = "game"
+build_target := ""
+build_output := ""
+cli_target := ""
+
+fn scan_build_block(path: str):
+    src := read_file(path) ?? ""
+    in_build := false
+    for line in lines(src):
+        t := trim(line)
+        if starts_with(line, "build:"):
+            in_build = true
+            continue
+        if not in_build: continue
+        if len(t) == 0 or t[0] == '#': continue
+        if line[0] != ' ' and line[0] != '\t':
+            in_build = false
+            continue
+        eq := find(t, "=")
+        if eq < 0: continue
+        key := trim(t[..eq])
+        val := trim(t[eq + 1..])
+        h := find(val, "#")
+        if h >= 0: val = trim(val[..h])
+        if len(val) >= 2 and val[0] == '"': val = val[1..len(val) - 1]
+        if key == "target": build_target = val
+        else if key == "output": build_output = val
+
+fn compile(path: str, out0: str) -> str:
     t0 := time()
+    scan_build_block(path)
+    tgt := build_target
+    if len(cli_target) > 0: tgt = cli_target
+    target_wasm = tgt == "wasm"
+    if target_wasm: ptr_size = 4
+    out := out0
+    if target_wasm and not ends_with(out, ".html"): out = out + ".html"
     init_types()
     check_program(path)
     t1 := time()
@@ -42,19 +81,36 @@ fn compile(path: str, out: str) -> bool:
     if main_fn != 0: main_lf = lf_of_inst(main_fn)
     i := 0
     while i < lfuncs.len():
+        if lfuncs[i].kind == LK_INST and fns[lfuncs[i].inst].decl != 0 and has_flag(int(fns[lfuncs[i].inst].decl), NF_EXTERN):
+            if not target_wasm: fatal(nodes[int(fns[lfuncs[i].inst].decl)].pos, "extern functions are only available when targeting wasm")
+            i += 1
+            continue
         lower_function(i)
         if dump: dump_ir()
-        x64_function()
+        if target_wasm: wasm_collect()
+        else: x64_function()
         i += 1
     t2 := time()
-    entry := x64_entry(roots, main_lf)
-    text_off, ro_off, data_off := elf_layout(code.len(), rodata.len())
-    x64_resolve(ELF_BASE + text_off, ELF_BASE + ro_off, ELF_BASE + data_off)
-    ok := write_elf(out, code, entry, rodata, data_size + 8)
+    ok := false
+    size := 0
+    if target_wasm:
+        mod := wasm_module(roots, main_lf, -1)
+        size = mod.len()
+        title := path
+        s := rfind(title, "/")
+        if s >= 0: title = title[s + 1..]
+        ok = write_html(out, mod, title)
+    else:
+        entry := x64_entry(roots, main_lf)
+        text_off, ro_off, data_off := elf_layout(code.len(), rodata.len())
+        x64_resolve(ELF_BASE + text_off, ELF_BASE + ro_off, ELF_BASE + data_off)
+        ok = write_elf(out, code, entry, rodata, data_size + 8)
+        size = code.len()
     t3 := time()
     if timing:
-        eprint("check {(t1 - t0) * 1000.0:.1} ms, lower+codegen {(t2 - t1) * 1000.0:.1} ms, write {(t3 - t2) * 1000.0:.1} ms; {lfuncs.len()} functions, {code.len()} bytes of code")
-    ok
+        eprint("check {(t1 - t0) * 1000.0:.1} ms, lower+codegen {(t2 - t1) * 1000.0:.1} ms, write {(t3 - t2) * 1000.0:.1} ms; {lfuncs.len()} functions, {size} bytes of code")
+    if not ok: return ""
+    out
 
 fn main():
     a := args()
@@ -71,7 +127,7 @@ fn main():
                 out = a[i + 1]
                 i += 1
             else if x == "--target" and i + 1 < a.len():
-                target_wasm = a[i + 1] == "wasm"
+                cli_target = a[i + 1]
                 i += 1
             else if x == "--ir": dump = true
             else if x == "--time": timing = true
@@ -81,17 +137,22 @@ fn main():
         if len(out) == 0:
             out = path
             if ends_with(out, ".jot"): out = out[..len(out) - 4]
-        if not compile(path, out): exit(1)
+        if len(compile(path, out)) == 0: exit(1)
         return
     path := a[1]
     mkdir("/tmp/jot-cache")
     base := path
     s := rfind(base, "/")
     if s >= 0: base = base[s + 1..]
-    out := "/tmp/jot-cache/{base}.bin"
-    if not compile(path, out): exit(1)
-    run_args := [out]
+    built := compile(path, "/tmp/jot-cache/{base}.bin")
+    if len(built) == 0: exit(1)
+    if target_wasm:
+        # open the page in the default browser
+        exec("/usr/bin/xdg-open", ["xdg-open", built])
+        eprint("jot: built {built}; open it in a browser")
+        exit(0)
+    run_args := [built]
     for i in 2..a.len(): run_args.push(a[i])
-    exec(out, run_args)
-    eprint("jot: failed to run {out}")
+    exec(built, run_args)
+    eprint("jot: failed to run {built}")
     exit(1)

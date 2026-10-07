@@ -1573,7 +1573,7 @@ Type *check_expr(FnCtx *c, Node **pn, Type *expected) {
       v->pos = n->pos;
       *pn = v;
       Type *vt = check_expr(c, pn, expected);
-      if (!is_lit(*pn) && g->type && !(prune(g->type)->has_var)) coerce(c, pn, g->type);
+      if (!is_lit(*pn) && g->type && g->decl && g->decl->a && !(prune(g->type)->has_var)) coerce(c, pn, g->type);
       return vt;
     }
     case S_FNS: return fn_value(c, pn, s, expected);

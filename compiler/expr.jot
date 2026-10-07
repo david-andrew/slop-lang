@@ -1732,7 +1732,7 @@ fn check_expr(n: int, expected: int) -> int:
             nodes[n] = nodes[v]
             nodes[n].pos = p
             vt := check_expr(n, expected)
-            if not is_lit(n) and globals[g].type != 0 and not has_var(prune(int(globals[g].type))): coerce(n, int(globals[g].type))
+            if not is_lit(n) and globals[g].type != 0 and globals[g].decl != 0 and nodes[int(globals[g].decl)].a != 0 and not has_var(prune(int(globals[g].type))): coerce(n, int(globals[g].type))
             last_checked = n
             return ntype(n)
         else if sk == .fns:
