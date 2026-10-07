@@ -33,7 +33,7 @@ const GROUND_Y = 600.0
 
 state := State.title
 player := Player(vec2(120, 400), vec2(0, 0))
-start_x := float(to_int(env("LUMEN_X") ?? "120") ?? 120)
+start_x := 120.0
 platforms: [Rect]
 seeds: [Seed]
 thorns: [Thorn]
@@ -275,7 +275,7 @@ fn draw_background():
     for c in clouds:
         cx := (c.x - cam.x * 0.05 + t * 6.0) % 3400.0 - 300.0
         if cx < -300.0 or cx > 1600.0: continue
-        col := lerp(rgba(0.85, 0.75, 0.85, 0.16), rgba(1, 0.95, 0.9, 0.22), color_t)
+        col := lerp(rgba(0.85, 0.75, 0.85, 0.16), rgba(1, 0.9, 0.92, 0.13), color_t)
         clear_ := vec4(col.x, col.y, col.z, 0)
         for k in 0..5:
             off := vec2(f32((float(k) - 2.0) * float(c.z) * 0.45), f32(sin(float(k) * 1.7) * float(c.z) * 0.12))
@@ -344,11 +344,15 @@ fn draw_branch(pos: vec2, angle: float, len: float, depth: int, lit: f32, t: f32
     end := pos + from_angle(angle + sway) * f32(len)
     line(pos, end, float(depth) * 3.2 + 1.5, lerp(rgb(0.1, 0.08, 0.12), rgb(0.22, 0.14, 0.16), lit))
     if depth == 0:
-        bc := lerp(rgba(0.4, 0.36, 0.44, 0.9), hsv(0.93 + 0.1 * fract_hash(float(end.x)), 0.4, 1.0), lit)
-        circle(end, 10.0 + 8.0 * float(lit), bc)
+        # a cluster of blossoms that opens as the light returns
+        n := 1 + int(4.0 * float(lit))
+        for k in 0..n:
+            off := from_angle(float(k) * 2.4 + float(end.x)) * f32(6.0 + 9.0 * float(lit))
+            bc := lerp(rgba(0.38, 0.34, 0.42, 0.9), hsv(0.92 + 0.12 * fract_hash(float(end.x) + float(k)), 0.38, 1.0), lit)
+            circle(end + off, 6.0 + 7.0 * float(lit), bc)
         if lit > 0.3:
             blend(.add)
-            circle_gradient(end, 26, rgba(1, 0.8, 0.85, 0.25 * lit), rgba(1, 0.7, 0.8, 0))
+            circle_gradient(end, 30, rgba(1, 0.8, 0.85, 0.12 * lit), rgba(1, 0.7, 0.8, 0))
             blend(.alpha)
         return
     up := -PI / 2.0
@@ -405,9 +409,9 @@ fn draw_world():
     tree := vec2(f32(WORLD_W - 250.0), f32(GROUND_Y))
     lit := f32(collected) / f32(max(seeds.len(), 1))
     if state == .won: lit = 1.0
-    circle_gradient(tree + vec2(0, -300), 380, rgba(1, 0.8, 0.55, 0.12 + 0.55 * lit), rgba(1, 0.6, 0.4, 0))
+    circle_gradient(tree + vec2(0, -260), 340, rgba(1, 0.8, 0.6, 0.08 + 0.22 * lit), rgba(1, 0.6, 0.4, 0))
     blend(.alpha)
-    draw_branch(tree, -PI / 2.0, 150.0, 7, lit, t)
+    draw_branch(tree, -PI / 2.0, 120.0, 7, lit, t)
     # player: a glowing spirit with a ribbon trail
     blend(.add)
     for i, p in player.trail:
@@ -425,7 +429,7 @@ fn draw_world():
 fn draw():
     clear(BLACK)
     # Gris-like restoration: the world is almost grey until the seeds bring its color back
-    post_effects(0.8, 0.55, 0.45, float(0.35 + 0.85 * color_t), lerp(vec3(0.95, 0.97, 1.05), vec3(1.05, 1.0, 0.95), color_t))
+    post_effects(0.7, float(0.55 + 0.15 * color_t), 0.45, float(0.35 + 0.85 * color_t), lerp(vec3(0.95, 0.97, 1.05), vec3(1.05, 1.0, 0.95), color_t))
     draw_background()
     if state == .title:
         text_centered("L U M E N", vec2(640, 260), 96, rgba(1, 0.95, 0.85, 1))

@@ -102,7 +102,7 @@ fn smoothstep(e0: float, e1: float, x: float) -> float
 fn sin(x: float) -> float
 fn cos(x: float) -> float
 fn tan(x: float) -> float
-fn atan(x: float) -> float
+fn atan(x0: float) -> float
 fn atan2(y: float, x: float) -> float
 fn asin(x: float) -> float
 fn acos(x: float) -> float
@@ -194,7 +194,7 @@ fn *(s: str, n: int) -> str
 fn upper(s: str) -> str
 fn lower(s: str) -> str
 fn to_int(s: str) -> int?
-fn to_float(s: str) -> float?
+fn to_float(s: str) -> float?    # Parse a decimal number. The result is the double nearest to the exact decimal value (ties to even), like C's strtod: an estimate, then exact big-integer comparisons.
 fn reverse(s: str) -> str
 fn char_count(s: str) -> int    # number of unicode code points
 fn chars(s: str) -> [int]    # unicode code points of s
@@ -314,6 +314,8 @@ fn rect(pos: vec2, size: vec2, c: vec4)
 fn rect_gradient(x: float, y: float, w: float, h: float, top: vec4, bottom: vec4)    # rectangle with a vertical color gradient
 fn rect_outline(x: float, y: float, w: float, h: float, thickness: float, c: vec4)
 fn triangle(a: vec2, b: vec2, c: vec2, col: vec4)
+fn triangle_gradient(a: vec2, b: vec2, c: vec2, ca: vec4, cb: vec4, cc: vec4)    # triangle with a color per corner (colors blend across it)
+fn quad_gradient(a: vec2, b: vec2, c: vec2, d: vec2, ca: vec4, cb: vec4, cc: vec4, cd: vec4)    # quad (a, b, c, d in order around it) with a color per corner
 fn circle(center: vec2, radius: float, c: vec4, segments: int = 0)
 fn circle_gradient(center: vec2, radius: float, inner: vec4, outer: vec4, segments: int = 48)    # circle that fades from `inner` color at the center to `outer` at the edge (glows, soft lights)
 fn ring(center: vec2, radius: float, thickness: float, c: vec4, segments: int = 48)
@@ -372,7 +374,7 @@ fn post_effects(bloom: float = 0.6, threshold: float = 0.7, vignette: float = 0.
 fn no_post_effects()
 fn draw_mesh(m: Mesh, transform: mat4 = mat4(), color: vec4 = vec4(1, 1, 1, 1), texture: Texture = Texture(0, 0, 0), emissive: float = 0.0, specular: float = 0.3, cast_shadow: bool = true)
 fn draw_mesh_instanced(m: Mesh, instances: [Instance3D], color: vec4 = vec4(1, 1, 1, 1), emissive: float = 0.0, specular: float = 0.2, cast_shadow: bool = true, wind: float = 0.0)    # many copies of a mesh in one draw call (crowds, forests, particles...)
-fn draw_custom(render: fn())    # draw with your own shader inside the 3D pass; `render` runs with depth testing on. Use scene_view_proj(), scene_camera(), scene_sun(), scene_shadow_vp(), scene_shadow_map()...
+fn draw_custom(render: fn(), transparent: bool = false, additive: bool = false)    # draw with your own shader inside the 3D pass; `render` runs with depth testing on. Use scene_view_proj(), scene_camera(), scene_sun(), scene_shadow_vp(), scene_shadow_map()... transparent = true: run after the sky with alpha blending on and depth writes off; additive = true: like transparent, but colors add up (glows, beams, light shafts)
 fn scene_view_proj() -> mat4
 fn scene_camera() -> vec3
 fn scene_sun() -> vec3
