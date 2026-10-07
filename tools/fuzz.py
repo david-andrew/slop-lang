@@ -22,6 +22,11 @@ class Gen:
         self.ro = set()     # read-only ones (parameters, loop variables)
         self.floats = []
         self.arrays = []    # [int] arrays (never empty)
+        self.strs = []      # str variables
+        self.structs = []   # P variables
+        self.parrs = []     # [P] arrays (never empty)
+        self.closures = []  # fn(int) -> int values
+        self.maps = []      # {int: int} maps
         self.depth = 0
         self.fns = []       # (name, nparams) of helper functions: int -> int
         self.n = 0
@@ -43,8 +48,15 @@ class Gen:
                 a = r.choice(self.arrays)
                 return f"{a}[abs({self.iexpr(d + 2)}) % {a}.len()]"
             if c < 0.75 and self.arrays: return f"{r.choice(self.arrays)}.len()"
+            if c < 0.8 and self.strs: return f"len({r.choice(self.strs)})"
+            if c < 0.84 and self.structs: return f"{r.choice(self.structs)}.a"
+            if c < 0.87 and self.closures: return f"{r.choice(self.closures)}({self.iexpr(d + 2)})"
+            if c < 0.9 and self.maps: return f"({r.choice(self.maps)}.get({self.iexpr(d + 2)}) ?? -1)"
+            if c < 0.92 and self.parrs:
+                a = r.choice(self.parrs)
+                return f"{a}[abs({self.iexpr(d + 2)}) % {a}.len()].a"
             return str(r.choice([0, 1, 2, 3, 7, -1, -5, 100, 255, 1000, -32768, 65537, 2147483647, -2147483648]))
-        op = r.choice(["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "call", "neg", "if", "min", "cmpsel", "float"])
+        op = r.choice(["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "call", "neg", "if", "min", "cmpsel", "float", "match"])
         a = self.iexpr(d + 1)
         b = self.iexpr(d + 1)
         if op in "+-*&|^": return f"({a} {op} {b})"
@@ -59,6 +71,13 @@ class Gen:
         if op == "min": return f"min({a}, {b})"
         if op == "cmpsel": return f"int({a} < {b}) + int({a} == {b}) * 2"
         if op == "float" and self.floats: return f"int({r.choice(self.floats)} * 3.0) % 100000"
+        if op == "match" and d <= 1 and self.ints:
+            arms = []
+            vals = r.sample(range(-3, 12), r.randint(1, 5))
+            for v in vals: arms.append(f"{v}: {self.iexpr(4)}")
+            if r.random() < 0.5: arms.append(f"20..30: {self.iexpr(4)}")
+            arms.append(f"_: {self.iexpr(4)}")
+            return "(match " + r.choice(self.ints) + ":\n" + "".join("    " * (self.depth + 2) + arm + "\n" for arm in arms) + "    " * (self.depth + 1) + ")"
         return a
 
     def fexpr(self, d=0):
@@ -81,17 +100,18 @@ class Gen:
         c = r.random()
         if c < 0.6: return f"{self.iexpr(d + 1)} {r.choice(['<', '<=', '>', '>=', '==', '!='])} {self.iexpr(d + 1)}"
         if c < 0.75 and self.floats: return f"{self.fexpr(d + 1)} < {self.fexpr(d + 1)}"
+        if c < 0.8 and len(self.strs) > 1: return f"{r.choice(self.strs)} {r.choice(['==', '!=', '<'])} {r.choice(self.strs)}"
         if c < 0.9: return f"({self.cond(d + 2)}) {r.choice(['and', 'or'])} ({self.cond(d + 2)})"
         return f"not ({self.cond(d + 2)})"
 
     # ---------------- statements ----------------
     def block(self, n):
-        saved = (list(self.ints), list(self.floats), list(self.arrays))
+        saved = (list(self.ints), list(self.floats), list(self.arrays), list(self.strs), list(self.structs), list(self.parrs), list(self.closures), list(self.maps))
         self.depth += 1
         for _ in range(n): self.stmt()
         if not self.lines[-1].strip() or self.lines[-1].endswith(":"): self.emit("pass")
         self.depth -= 1
-        self.ints, self.floats, self.arrays = saved
+        self.ints, self.floats, self.arrays, self.strs, self.structs, self.parrs, self.closures, self.maps = saved
 
     def stmt(self):
         r = self.r
@@ -109,6 +129,8 @@ class Gen:
             n = r.randint(1, 6)
             self.emit(f"{v} := [{', '.join(self.iexpr(2) for _ in range(n))}]")
             self.arrays.append(v)
+        elif c < 0.42 and r.random() < 0.5:
+            self.new_value()
         elif c < 0.55 and [x for x in self.ints if x not in self.ro]:
             v = r.choice([x for x in self.ints if x not in self.ro])
             self.emit(f"{v} {r.choice(['=', '+=', '-=', '^='])} {self.iexpr()}")
@@ -150,9 +172,49 @@ class Gen:
         else:
             self.emit(f"print({', '.join(r.choice(self.ints) for _ in range(r.randint(1, 3)))})")
 
+    def new_value(self):
+        r = self.r
+        k = r.randint(0, 5)
+        if k == 0:
+            v = self.fresh("s")
+            self.emit(f'{v} := "{r.choice(["ab", "", "xyz", "hello"])}" + "{{{self.iexpr(2)}}}"')
+            self.strs.append(v)
+        elif k == 1 and self.strs:
+            v = r.choice(self.strs)
+            self.emit(f'if len({v}) < 40: {v} = {v} + "{r.choice("abc")}"')
+            self.emit(f"print({v}, len({v}), {v}.find(\"a\"), {v}[0..min(2, len({v}))])")
+        elif k == 2:
+            v = self.fresh("q")
+            self.emit(f"{v} := P({self.iexpr(2)}, {self.fexpr(2)})")
+            self.structs.append(v)
+            if r.random() < 0.5:
+                self.emit(f"{v}.a += {self.iexpr(2)}")
+                self.emit(f"print({v})")
+        elif k == 3:
+            v = self.fresh("pa")
+            self.emit(f"{v} := [P({self.iexpr(2)}, 1.5), P({self.iexpr(2)}, -2.0)]")
+            self.parrs.append(v)
+            if r.random() < 0.6:
+                self.emit(f"for mut it in {v}:")
+                self.emit(f"    it.a = it.a * 3 + {self.iexpr(3)}")
+                self.emit(f"    it.b = it.b * 0.5")
+            self.emit(f"print({v})")
+        elif k == 4:
+            v = self.fresh("cl")
+            cap = self.iexpr(2)
+            self.emit(f"{v}k := {cap}")
+            self.emit(f"{v} := fn(x: int) -> int: x * 3 + {v}k")
+            self.closures.append(v)
+        else:
+            v = self.fresh("m")
+            self.emit(f"{v}: {{int: int}} = {{}}")
+            self.emit(f"for mk in 0..{r.randint(1, 20)}: {v}[(mk * 7) % 13] = mk + {self.iexpr(3)}")
+            self.emit(f"print({v}.len())")
+            self.maps.append(v)
+
     def program(self):
         r = self.r
-        out = []
+        out = ["struct P:", "    a: int", "    b: float", ""]
         # helper functions first
         for fi in range(r.randint(1, 4)):
             name = f"h{fi}"
@@ -160,6 +222,7 @@ class Gen:
             params = [f"p{j}" for j in range(np_)]
             self.lines = []
             self.ints, self.floats, self.arrays = list(params), [], []
+            self.strs, self.structs, self.parrs, self.closures, self.maps = [], [], [], [], []
             self.ro = set(params)
             self.depth = 1
             for _ in range(r.randint(1, 5)): self.stmt()
@@ -172,6 +235,7 @@ class Gen:
             self.fns.append((name, np_))
         self.lines = []
         self.ints, self.floats, self.arrays = [], [], []
+        self.strs, self.structs, self.parrs, self.closures, self.maps = [], [], [], [], []
         self.depth = 1
         for _ in range(r.randint(10, 40)): self.stmt()
         self.emit(f"print({', '.join(self.ints[-6:]) or '0'})")

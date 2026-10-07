@@ -140,10 +140,13 @@ lx_ctx_block: [bool]
 lx_ctx_base: [int]
 lx_line_indent := 0
 
-fn lx_err(off: int, msg: str): fatal(mkpos(lx_file, off), msg)
+# source offset of the text being lexed (non-zero for expressions inside string literals)
+lx_base := 0
+
+fn lx_err(off: int, msg: str): fatal(mkpos(lx_file, lx_base + off), msg)
 
 fn lx_emit(kind: Tok, start: int, n: int):
-    lx_toks.push(Token(kind, 0, (lx_file << 40) | start, i32(start), i32(n), 0, 0.0))
+    lx_toks.push(Token(kind, 0, (lx_file << 40) | (lx_base + start), i32(start), i32(n), 0, 0.0))
 
 lx_open: [int]          # positions of open brackets (for error messages)
 
@@ -373,7 +376,7 @@ fn lx_string(raw: bool):
                     if p[i] == '\\': i += 1
                     i += 1
             i += 1
-    t := Token(Tok.str_lit, 0, mkpos(lx_file, s), i32(start), i32(i - start), 0, 0.0)
+    t := Token(Tok.str_lit, 0, mkpos(lx_file, lx_base + s), i32(start), i32(i - start), 0, 0.0)
     f := 0
     if raw: f |= STRF_RAW
     if triple: f |= STRF_TRIPLE
@@ -470,7 +473,7 @@ fn lex(file: int, src: str) -> [Token]:
             id := intern_sub(src, s, i - s)
             kind := Tok.ident
             if id < kw_tok.len(): kind = kw_tok[id]
-            lx_toks.push(Token(kind, 0, (lx_file << 40) | s, i32(s), i32(i - s), id, 0.0))
+            lx_toks.push(Token(kind, 0, (lx_file << 40) | (lx_base + s), i32(s), i32(i - s), id, 0.0))
             continue
         if c >= '0' and c <= '9':
             lx_number()

@@ -228,6 +228,7 @@ fn parse_string_token(t: int) -> int:
                 nodes[lit].sval = i32(intern(decode_str(s[lit_start..i], pos, raw)))
                 parts.push(lit)
             depth := 1
+            parens := 0             # ( and [ nesting: a ':' inside them is not a format spec
             j := i + 1
             colon := -1
             while j < n_len and depth > 0:
@@ -236,29 +237,28 @@ fn parse_string_token(t: int) -> int:
                 else if cj == '}':
                     depth -= 1
                     if depth == 0: break
+                else if cj == '(' or cj == '[': parens += 1
+                else if cj == ')' or cj == ']': parens -= 1
                 else if cj == '"':
                     j += 1
                     while j < n_len and s[j] != '"':
                         if s[j] == '\\': j += 1
                         j += 1
-                else if cj == ':' and depth == 1 and colon < 0 and not (j + 1 < n_len and s[j + 1] == '='): colon = j
+                else if cj == ':' and depth == 1 and parens == 0 and colon < 0 and not (j + 1 < n_len and s[j + 1] == '='): colon = j
                 j += 1
             eend := j
             if colon >= 0: eend = colon
             expr_src := s[i + 1..eend]
-            # lex and parse the embedded expression
-            fidx := files.len()
-            files.push(SrcFile(files[p_file].path, files[p_file].dir, expr_src))
+            # lex and parse the embedded expression; its tokens keep their places in the file
             saved_toks := toks
             saved_ti := ti
             saved_src := p_src
             saved_file := p_file
-            toks = lex(fidx, expr_src)
-            # report errors at the string's position
-            for mut tk in toks: tk.pos = pos
+            lx_base = int(toks[t].start) + i + 1
+            toks = lex(p_file, expr_src)
+            lx_base = 0
             ti = 0
             p_src = expr_src
-            p_file = fidx
             e := parse_expr()
             skip_newlines()
             if pk() != .eof: fatal(pos, "invalid expression in string interpolation")
