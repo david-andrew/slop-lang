@@ -803,8 +803,11 @@ fn conversion(n: int, to0: int, args: [int]) -> int:
         return check_expr(n, 0)
     if tk == .vec: return check_vec_ctor(n, to, args)
     a := args[0]
-    check_expr(a, to)
+    check_expr(a, 0)
     ft := prune(ntype(a))
+    if is_lit(a) and nodes[a].kind == .float_lit and tk == .int_:
+        nodes[a].kind = .int_lit
+        nodes[a].ival = int(nodes[a].fval)
     if is_lit(a) and is_numeric(to):
         coerce(a, to)
         nodes[n] = nodes[a]

@@ -756,9 +756,10 @@ static Type *conversion(FnCtx *c, Node **pn, Type *to, Node **args, int nargs) {
     return check_expr(c, pn, NULL);
   }
   Node *a = args[0];
-  Type *ft = check_expr(c, &args[0], to);
+  Type *ft = check_expr(c, &args[0], NULL);
   a = args[0];
   ft = prune(ft);
+  if (is_lit(a) && a->kind == N_FLOAT && to->kind == TY_INT) { a->kind = N_INT; a->ival = (int64_t)a->fval; }
   if (is_lit(a) && is_numeric(to)) { coerce(c, &args[0], to); *pn = args[0]; return to; }
   int cv = -1;
   if (to->kind == TY_INT) {
