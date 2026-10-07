@@ -192,6 +192,8 @@ struct Draw3D:
     instanced: bool
     shadow: bool
     wind: f32
+    custom: fn()
+    has_custom: bool
 
 __3d_ready := false
 __lit: Shader
@@ -290,11 +292,31 @@ fn post_effects(bloom: float = 0.6, threshold: float = 0.7, vignette: float = 0.
 fn no_post_effects(): __bloom_on = false
 
 fn draw_mesh(m: Mesh, transform: mat4 = mat4(), color: vec4 = vec4(1, 1, 1, 1), texture: Texture = Texture(0, 0, 0), emissive: float = 0.0, specular: float = 0.3, cast_shadow: bool = true):
-    __draws.push(Draw3D(m, transform, color, texture.id, f32(emissive), f32(specular), [], false, cast_shadow, 0))
+    __draws.push(Draw3D(m, transform, color, texture.id, f32(emissive), f32(specular), [], false, cast_shadow, 0, __noop3d, false))
 
 # many copies of a mesh in one draw call (crowds, forests, particles...)
 fn draw_mesh_instanced(m: Mesh, instances: [Instance3D], color: vec4 = vec4(1, 1, 1, 1), emissive: float = 0.0, specular: float = 0.2, cast_shadow: bool = true, wind: float = 0.0):
-    __draws.push(Draw3D(m, mat4(), color, 0, f32(emissive), f32(specular), instances, true, cast_shadow, f32(wind)))
+    __draws.push(Draw3D(m, mat4(), color, 0, f32(emissive), f32(specular), instances, true, cast_shadow, f32(wind), __noop3d, false))
+
+# draw with your own shader inside the 3D pass; `render` runs with depth testing on.
+# Use scene_view_proj(), scene_camera(), scene_sun(), scene_shadow_vp(), scene_shadow_map()...
+fn draw_custom(render: fn()):
+    __draws.push(Draw3D(__dummy_mesh(), mat4(), vec4(1, 1, 1, 1), 0, 0, 0, [], false, false, 0, render, true))
+
+fn __noop3d(): pass
+fn __dummy_mesh() -> Mesh: Mesh()
+
+fn scene_view_proj() -> mat4: __proj3 * __view
+fn scene_camera() -> vec3: __cam_pos
+fn scene_sun() -> vec3: __sun_dir
+fn scene_sun_color() -> vec3: __sun_color
+fn scene_sky_color() -> vec3: __sky_top * 0.6 + __sky_horizon * 0.4
+fn scene_ground_color() -> vec3: __ground_color
+fn scene_fog_color() -> vec3: __fog_color
+fn scene_fog() -> vec2: vec2(__fog_density, __fog_height)
+fn scene_shadow_vp() -> mat4: __shadow_vp
+fn scene_shadow_map() -> Texture: __shadow_rt.texture
+fn scene_shadow_strength() -> f32: f32(__shadow_strength) * f32(int(__shadows))
 
 fn instance(transform: mat4, color: vec4 = vec4(1, 1, 1, 1)) -> Instance3D: Instance3D(transform, color)
 
@@ -335,7 +357,7 @@ fn __render3d():
         glDisable(GL_BLEND)
         glColorMask(0, 0, 0, 0)
         for mut d in __draws:
-            if not d.shadow: continue
+            if not d.shadow or d.has_custom: continue
             p := __params(d, vp)
             if d.instanced: draw_instanced(__shadow_sh_inst, d.mesh, d.instances, p)
             else: draw(__shadow_sh, d.mesh, p)
@@ -349,6 +371,12 @@ fn __render3d():
     glCullFace(GL_BACK)
     glDisable(GL_BLEND)
     for mut d in __draws:
+        if d.has_custom:
+            d.custom()
+            glEnable(GL_DEPTH_TEST)
+            glEnable(GL_CULL_FACE)
+            glDisable(GL_BLEND)
+            continue
         if d.color.w < 1.0: continue
         p := __params(d, vp)
         if d.instanced: draw_instanced(__lit_inst, d.mesh, d.instances, p)
@@ -363,7 +391,7 @@ fn __render3d():
     glDepthMask(0)
     glDisable(GL_CULL_FACE)
     for mut d in __draws:
-        if d.color.w >= 1.0: continue
+        if d.color.w >= 1.0 or d.has_custom: continue
         p := __params(d, vp)
         if d.instanced: draw_instanced(__lit_inst, d.mesh, d.instances, p)
         else: draw(__lit, d.mesh, p)
