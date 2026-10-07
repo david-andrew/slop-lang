@@ -240,6 +240,21 @@ fn __arr_push_slot(slot: **u8, es: int) -> *u8:
     (p as *int)[1] = n + 1
     p + 24 + n * es
 
+# append the elements of src (a byte copy); returns the address of the first new element
+fn __arr_extend(slot: **u8, src: *u8, es: int) -> *u8:
+    n := 0
+    if src != null: n = (src as *int)[1]
+    old := 0
+    if slot[0] != null: old = (slot[0] as *int)[1]
+    if n == 0:
+        if slot[0] == null: return null
+        return slot[0] + 24 + old * es
+    __arr_grow(slot, es, old + n)
+    p := slot[0]
+    mem_copy(p + 24 + old * es, src + 24, n * es)
+    (p as *int)[1] = old + n
+    p + 24 + old * es
+
 fn __arr_reserve(slot: **u8, es: int, n: int):
     if n > 0: __arr_grow(slot, es, n)
 

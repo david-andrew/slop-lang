@@ -1338,6 +1338,31 @@ fn gen_intrinsic(e: int) -> Val:
         endc()
         endc()
         return V(-1, false)
+    if id == .extend:
+        # append all of ys: one copy of the bytes, then retain managed elements
+        at := prune(ntype(args[0]))
+        et := int(types[at].elem)
+        esz := tsize(et)
+        ys := gen_owned(args[1])
+        pl := gen_place(args[0], true)
+        arr_unique(pl, at)
+        sa := place_addr(pl, at)
+        first := e_call(rt("__arr_extend"), [sa, ys.v, e_iconst(esz)], VI)
+        if not pl.mem: e_mov(pl.v, e_load(VI, sa, 0, ptr_size))
+        if is_managed(et):
+            cnt := arr_len(ys.v)
+            i := vreg(VI)
+            e_mov(i, e_iconst(0))
+            blk()
+            lop()
+            brif_to(e_bin(.ges, VI, i, cnt), ctl - 1)
+            copy_at(e_bin(.add, VI, first, e_bin(.mul, VI, i, e_iconst(esz))), et)
+            e_mov(i, e_addi(i, 1))
+            br_to(ctl)
+            endc()
+            endc()
+        release(ys.v, at)
+        return V(-1, false)
     if id == .reserve:
         at := prune(ntype(args[0]))
         n := gen_expr(args[1]).v

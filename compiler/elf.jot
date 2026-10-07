@@ -1,5 +1,7 @@
 # Static ELF64 executable writer (x86-64 Linux).
 
+use util
+
 const ELF_BASE = 0x400000
 
 fn put16(b: mut [u8], v: int):
@@ -74,10 +76,10 @@ fn write_elf(path: str, text: [u8], entry_off: int, ro: [u8], data_size: int) ->
     put64(out, 0)
     put64(out, data_size + 8)
     put64(out, 0x1000)
-    while out.len() < text_off: out.push(0)
-    for c in text: out.push(c)
-    while out.len() < ro_off: out.push(0)
-    for c in ro: out.push(c)
+    out.resize(text_off)
+    append_bytes(out, text)
+    out.resize(ro_off)
+    append_bytes(out, ro)
     if elf_syms.len() > 0:
         # .symtab / .strtab / .shstrtab for debuggers
         while out.len() % 8 != 0: out.push(0)
@@ -95,9 +97,9 @@ fn write_elf(path: str, text: [u8], entry_off: int, ro: [u8], data_size: int) ->
             put64(symtab, ELF_BASE + text_off + sym.1)
             put64(symtab, sym.2)
         symtab_off := out.len()
-        for c in symtab: out.push(c)
+        append_bytes(out, symtab)
         strtab_off := out.len()
-        for c in strtab: out.push(c)
+        append_bytes(out, strtab)
         shstr := "\0.text\0.symtab\0.strtab\0.shstrtab\0"
         shstr_off := out.len()
         for c in shstr: out.push(c)

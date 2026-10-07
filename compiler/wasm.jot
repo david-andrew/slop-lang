@@ -49,7 +49,7 @@ fn wstr(o: mut [u8], s: str):
 fn section(out: mut [u8], id: int, body: [u8]):
     out.push(u8(id))
     uleb(out, body.len())
-    for c in body: out.push(c)
+    append_bytes(out, body)
 
 const WT_I32 = 0x7F
 const WT_I64 = 0x7E
@@ -662,7 +662,7 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
     s: [u8]
     uleb(s, type_sigs.len())
     for t in type_sigs:
-        for c in t: s.push(c)
+        append_bytes(s, t)
     section(out, 1, s)
     # imports
     s = []
@@ -722,9 +722,9 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
     uleb(s, defined.len() + 1 + exp_lfs.len())
     for bd in bodies:
         uleb(s, bd.len())
-        for c in bd: s.push(c)
+        append_bytes(s, bd)
     uleb(s, eb.len())
-    for c in eb: s.push(c)
+    append_bytes(s, eb)
     for ab in adapter_bodies:
         uleb(s, ab.len())
         for c in ab: s.push(c)

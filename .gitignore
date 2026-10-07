@@ -4,3 +4,4 @@ bin/
 /tmp/
 tools/prof
 bench/
+tools/icount

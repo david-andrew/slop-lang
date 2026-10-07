@@ -15,6 +15,7 @@ use expr
 use ir
 use lower
 use opt
+use inline
 use x64
 use elf
 use wasm
@@ -82,6 +83,26 @@ fn scan_build_block(path: str):
                 exit(1)
             opt_release = val == "release"
 
+fn emit_function():
+    if dump: dump_ir()
+    if target_wasm: wasm_collect()
+    else: x64_function()
+
+# release builds: optimize everything, inline small functions, optimize callers again, emit
+fn release_pipeline():
+    for k in 0..rel_fns.len():
+        ir = rel_fns[k]
+        optimize()
+        rel_fns[k] = ir
+    snap := rel_fns
+    can := [false; snap.len()]
+    for k, f in snap: can[k] = inlinable(f)
+    for k in 0..rel_fns.len():
+        ir = rel_fns[k]
+        if inline_into(k, snap, can): optimize()
+        emit_function()
+    rel_fns = []
+
 fn compile(path: str, out0: str) -> str:
     t0 := time()
     scan_build_block(path)
@@ -136,10 +157,8 @@ fn compile(path: str, out0: str) -> str:
                 i += 1
                 continue
             lower_function(i)
-            if opt_release: optimize()
-            if dump: dump_ir()
-            if target_wasm: wasm_collect()
-            else: x64_function()
+            if opt_release: rel_collect()
+            else: emit_function()
             i += 1
 
         # library globals: initialize only the ones compiled code refers to (fixed point)
@@ -153,11 +172,10 @@ fn compile(path: str, out0: str) -> str:
         nl := lfuncs.len()
         lower_function(pinit_lf)
         if lfuncs.len() > nl or global_off.len() > nglob: continue
-        if opt_release: optimize()
-        if dump: dump_ir()
-        if target_wasm: wasm_collect()
-        else: x64_function()
+        if opt_release: rel_collect()
+        else: emit_function()
         break
+    if opt_release: release_pipeline()
     t2 := time()
     ok := false
     size := 0

@@ -37,7 +37,8 @@ fn expect(k: Tok, what: str) -> int:
         if tk == .ident or tk == .int_lit: fatal(cur_pos(), "expected {w}, found '{tok_src(ti)}'")
         fatal(cur_pos(), "expected {w}, found {tok_name(tk)}")
     advance()
-fn expect_ident(what: str) -> int: intern(tok_src(expect(.ident, what)))
+# identifier tokens carry their interned name in ival
+fn expect_ident(what: str) -> int: int(toks[expect(.ident, what)].ival)
 fn skip_newlines():
     while pk() == .newline: advance()
 
@@ -334,7 +335,7 @@ fn parse_primary() -> int:
         advance()
         if toks[t].len == 1 and p_src[int(toks[t].start)] == '_': return mk(.hole, pos)
         n := mk(.ident, pos)
-        nodes[n].name = i32(intern(tok_src(t)))
+        nodes[n].name = i32(toks[t].ival)
         return n
     if k == .dot:
         advance()

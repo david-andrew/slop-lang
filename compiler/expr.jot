@@ -11,7 +11,7 @@ enum IN:
     none_, len, push, pop, insert, remove, clear, reserve, slice, syscall, memcpy, memset, sizeof,
     arrdata, panic, assert, print, embed, from_bytes, to_bytes, argv, setlen, truncate, resize,
     hash, alignof, unreachable, arrcap, fmt_struct, sqrt, vec_ctor, cfn_cast, wasm_call, callc, floor_,
-    ceil_, fabs, fmin, fmax, setjmp, longjmp, jump, shader
+    ceil_, fabs, fmin, fmax, setjmp, longjmp, jump, shader, extend
 
 enum CV: none_, int_, int2float, float2int, float_, opt, ptr, bits, fn2clos
 
@@ -24,6 +24,7 @@ intrinsics := [
     Intrinsic("len", .len, true), Intrinsic("cap", .arrcap, true), Intrinsic("push", .push, true),
     Intrinsic("pop", .pop, true), Intrinsic("insert", .insert, true), Intrinsic("remove", .remove, true),
     Intrinsic("clear", .clear, true), Intrinsic("reserve", .reserve, true), Intrinsic("resize", .resize, true),
+    Intrinsic("extend", .extend, true),
     Intrinsic("truncate", .truncate, true), Intrinsic("data", .arrdata, true),
     Intrinsic("syscall", .syscall, false), Intrinsic("mem_copy", .memcpy, false), Intrinsic("mem_set", .memset, false),
     Intrinsic("size_of", .sizeof, false), Intrinsic("align_of", .alignof, false), Intrinsic("panic", .panic, false),
@@ -1078,6 +1079,12 @@ fn check_intrinsic(n: int, id: IN, args: [int], expected: int) -> int:
         t := arg_type(args, 0, 0)
         if types[t].kind != .array: fatal(nodes[n].pos, "clear() needs an array")
         check_place(args[0], false)
+    else if id == .extend:
+        nargs_check(n, nargs, 2, 2, "extend")
+        t := arg_type(args, 0, 0)
+        if types[t].kind != .array: fatal(nodes[n].pos, "extend() needs an array")
+        check_place(args[0], false)
+        arg_type(args, 1, t)
     else if id == .reserve or id == .resize or id == .truncate or id == .setlen:
         nargs_check(n, nargs, 2, 2, "reserve/resize/truncate")
         t := arg_type(args, 0, 0)

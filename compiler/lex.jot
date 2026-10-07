@@ -143,7 +143,16 @@ lx_line_indent := 0
 fn lx_err(off: int, msg: str): fatal(mkpos(lx_file, off), msg)
 
 fn lx_emit(kind: Tok, start: int, n: int):
-    lx_toks.push(Token(kind, 0, mkpos(lx_file, start), i32(start), i32(n), 0, 0.0))
+    lx_toks.push(Token(kind, 0, (lx_file << 40) | start, i32(start), i32(n), 0, 0.0))
+
+# keyword kinds by interned name id (Tok.ident for other names)
+kw_tok: [Tok]
+
+fn init_keywords():
+    for k, v in keywords:
+        id := intern(k)
+        while kw_tok.len() <= id: kw_tok.push(.ident)
+        kw_tok[id] = v
 
 fn lx_last_kind() -> Tok:
     if lx_toks.len() == 0: return Tok.newline
@@ -207,6 +216,11 @@ fn lx_close_block_ctx(at: int):
         lx_indents.pop()
         lx_ctx_block.pop()
         lx_ctx_base.pop()
+
+# `+` or `+=` style operators
+fn op_or_assign(c1: u8, plain: Tok, with_eq: Tok) -> Tok:
+    if c1 == '=': return with_eq
+    plain
 
 fn is_ident_start(c: u8) -> bool: (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' or c >= 0x80
 fn is_ident_char(c: u8) -> bool: is_ident_start(c) or (c >= '0' and c <= '9')
@@ -374,6 +388,7 @@ fn lex(file: int, src: str) -> [Token]:
     lx_indents = [0]
     lx_ctx_block = [true]
     lx_ctx_base = [1]
+    if kw_tok.len() == 0: init_keywords()
     lx_line_start()
     p := lx_p
     while lx_i < lx_n:
@@ -398,11 +413,13 @@ fn lex(file: int, src: str) -> [Token]:
                 lx_string(true)
                 continue
             s := lx_i
-            while is_ident_char(p[lx_i]): lx_i += 1
-            word := src[s..lx_i]
+            i := s + 1
+            while is_ident_char(p[i]): i += 1
+            lx_i = i
+            id := intern_sub(src, s, i - s)
             kind := Tok.ident
-            if k := keywords.get(word): kind = k
-            lx_emit(kind, s, lx_i - s)
+            if id < kw_tok.len(): kind = kw_tok[id]
+            lx_toks.push(Token(kind, 0, (lx_file << 40) | s, i32(s), i32(i - s), id, 0.0))
             continue
         if c >= '0' and c <= '9':
             lx_number()
@@ -417,113 +434,76 @@ fn lex(file: int, src: str) -> [Token]:
         c2 := p[lx_i + 2]
         k := Tok.eof
         n := 1
-        if c == '(': k = .lparen
-        else if c == ')': k = .rparen
-        else if c == '[': k = .lbrack
-        else if c == ']': k = .rbrack
-        else if c == '{': k = .lbrace
-        else if c == '}': k = .rbrace
-        else if c == ',': k = .comma
-        else if c == ';': k = .semi
-        else if c == '~': k = .tilde
-        else if c == '@': k = .at
-        else if c == ':':
-            if c1 == '=':
-                k = .decl
-                n = 2
-            else: k = .colon
-        else if c == '.':
-            if c1 == '.':
-                if c2 == '=':
-                    k = .dotdoteq
-                    n = 3
-                else:
+        match c:
+            '(': k = .lparen
+            ')': k = .rparen
+            '[': k = .lbrack
+            ']': k = .rbrack
+            '{': k = .lbrace
+            '}': k = .rbrace
+            ',': k = .comma
+            ';': k = .semi
+            '~': k = .tilde
+            '@': k = .at
+            ':':
+                k = .colon
+                if c1 == '=':
+                    k = .decl
+                    n = 2
+            '.':
+                k = .dot
+                if c1 == '.':
                     k = .dotdot
                     n = 2
-            else: k = .dot
-        else if c == '-':
-            if c1 == '>':
-                k = .arrow
-                n = 2
-            else if c1 == '=':
-                k = .minuseq
-                n = 2
-            else: k = .minus
-        else if c == '+':
-            if c1 == '=':
-                k = .pluseq
-                n = 2
-            else: k = .plus
-        else if c == '*':
-            if c1 == '=':
-                k = .stareq
-                n = 2
-            else: k = .star
-        else if c == '/':
-            if c1 == '=':
-                k = .slasheq
-                n = 2
-            else: k = .slash
-        else if c == '%':
-            if c1 == '=':
-                k = .percenteq
-                n = 2
-            else: k = .percent
-        else if c == '&':
-            if c1 == '=':
-                k = .ampeq
-                n = 2
-            else: k = .amp
-        else if c == '|':
-            if c1 == '=':
-                k = .pipeeq
-                n = 2
-            else: k = .pipe
-        else if c == '^':
-            if c1 == '=':
-                k = .careteq
-                n = 2
-            else: k = .caret
-        else if c == '=':
-            if c1 == '=':
-                k = .eq
-                n = 2
-            else: k = .assign
-        else if c == '!':
-            if c1 == '=':
-                k = .ne
-                n = 2
-            else: k = .bang
-        else if c == '?':
-            if c1 == '?':
-                k = .qq
-                n = 2
-            else: k = .question
-        else if c == '<':
-            if c1 == '<':
-                if c2 == '=':
-                    k = .shleq
-                    n = 3
-                else:
+                    if c2 == '=':
+                        k = .dotdoteq
+                        n = 3
+            '-':
+                k = .minus
+                if c1 == '>':
+                    k = .arrow
+                    n = 2
+                else if c1 == '=':
+                    k = .minuseq
+                    n = 2
+            '+': k = op_or_assign(c1, .plus, .pluseq)
+            '*': k = op_or_assign(c1, .star, .stareq)
+            '/': k = op_or_assign(c1, .slash, .slasheq)
+            '%': k = op_or_assign(c1, .percent, .percenteq)
+            '&': k = op_or_assign(c1, .amp, .ampeq)
+            '|': k = op_or_assign(c1, .pipe, .pipeeq)
+            '^': k = op_or_assign(c1, .caret, .careteq)
+            '=': k = op_or_assign(c1, .assign, .eq)
+            '!': k = op_or_assign(c1, .bang, .ne)
+            '?':
+                k = .question
+                if c1 == '?':
+                    k = .qq
+                    n = 2
+            '<':
+                k = .lt
+                if c1 == '<':
                     k = .shl
                     n = 2
-            else if c1 == '=':
-                k = .le
-                n = 2
-            else: k = .lt
-        else if c == '>':
-            if c1 == '>':
-                if c2 == '=':
-                    k = .shreq
-                    n = 3
-                else:
+                    if c2 == '=':
+                        k = .shleq
+                        n = 3
+                else if c1 == '=':
+                    k = .le
+                    n = 2
+            '>':
+                k = .gt
+                if c1 == '>':
                     k = .shr
                     n = 2
-            else if c1 == '=':
-                k = .ge
-                n = 2
-            else: k = .gt
-        else: lx_err(lx_i, "unexpected character '{chr(int(c))}'")
+                    if c2 == '=':
+                        k = .shreq
+                        n = 3
+                else if c1 == '=':
+                    k = .ge
+                    n = 2
+            _: lx_err(lx_i, "unexpected character '{chr(int(c))}'")
+        if k == .pluseq or k == .stareq or k == .slasheq or k == .percenteq or k == .ampeq or k == .pipeeq or k == .careteq or k == .eq or k == .ne: n = 2
         if k == .rparen or k == .rbrack or k == .rbrace:
             lx_close_block_ctx(lx_i)
             if lx_ctx_block.len() <= 1: lx_err(lx_i, "unmatched '{chr(int(c))}'")
