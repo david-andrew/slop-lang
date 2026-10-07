@@ -300,8 +300,14 @@ fn draw_mesh_instanced(m: Mesh, instances: [Instance3D], color: vec4 = vec4(1, 1
 
 # draw with your own shader inside the 3D pass; `render` runs with depth testing on.
 # Use scene_view_proj(), scene_camera(), scene_sun(), scene_shadow_vp(), scene_shadow_map()...
-fn draw_custom(render: fn()):
-    __draws.push(Draw3D(__dummy_mesh(), mat4(), vec4(1, 1, 1, 1), 0, 0, 0, [], false, false, 0, render, true))
+# transparent = true: run after the sky with alpha blending on and depth writes off;
+# additive = true: like transparent, but colors add up (glows, beams, light shafts)
+fn draw_custom(render: fn(), transparent: bool = false, additive: bool = false):
+    a: f32 = 1.0
+    if transparent or additive: a = 0.5
+    em: f32 = 0.0
+    if additive: em = 1.0
+    __draws.push(Draw3D(__dummy_mesh(), mat4(), vec4(1, 1, 1, a), 0, em, 0, [], false, false, 0, render, true))
 
 fn __noop3d(): pass
 fn __dummy_mesh() -> Mesh: Mesh()
@@ -373,6 +379,7 @@ fn __render3d():
     glDisable(GL_BLEND)
     for mut d in __draws:
         if d.has_custom:
+            if d.color.w < 1.0: continue
             d.custom()
             glEnable(GL_DEPTH_TEST)
             glEnable(GL_CULL_FACE)
@@ -392,7 +399,15 @@ fn __render3d():
     glDepthMask(0)
     glDisable(GL_CULL_FACE)
     for mut d in __draws:
-        if d.color.w >= 1.0 or d.has_custom: continue
+        if d.color.w >= 1.0: continue
+        if d.has_custom:
+            if d.emissive > 0.0: glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+            d.custom()
+            glEnable(GL_BLEND)
+            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+            glDepthMask(0)
+            glDisable(GL_CULL_FACE)
+            continue
         p := __params(d, vp)
         if d.instanced: draw_instanced(__lit_inst, d.mesh, d.instances, p)
         else: draw(__lit, d.mesh, p)

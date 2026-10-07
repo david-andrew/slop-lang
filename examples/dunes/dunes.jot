@@ -43,42 +43,144 @@ fn sand_vs(v: Vertex3D, u: SandParams) -> SandOut:
 
 fn sand_fs(i: SandOut, u: SandParams) -> vec4:
     n := normalize(i.normal)
-    # wind ripples bend the normal across the slope
+    # wind ripples (two scales, running across the prevailing wind) bend the normal
     ph := i.world.x * 1.7 + i.world.z * 0.9 + sin(i.world.z * 0.35) * 2.0
-    rip := cos(ph) * 0.22 * (1.0 - abs(n.y) * 0.4)
+    ph2 := i.world.x * 4.1 - i.world.z * 2.3 + sin(i.world.x * 0.8) * 1.5
+    flat := clamp(n.y * 1.4 - 0.3, 0.0, 1.0)
+    rip := (cos(ph) * 0.24 + cos(ph2) * 0.08) * flat
     nr := normalize(n + vec3(rip * 0.8, 0, rip * 0.4))
     l := normalize(u.sun)
     v := normalize(u.cam - i.world)
-    sand := mix(vec3(0.78, 0.46, 0.3), vec3(0.98, 0.78, 0.55), clamp(n.y * 1.3 - 0.2, 0.0, 1.0))
+    sand := mix(vec3(0.72, 0.38, 0.24), vec3(0.98, 0.76, 0.52), clamp(n.y * 1.3 - 0.2, 0.0, 1.0))
     wrap := clamp((dot(nr, l) + 0.35) / 1.35, 0.0, 1.0)
     # shadows from the sun
     sp := i.shadow_pos.xyz / i.shadow_pos.w * 0.5 + vec3(0.5, 0.5, 0.5)
     sh: f32 = 1.0
     if sp.x > 0.0 and sp.x < 1.0 and sp.y > 0.0 and sp.y < 1.0 and sp.z < 1.0:
-        d := sample(u.shadow_map, sp.xy).x
-        if sp.z - 0.003 > d: sh = 1.0 - u.shadow_strength
-    c := sand * (u.sky * 0.45 + u.sun_color * wrap * sh)
-    # ocean-like sheen and sparkling grains
+        # 3x3 filtered lookup: soft shadow edges
+        lit: f32 = 0.0
+        for x in -1..2:
+            for y in -1..2:
+                d := sample(u.shadow_map, sp.xy + vec2(f32(x), f32(y)) * (1.0 / 2048.0)).x
+                if sp.z - 0.003 <= d: lit = lit + 1.0
+        sh = 1.0 - u.shadow_strength * (1.0 - lit / 9.0)
+    c := sand * (u.sky * 0.42 + u.sun_color * wrap * sh)
+    # cool fill in the shade, warm bounce from lit sand
+    c = c + vec3(0.06, 0.08, 0.14) * (1.0 - wrap)
+    # ocean-like sheen, glittering grains and a bright rim on crests seen against the sun
     h := normalize(l + v)
-    c = c + u.sun_color * pow(max(dot(nr, h), 0.0), 60.0) * 0.6 * sh
+    c = c + u.sun_color * pow(max(dot(nr, h), 0.0), 60.0) * 0.55 * sh
+    rim := pow(1.0 - max(dot(n, v), 0.0), 4.0)
+    c = c + u.sun_color * rim * 0.35 * clamp(dot(-v, l) + 0.6, 0.0, 1.0)
     cell := floor(i.world.xz * 22.0)
     g := hash21(cell + vec2(floor(u.time * 0.5), 0))
     glint := pow(max(dot(reflect(-l, nr), v), 0.0), 8.0)
     if g > 0.985: c = c + vec3(1, 0.95, 0.85) * glint * (g - 0.985) * 120.0 * sh
     dist := length(i.world - u.cam)
     fa := 1.0 - exp(-dist * u.fog.x * exp(-max(i.world.y, 0.0) * u.fog.y))
-    c = mix(c, u.fog_color, clamp(fa, 0.0, 1.0))
+    haze := mix(u.fog_color, u.fog_color * vec3(0.8, 0.9, 1.15), clamp(dist / 250.0, 0.0, 1.0))
+    c = mix(c, haze, clamp(fa, 0.0, 1.0))
     vec4(aces(c), 1)
+
+# ---------------- the traveler's cloth: robe and scarf meshes rebuilt every frame ----------------
+const ROBE_SEG = 24
+const ROBE_RINGS = 7
+
+fn robe_indices() -> [u32]:
+    idx: [u32]
+    for r in 0..ROBE_RINGS - 1:
+        for s in 0..ROBE_SEG:
+            a := u32(r * (ROBE_SEG + 1) + s)
+            b := a + u32(ROBE_SEG + 1)
+            idx.push(a)
+            idx.push(b)
+            idx.push(a + 1)
+            idx.push(a + 1)
+            idx.push(b)
+            idx.push(b + 1)
+    idx
+
+# a bell-shaped robe whose hem ripples and trails behind when moving (local space, +z forward)
+fn robe_vertices(time: float, speed: float) -> [Vertex3D]:
+    vs: [Vertex3D]
+    for r in 0..ROBE_RINGS:
+        f := float(r) / float(ROBE_RINGS - 1)          # 0 at the shoulders, 1 at the hem
+        y := 1.3 - f * 1.25
+        rad := 0.16 + 0.38 * pow(f, 0.8)
+        for s in 0..ROBE_SEG + 1:
+            a := float(s) / float(ROBE_SEG) * TAU
+            wave := sin(a * 3.0 + time * 5.0) * 0.035 + sin(a * 5.0 - time * 7.0) * 0.02
+            rr := rad + wave * f * (1.0 + speed * 0.15)
+            x := sin(a) * rr
+            z := cos(a) * rr - speed * 0.05 * f * f
+            n := normalize(vec3(f32(sin(a)), 0.35, f32(cos(a))))
+            shade := f32(0.75 + 0.25 * (1.0 - f))
+            # deep red cloth with a gold band along the hem
+            col := vec4(0.58 * shade, 0.1 * shade, 0.08 * shade, 1)
+            if r == ROBE_RINGS - 2: col = vec4(0.9, 0.62, 0.25, 1)
+            vs.push(Vertex3D(vec3(f32(x), f32(y + wave * f * 0.5), f32(z)), n, vec2(f32(s) / f32(ROBE_SEG), f32(f)), col))
+    vs
+
+# a ribbon through the scarf's chain of points; brightness pulses along it like woven glyphs
+fn ribbon_vertices(pts: [vec3], width: f32, time: float) -> [Vertex3D]:
+    vs: [Vertex3D]
+    for k in 0..pts.len():
+        prev := pts[max(k - 1, 0)]
+        next := pts[min(k + 1, pts.len() - 1)]
+        dir := normalize(next - prev + vec3(0, 0.0001, 0))
+        side := normalize(cross(dir, vec3(0, 1, 0)) + vec3(0.0001, 0, 0))
+        n := normalize(cross(side, dir))
+        taper := f32(1.0 - 0.6 * float(k) / float(max(pts.len() - 1, 1)))
+        glow := f32(0.65 + 0.35 * sin(float(k) * 1.3 - time * 3.0))
+        c := vec4(glow, glow, glow, 1)
+        vs.push(Vertex3D(pts[k] + side * (width * taper), n, vec2(0, f32(k)), c))
+        vs.push(Vertex3D(pts[k] - side * (width * taper), n, vec2(1, f32(k)), c))
+    vs
+
+# both windings: cloth is seen from both sides
+fn ribbon_indices(n: int) -> [u32]:
+    idx: [u32]
+    for k in 0..n - 1:
+        a := u32(k * 2)
+        for t in [a, a + 1, a + 2, a + 1, a + 3, a + 2, a, a + 2, a + 1, a + 1, a + 2, a + 3]: idx.push(t)
+    idx
+
+# ---------------- the beacon's light: an additive beam that fades with height ----------------
+struct BeamParams:
+    view_proj: mat4
+    base: vec3
+    cam: vec3
+    strength: f32
+    time: f32
+
+struct BeamOut:
+    pos: vec4
+    world: vec3
+    normal: vec3
+
+fn beam_vs(v: Vertex3D, u: BeamParams) -> BeamOut:
+    w := v.pos + u.base
+    BeamOut(u.view_proj * vec4(w, 1), w, v.normal)
+
+fn beam_fs(i: BeamOut, u: BeamParams) -> vec4:
+    h := i.world.y - u.base.y
+    fade := exp(-h * 0.006) * clamp(h * 0.2, 0.0, 1.0)
+    # brighter where the beam is seen edge-on (a soft volumetric look)
+    v := normalize(u.cam - i.world)
+    edge := 1.0 - abs(dot(normalize(i.normal), v))
+    shimmer := 0.85 + 0.15 * sin(h * 0.15 - u.time * 2.0)
+    a := fade * (0.1 + 0.9 * pow(1.0 - edge, 3.0)) * u.strength * shimmer
+    vec4(vec3(1.0, 0.92, 0.75), clamp(a, 0.0, 1.0))
 
 # ---------------- game state ----------------
 struct Glyph:
     pos: vec3
     taken := false
 
-pos := vec3(40, 0, 140)
+pos := vec3(40, 0, 150)
 vel := vec3(0, 0, 0)
-yaw := PI                 # camera orbit angle around the traveler
-heading := 0.0
+yaw := 0.0                # camera orbit angle around the traveler (0: looking north, at the beacon)
+heading := PI
 grounded := true
 energy := 1.0
 scarf: [vec3]
@@ -88,15 +190,26 @@ collected := 0
 won := false
 won_t := 0.0
 t := 0.0
-cam_pos := vec3(40, 10, 160)
+cam_pos := vec3(40, 10, 150)
 intro := 8.0
 
 sand_sh := make_shader(shader(sand_vs, sand_fs))
 seed_random(11)
 terrain := terrain_mesh(WORLD, 220, dune_height, sand_color)
-robe := cone_mesh(0.55, 1.5, 16)
-head := sphere_mesh(0.22, 16, 8)
-cloth := cube_mesh(1.0)
+robe := mesh(robe_vertices(0.0, 0.0), robe_indices())
+head := sphere_mesh(0.2, 16, 10)
+hood := cone_mesh(0.24, 0.42, 16)
+eye := sphere_mesh(0.035, 8, 4)
+MAX_SCARF := 64
+scarf_mesh := mesh(ribbon_vertices([vec3(0, 0, 0); MAX_SCARF], 0.1, 0.0), ribbon_indices(MAX_SCARF))
+banner_mesh := mesh(ribbon_vertices([vec3(0, 0, 0); 12], 0.25, 0.0), ribbon_indices(12))
+light_pillar := cylinder_mesh(3.0, 420.0, 32)
+beam_sh := make_shader(shader(beam_vs, beam_fs))
+footprint := cylinder_mesh(0.09, 0.03, 10)
+steps: [vec3]
+step_side := 1.0
+last_step := vec3(0, 0, 0)
+moved := 0.0
 pillar := cylinder_mesh(0.7, 7.0, 10)
 block := cube_mesh(1.0)
 ring := sphere_mesh(0.45, 20, 10)
@@ -106,20 +219,37 @@ stones: [Instance3D]
 for c in 0..9:
     cx := random(-120.0, 120.0)
     cz := random(-100.0, 130.0)
-    for k in 0..7:
-        x := cx + random(-12.0, 12.0)
-        z := cz + random(-12.0, 12.0)
-        y := dune_height(x, z) - random(1.0, 4.0)
-        tilt := rotation(normalize(vec3(f32(random(-1.0, 1.0)), 0, f32(random(-1.0, 1.0)))), random(0.0, 0.35))
-        ruins.push(instance(translation(vec3(f32(x), f32(y), f32(z))) * tilt * scaling(vec3(1, f32(random(0.4, 1.0)), 1)), rgb(0.62, 0.42, 0.34)))
-        s := random(0.8, 2.2)
-        stones.push(instance(translation(vec3(f32(x + random(-4.0, 4.0)), f32(dune_height(x, z) - 0.3), f32(z + random(-4.0, 4.0)))) * rotation_y(random(0.0, 3.0)) * scaling(vec3(f32(s), f32(s * 0.5), f32(s * 0.8))), rgb(0.5, 0.35, 0.3)))
+    ang := random(0.0, TAU)
+    for k in 0..5:
+        # a broken colonnade: pillars along a line, some still carrying a lintel
+        d := float(k) * 4.2 - 8.0
+        x := cx + cos(ang) * d
+        z := cz + sin(ang) * d
+        y := dune_height(x, z) - random(0.5, 2.5)
+        h := random(0.5, 1.0)
+        tilt := rotation(normalize(vec3(f32(random(-1.0, 1.0)), 0, f32(random(-1.0, 1.0)))), random(0.0, 0.12))
+        ruins.push(instance(translation(vec3(f32(x), f32(y), f32(z))) * tilt * scaling(vec3(1, f32(h), 1)), rgb(0.66, 0.45, 0.36)))
+        if k % 2 == 1 and h > 0.75:
+            mx := x - cos(ang) * 2.1
+            mz := z - sin(ang) * 2.1
+            stones.push(instance(translation(vec3(f32(mx), f32(y + 7.0 * h + 0.4), f32(mz))) * rotation_y(-ang) * scaling(vec3(5.6, 0.8, 1.4)), rgb(0.6, 0.41, 0.33)))
+    for k in 0..4:
+        s_ := random(0.8, 2.2)
+        x := cx + random(-10.0, 10.0)
+        z := cz + random(-10.0, 10.0)
+        stones.push(instance(translation(vec3(f32(x), f32(dune_height(x, z) - 0.3), f32(z))) * rotation_y(random(0.0, 3.0)) * scaling(vec3(f32(s_), f32(s_ * 0.5), f32(s_ * 0.8))), rgb(0.55, 0.37, 0.3)))
 for k in 0..12:
     a := float(k) / 12.0 * TAU
     r := 40.0 + float(k % 3) * 35.0
     x := cos(a) * r
     z := sin(a) * r * 0.8 + 10.0
     glyphs.push(Glyph(vec3(f32(x), f32(dune_height(x, z) + 2.2), f32(z))))
+posts: [vec3]
+for k in 0..14:
+    x := random(-110.0, 110.0)
+    z := random(-90.0, 140.0)
+    posts.push(vec3(f32(x), f32(dune_height(x, z) - 0.5), f32(z)))
+post_mesh := cylinder_mesh(0.08, 3.4, 8)
 dust: [vec3]
 for k in 0..400: dust.push(vec3(f32(random(-30.0, 30.0)), f32(random(0.0, 10.0)), f32(random(-30.0, 30.0))))
 
@@ -173,6 +303,15 @@ fn update(dt: float):
         vel.y = 0.0
         grounded = true
         energy = min(energy + dt * 0.8, 1.0)
+    if grounded:
+        moved += float(length(vec3(vel.x, 0, vel.z))) * dt
+        if length(pos - last_step) > 0.75:
+            side := vec3(f32(cos(heading)), 0, f32(-sin(heading))) * f32(0.12 * step_side)
+            steps.push(pos + side)
+            step_side = -step_side
+            last_step = pos
+            if steps.len() > 160: steps.remove(0)
+    if moved > 3.0: intro = min(intro, 2.0)
     lim := f32(WORLD / 2.0 - 5.0)
     pos.x = clamp(pos.x, -lim, lim)
     pos.z = clamp(pos.z, -lim, lim)
@@ -180,7 +319,7 @@ fn update(dt: float):
     anchor := pos + vec3(0, 1.35, 0)
     if scarf.len() == 0:
         for k in 0..scarf_len: scarf.push(anchor)
-    while scarf.len() < scarf_len: scarf.push(scarf[scarf.len() - 1])
+    while scarf.len() < min(scarf_len, MAX_SCARF): scarf.push(scarf[scarf.len() - 1])
     scarf[0] = anchor
     for k in 1..scarf.len():
         d := scarf[k] - scarf[k - 1]
@@ -202,7 +341,7 @@ fn update(dt: float):
         play(theme, 0.8)
     if won: won_t += dt
     # smooth third-person camera
-    desired := pos + vec3(f32(sin(yaw) * 9.0), 4.5, f32(cos(yaw) * 9.0))
+    desired := pos + vec3(f32(sin(yaw) * 8.0), 2.4, f32(cos(yaw) * 8.0))
     dg := ground(float(desired.x), float(desired.z)) + 1.5
     if desired.y < f32(dg): desired.y = f32(dg)
     cam_pos = approach(cam_pos, desired, 5.0, dt)
@@ -210,11 +349,11 @@ fn update(dt: float):
 fn draw():
     clear(BLACK)
     sun(vec3(-0.5, 0.35, -0.4), vec3(1.25, 0.95, 0.7))
-    sky(vec3(0.32, 0.5, 0.78), vec3(0.98, 0.8, 0.62), vec3(0.8, 0.55, 0.4))
-    fog(vec3(0.97, 0.8, 0.64), 0.008, 0.03)
+    sky(vec3(0.2, 0.38, 0.68), vec3(0.98, 0.78, 0.58), vec3(0.8, 0.55, 0.4))
+    fog(vec3(0.97, 0.78, 0.6), 0.005, 0.03)
     shadows(true, 0.65, 40)
     post_effects(0.55, 0.78, 0.3, 1.05, vec3(1.03, 1.0, 0.96))
-    camera3d(cam_pos, pos + vec3(0, 1.4, 0), 55.0, 0.1, 600.0)
+    camera3d(cam_pos, pos + vec3(0, 2.9, 0), 50.0, 0.1, 700.0)
     sp := SandParams(scene_view_proj(), scene_shadow_vp(), cam_pos, scene_sun(), scene_sun_color(), scene_sky_color(),
         scene_fog_color(), scene_fog(), f32(t), scene_shadow_strength(), scene_shadow_map())
     draw_custom(fn():
@@ -222,18 +361,36 @@ fn draw():
             scene_fog_color(), scene_fog(), f32(elapsed()), scene_shadow_strength(), scene_shadow_map())
         draw(sand_sh, terrain, p)
     )
-    # the traveler
+    # the traveler: flowing robe, hood with glowing eyes, and a luminous scarf
+    speed := float(length(vec3(vel.x, 0, vel.z)))
+    update_mesh(robe, robe_vertices(t, speed))
     body := translation(pos) * rotation_y(heading)
-    draw_mesh(robe, body, rgb(0.62, 0.12, 0.1))
-    draw_mesh(head, body * translation(vec3(0, 1.55, 0)), rgb(0.95, 0.85, 0.7))
-    for k in 1..scarf.len():
-        a := scarf[k - 1]
-        b := scarf[k]
-        m := (a + b) * 0.5
-        d := b - a
-        yawk := atan2(float(d.x), float(d.z))
+    draw_mesh(robe, body, rgb(1, 1, 1), specular = 0.15)
+    draw_mesh(head, body * translation(vec3(0, 1.45, 0.02)), rgb(0.42, 0.07, 0.06))
+    draw_mesh(hood, body * translation(vec3(0, 1.48, -0.1)) * rotation_x(-0.75) * scaling(vec3(1, 1.3, 1)), rgb(0.5, 0.09, 0.07))
+    for sx in [-0.06, 0.06]:
+        draw_mesh(eye, body * translation(vec3(f32(sx), 1.47, 0.18)), rgb(1, 0.95, 0.8), emissive = 3.0, cast_shadow = false)
+    if scarf.len() > 1:
+        pts := scarf
+        while pts.len() < MAX_SCARF: pts.push(pts[pts.len() - 1])
+        update_mesh(scarf_mesh, ribbon_vertices(pts, 0.15, t))
         glow := f32(0.4 + 0.6 * energy)
-        draw_mesh(cloth, translation(m) * rotation_y(yawk) * scaling(vec3(0.12, 0.03, 0.34)), rgb(0.95 * glow, 0.75 * glow, 0.3), emissive = 0.4 * float(glow))
+        draw_mesh(scarf_mesh, mat4(), rgb(0.98 * glow, 0.72 * glow, 0.28 * glow), emissive = 0.9 * float(glow), cast_shadow = false)
+    # cloth banners fluttering on old posts
+    for i, bp in posts:
+        draw_mesh(post_mesh, translation(bp), rgb(0.35, 0.22, 0.18))
+        pts: [vec3]
+        for k in 0..12:
+            f := float(k) * 0.28
+            w := sin(t * 3.0 + float(i) + float(k) * 0.6) * 0.18 * float(k) / 12.0
+            pts.push(bp + vec3(f32(f * 0.8), f32(3.2 - f * 0.25 + w), f32(f * 0.55 + w)))
+        update_mesh(banner_mesh, ribbon_vertices(pts, 0.22, t + float(i)))
+        draw_mesh(banner_mesh, mat4(), rgb(0.66, 0.12, 0.09), emissive = 0.15, cast_shadow = false)
+    # footprints
+    prints: [Instance3D]
+    for sp_ in steps:
+        prints.push(instance(translation(sp_ + vec3(0, f32(ground(float(sp_.x), float(sp_.z)) - float(sp_.y) - 0.025), 0)) * scaling(vec3(1, 1, 1.5)), rgb(0.86, 0.62, 0.44)))
+    draw_mesh_instanced(footprint, prints, cast_shadow = false)
     draw_mesh_instanced(pillar, ruins)
     draw_mesh_instanced(block, stones)
     # glyphs: glowing orbs that bob in the wind
@@ -246,6 +403,9 @@ fn draw():
     k := 1.5
     if won: k = 4.0 + 2.0 * sin(t * 2.0)
     draw_mesh(beacon, translation(bpos), rgb(1, 0.9, 0.7), emissive = k, cast_shadow = false)
+    # a pillar of light rises from the mountain: the goal is visible from everywhere
+    bs := f32(0.32 + 0.3 * k / 4.0)
+    draw_custom(fn(): draw(beam_sh, light_pillar, BeamParams(scene_view_proj(), bpos, scene_camera(), bs, f32(elapsed()))), additive = true)
     # drifting sand
     motes: [Instance3D]
     for i, d in dust:
