@@ -130,6 +130,9 @@ cur_wf: IrFn
 
 fn op(x: int): wb.push(u8(x))
 fn lget(v: int):
+    if int(cur_wf.vtypes[v]) == VK:
+        i64c(cur_wf.kval[v])
+        return
     op(0x20)
     uleb(wb, loc_of[v])
 fn lset(v: int):
@@ -541,7 +544,10 @@ fn emit_wins(ins: Ins):
         trap: op(0x00)
         select: op(0x00)
 
-fn vtype_of(v: int) -> int: int(cur_wf.vtypes[v])
+fn vtype_of(v: int) -> int:
+    t := int(cur_wf.vtypes[v])
+    if t == VK: return VI
+    t
 
 slot_offs: [int]
 

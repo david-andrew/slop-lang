@@ -194,8 +194,18 @@ fn commutes(op: Op) -> bool:
     op == .add or op == .mul or op == .and_ or op == .or_ or op == .xor or op == .eq or op == .ne
 
 o_out: [Ins]
+o_kmap: {int: int} = {}     # constant value -> canonical constant vreg
 
 fn o_kconst(v: int) -> int:
+    if ir_fits32(v):
+        if c := o_kmap.get(v): return c
+        k := k_vreg(v)
+        o_resize_one(k)
+        o_ndef[k] = 1
+        o_const[k] = true
+        o_cval[k] = v
+        o_kmap[v] = k
+        return k
     d := vreg(VI)
     o_resize_one(d)
     o_ndef[d] = 1
@@ -514,6 +524,15 @@ fn optimize():
     for p in 0..ir.nparams:
         o_ndef[p] = 1
         o_defpos[p] = -1
+    # constant vregs: one canonical vreg per value
+    o_kmap.clear()
+    for v in 0..ir.kval.len():
+        if is_kv(v):
+            o_ndef[v] = 1
+            o_const[v] = true
+            o_cval[v] = ir.kval[v]
+            if c := o_kmap.get(ir.kval[v]): o_repl[v] = i32(c)
+            else: o_kmap[ir.kval[v]] = v
     for pos, ins in ir.code:
         d := o_operands(ins)
         for u in o_buf:

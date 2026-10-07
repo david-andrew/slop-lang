@@ -195,7 +195,7 @@ fn compile(path: str, out0: str) -> str:
         size = code.len()
     t3 := time()
     if timing:
-        eprint("check {(t1 - t0) * 1000.0:.1} ms, lower+codegen {(t2 - t1) * 1000.0:.1} ms, write {(t3 - t2) * 1000.0:.1} ms; {lfuncs.len()} functions, {size} bytes of code")
+        eprint("check {(t1 - t0) * 1000.0:.1} ms, lower+codegen {(t2 - t1) * 1000.0:.1} ms, write {(t3 - t2) * 1000.0:.1} ms; {lfuncs.len()} functions, {nodes.len()} nodes, {size} bytes of code")
     if not ok: return ""
     out
 

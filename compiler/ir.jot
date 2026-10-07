@@ -2,6 +2,8 @@
 # Integer vregs are always 64-bit; floats are f64 or f32. Aggregates live in frame slots
 # or on the heap and are handled through addresses.
 
+use util
+
 enum Op:
     nop,
     iconst, fconst, mov,
@@ -20,6 +22,7 @@ enum Op:
 const VI = 0
 const VF = 1
 const VS = 2
+const VK = 3          # integer constant: no defining instruction, value in IrFn.kval (behaves as VI)
 
 # memory access encodings (Ins.c for load/store)
 const M_SIGNED = 16
@@ -50,6 +53,7 @@ struct IrFn:
     export_name: str
     fn_index: int
     raw_mem: bool     # dereferences raw pointers (disables type-based alias reasoning)
+    kval: [int]       # values of VK vregs (indexed by vreg; may be shorter than vtypes)
 
 # current function being built
 ir: IrFn
@@ -61,7 +65,23 @@ fn vreg(ty: int) -> int:
     ir.vtypes.push(i8(ty))
     ir.vtypes.len() - 1
 
-fn vtype(v: int) -> int: int(ir.vtypes[v])
+fn vtype(v: int) -> int:
+    t := int(ir.vtypes[v])
+    if t == VK: return VI
+    t
+
+fn is_kv(v: int) -> bool: int(ir.vtypes[v]) == VK
+fn kv_of(v: int) -> int: ir.kval[v]
+
+# a constant vreg (32-bit values only: backends use them as immediates)
+fn k_vreg(v: int) -> int:
+    d := ir.vtypes.len()
+    ir.vtypes.push(i8(VK))
+    while ir.kval.len() < d: ir.kval.push(0)
+    ir.kval.push(v)
+    d
+
+fn ir_fits32(v: int) -> bool: v >= -2147483648 and v <= 2147483647
 
 fn new_slot(size: int, align: int) -> int:
     ir.slot_size.push(i32(size))
@@ -75,6 +95,7 @@ fn emit(op: Op, ty: int, dst: int, a: int, b: int, c: int, imm: int) -> int:
     ir.code.len() - 1
 
 fn e_iconst(v: int) -> int:
+    if ir_fits32(v): return k_vreg(v)
     d := vreg(VI)
     emit(.iconst, VI, d, 0, 0, 0, v)
     d
@@ -100,7 +121,9 @@ fn e_un(op: Op, ty: int, a: int) -> int:
     emit(op, ty, d, a, 0, 0, 0)
     d
 
-fn e_mov(dst: int, src: int): emit(.mov, vtype(dst), dst, src, 0, 0, 0)
+fn e_mov(dst: int, src: int):
+    if is_kv(dst): ice("assignment to a constant vreg")
+    emit(.mov, vtype(dst), dst, src, 0, 0, 0)
 
 fn e_addi(a: int, k: int) -> int:
     if k == 0: return a

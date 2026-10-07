@@ -26,6 +26,8 @@ fn __os_pages(size: int) -> *u8:
     else:
         p := syscall(9, 0, size, 3, 0x22, -1, 0)
         if p < 0 and p > -4096: __out_of_memory()
+        # big regions: ask for transparent huge pages (far fewer page faults)
+        if size >= 2 << 20: syscall(28, p, size, 14)
         return p as *u8
 
 fn __os_free_pages(p: *u8, size: int):
@@ -95,6 +97,7 @@ fn __grow_alloc(p: *u8, used: int, size: int) -> *u8:
         when TARGET != "wasm":
             q := syscall(25, h, h[0], total, 1, 0)
             if q < 0 and q > -4096: __out_of_memory()
+            if total >= 2 << 20: syscall(28, q, total, 14)       # MADV_HUGEPAGE
             (q as *int)[0] = total
             return (q as *u8) + 16
     else if n <= 32 << h[0]: return p

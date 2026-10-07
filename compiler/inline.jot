@@ -79,7 +79,9 @@ fn remap(c0: Ins, callee: IrFn, vm: [int], sm: [int]) -> Ins:
 # splice callee's body in place of `call` (appending to out)
 fn inline_call(call: Ins, callee: IrFn, out: mut [Ins]):
     vm := [0; callee.vtypes.len()]
-    for v in 0..callee.vtypes.len(): vm[v] = vreg(int(callee.vtypes[v]))
+    for v in 0..callee.vtypes.len():
+        if int(callee.vtypes[v]) == VK: vm[v] = k_vreg(callee.kval[v])
+        else: vm[v] = vreg(int(callee.vtypes[v]))
     sm := [0; callee.slot_size.len()]
     for s in 0..callee.slot_size.len(): sm[s] = new_slot(int(callee.slot_size[s]), int(callee.slot_align[s]))
     for k in 0..int(call.b):

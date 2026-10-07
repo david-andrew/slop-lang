@@ -1232,7 +1232,10 @@ fn gen_intrinsic(e: int) -> Val:
         at := prune(ntype(args[0]))
         et := int(types[at].elem)
         esz := tsize(et)
-        val := gen_owned(args[1])
+        # xs.push(S(...)) with side-effect-free fields: build the element in place
+        in_place := is_plain_ctor(args[1])
+        val := V(-1, false)
+        if not in_place: val = gen_owned(args[1])
         pl := gen_place(args[0], true)
         p := read_place(pl, at)
         slotp := vreg(VI)
@@ -1255,6 +1258,19 @@ fn gen_intrinsic(e: int) -> Val:
         e_mov(slotp, e_call(rt("__arr_push_slot"), [sa, e_iconst(esz)], VI))
         if not pl.mem: e_mov(pl.v, e_load(VI, sa, 0, ptr_size))
         endc()
+        if in_place:
+            ce := args[1]
+            t := prune(ntype(ce))
+            si := int(types[t].st)
+            layout(t)
+            e_zero(slotp, tsize(t))
+            for i in 0..int(structs[si].nfields):
+                a := kid(ce, i)
+                if a == 0: continue
+                f := int(structs[si].fields) + i
+                fv := gen_owned(a)
+                store_val(int(fields[f].type), slotp, int(fields[f].offset), fv.v)
+            return V(-1, false)
         store_val(et, slotp, 0, val.v)
         return V(-1, false)
     if id == .pop:
@@ -1821,6 +1837,24 @@ fn gen_slice(e: int) -> Val:
     q := e_call(rt("__arr_slice"), [p, lo, hi, e_iconst(tsize(et))], VI)
     if is_managed(et): retain_elems(q, et)
     V(q, true)
+
+# a struct constructor whose arguments cannot run code (so it may be built in place)
+fn is_plain_ctor(e: int) -> bool:
+    if nodes[e].kind != .call or nodes[e].aux != 2: return false
+    t := prune(ntype(e))
+    if types[t].kind != .struct_: return false
+    for i in 0..nkids(e):
+        a := kid(e, i)
+        if a != 0 and not is_plain_expr(a): return false
+    true
+
+fn is_plain_expr(e: int) -> bool:
+    k := nodes[e].kind
+    if k == .int_lit or k == .float_lit or k == .bool_lit or k == .str_lit or k == .null_lit or k == .dotname: return nodes[e].nlist == 0
+    if k == .ident: return nodes[e].aux == i32(int(SK.local)) or nodes[e].aux == i32(int(SK.global)) or nodes[e].aux == i32(int(SK.const_))
+    if k == .conv or k == .unary: return is_plain_expr(int(nodes[e].a))
+    if k == .field: return nodes[e].aux >= 0 and is_plain_expr(int(nodes[e].a)) and types[prune(ntype(int(nodes[e].a)))].kind == .struct_
+    false
 
 fn gen_array(e: int, t: int) -> Val:
     et := int(types[t].elem)
@@ -2458,12 +2492,16 @@ fn lower_function(lf: int):
     f := lfuncs[lf]
     if f.kind == LK_INST:
         fi := f.inst
-        if fns[fi].kind == FK_PARTIAL:
-            lower_partial_thunk(lf, fi)
-            return
-        lower_inst(lf, fi)
-        return
-    lower_helper(lf)
+        if fns[fi].kind == FK_PARTIAL: lower_partial_thunk(lf, fi)
+        else: lower_inst(lf, fi)
+    else: lower_helper(lf)
+    # drop statement markers that did not become zeroslots
+    k := 0
+    for ins in ir.code:
+        if ins.op != .nop:
+            ir.code[k] = ins
+            k += 1
+    ir.code.truncate(k)
 
 # ---------------- generated helper functions ----------------
 fn lower_partial_thunk(lf: int, th: int):

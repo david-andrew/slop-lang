@@ -307,6 +307,11 @@ fn analyze():
         v_first[p] = 0
         v_last[p] = 0
         v_ndef[p] = 1
+    for v in 0..ir.kval.len():
+        if is_kv(v):
+            v_ndef[v] = 1
+            vloc[v] = LOC_CONST
+            vcval[v] = ir.kval[v]
     for pos, ins in ir.code:
         d := operands(ins)
         for u in use_buf:
