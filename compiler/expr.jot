@@ -11,7 +11,7 @@ enum IN:
     none_, len, push, pop, insert, remove, clear, reserve, slice, syscall, memcpy, memset, sizeof,
     arrdata, panic, assert, print, embed, from_bytes, to_bytes, argv, setlen, truncate, resize,
     hash, alignof, unreachable, arrcap, fmt_struct, sqrt, vec_ctor, cfn_cast, wasm_call, callc, floor_,
-    ceil_, fabs, fmin, fmax, setjmp, longjmp, jump
+    ceil_, fabs, fmin, fmax, setjmp, longjmp, jump, shader
 
 enum CV: none_, int_, int2float, float2int, float_, opt, ptr, bits, fn2clos
 
@@ -31,7 +31,7 @@ intrinsics := [
     Intrinsic("str_from_bytes", .from_bytes, false), Intrinsic("bytes", .to_bytes, false), Intrinsic("__argv", .argv, false),
     Intrinsic("unreachable", .unreachable, false), Intrinsic("sqrt", .sqrt, false), Intrinsic("__fmt_fields", .fmt_struct, false),
     Intrinsic("__hash_value", .hash, false), Intrinsic("__set_len", .setlen, false), Intrinsic("__call_c", .callc, false),
-    Intrinsic("__setjmp", .setjmp, false), Intrinsic("__longjmp", .longjmp, false), Intrinsic("__jump", .jump, false),
+    Intrinsic("shader", .shader, false), Intrinsic("__setjmp", .setjmp, false), Intrinsic("__longjmp", .longjmp, false), Intrinsic("__jump", .jump, false),
 ]
 
 last_checked := 0
@@ -380,7 +380,7 @@ fn match_type(pat0: int, a0: int, binds: mut [int], depth: int) -> int:
             if ak == .opt and pk == .opt: return 0
         if ak == .none_lit and pk == .opt: return 0
         if can_coerce(0, a, pat):
-            if (ak == .int_ and pk == .float_) or pk == .opt: return 2
+            if (ak == .int_ and pk == .float_) or (ak == .float_ and pk == .float_) or pk == .opt: return 2
             return 1
         return -1
     if ak == .var: return 0
@@ -1209,6 +1209,23 @@ fn check_intrinsic(n: int, id: IN, args: [int], expected: int) -> int:
         nargs_check(n, nargs, 1, 1, "__hash_value")
         arg_type(args, 0, 0)
         r = T_U64
+    else if id == .shader:
+        nargs_check(n, nargs, 2, 2, "shader")
+        for i in 0..2:
+            a := args[i]
+            if nodes[a].kind != .ident: fatal(nodes[a].pos, "shader() takes the names of a vertex and a fragment function")
+            check_expr(a, 0)
+            if nodes[a].kind != .fnref: fatal(nodes[a].pos, "expected a function name")
+            f := int(nodes[a].sym)
+            if fns[f].ptypes.len() != 2: fatal(nodes[a].pos, "shader functions take (input, uniforms)")
+        vsf := int(nodes[args[0]].sym)
+        fsf := int(nodes[args[1]].sym)
+        if not type_eq(int(fns[vsf].ret), fns[fsf].ptypes[0]): fatal(nodes[n].pos, "the fragment function's input must be the vertex function's output type")
+        if not type_eq(fns[vsf].ptypes[1], fns[fsf].ptypes[1]): fatal(nodes[n].pos, "both shader functions must take the same uniforms type")
+        if not type_eq(int(fns[fsf].ret), T_VEC4): fatal(nodes[n].pos, "the fragment function must return a vec4 color")
+        s := prelude.get(intern("ShaderSource")) ?? 0
+        if s == 0: fatal(nodes[n].pos, "ShaderSource is not available")
+        r = get_struct_inst(int(syms[s].ref), [])
     else if id == .setjmp:
         nargs_check(n, nargs, 1, 1, "__setjmp")
         arg_type(args, 0, T_RAWPTR)

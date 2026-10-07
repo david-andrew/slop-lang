@@ -10,6 +10,7 @@ use types
 use check
 use expr
 use ir
+use glsl
 
 const VC_VOID = 0
 const VC_INT = 1
@@ -1310,6 +1311,19 @@ fn gen_intrinsic(e: int) -> Val:
         pa := place_addr(gen_place(args[0], false), t)
         return V(e_call(lf_helper(.hash, t, 0), [pa], VI), false)
     if id == .fmt_struct: return gen_fmt_struct(e)
+    if id == .shader:
+        vsf := int(nodes[args[0]].sym)
+        fsf := int(nodes[args[1]].sym)
+        vs, fs, lay := glsl_build(vsf, fsf)
+        t := ntype(e)
+        si := int(types[prune(t)].st)
+        layout(t)
+        s := new_temp(t)
+        d := e_slot(s)
+        e_zero(d, tsize(t))
+        srcs := [vs, fs, lay]
+        for i in 0..3: e_store(d, int(fields[int(structs[si].fields) + i].offset), e_daddr(str_data(srcs[i])), ptr_size)
+        return Val(d, true, s)
     if id == .vec_ctor: return gen_vec_ctor(e)
     fatal(nodes[e].pos, "intrinsic not supported in codegen")
     V(-1, false)
