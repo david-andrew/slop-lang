@@ -52,7 +52,11 @@ fn intrinsic_of(name: int) -> int:
 
 fn is_lit(n: int) -> bool: has_flag(n, NF_LITERAL)
 fn lit_default(n: int) -> int:
-    if nodes[n].kind == .float_lit: return T_FLOAT
+    k := nodes[n].kind
+    if k == .float_lit: return T_FLOAT
+    if k == .unary or k == .conv: return lit_default(int(nodes[n].a))
+    if k == .binary:
+        if lit_default(int(nodes[n].a)) == T_FLOAT or lit_default(int(nodes[n].b)) == T_FLOAT: return T_FLOAT
     T_INT
 
 fn ntype(n: int) -> int: int(nodes[n].type)
@@ -1501,7 +1505,7 @@ fn check_binary(n: int, expected: int) -> int:
             if ok:
                 nodes[n] = Node(kind = .int_lit, pos = nodes[n].pos, ival = v, flags = i32(NF_LITERAL | NF_CHECKED), type = i32(T_INT))
                 return T_INT
-        else if op == .plus or op == .minus or op == .star or op == .slash:
+        else if (op == .plus or op == .minus or op == .star or op == .slash) and (nodes[a].kind == .int_lit or nodes[a].kind == .float_lit) and (nodes[b].kind == .int_lit or nodes[b].kind == .float_lit):
             x := nodes[a].fval
             if nodes[a].kind == .int_lit: x = float(nodes[a].ival)
             y := nodes[b].fval
@@ -1951,7 +1955,18 @@ fn check_expr(n: int, expected: int) -> int:
                     last_checked = n
                     return r
             if not is_numeric(at) and not is_vec(at): fatal(nodes[n].pos, "cannot negate {type_str(at)}")
-            if is_lit(int(nodes[n].a)): add_flag(n, NF_LITERAL)
+            a := int(nodes[n].a)
+            if is_lit(a):
+                # fold -literal into a literal (keeps it untyped, e.g. -PI or -1)
+                if nodes[a].kind == .int_lit:
+                    nodes[n] = Node(kind = .int_lit, pos = nodes[n].pos, ival = -nodes[a].ival, flags = i32(NF_LITERAL | NF_CHECKED), type = nodes[a].type)
+                    last_checked = n
+                    return ntype(n)
+                if nodes[a].kind == .float_lit:
+                    nodes[n] = Node(kind = .float_lit, pos = nodes[n].pos, fval = -nodes[a].fval, flags = i32(NF_LITERAL | NF_CHECKED), type = nodes[a].type)
+                    last_checked = n
+                    return ntype(n)
+                add_flag(n, NF_LITERAL)
         else if nodes[n].op == i32(int(Tok.tilde)):
             if not is_int(at): fatal(nodes[n].pos, "'~' needs an integer")
         t = at

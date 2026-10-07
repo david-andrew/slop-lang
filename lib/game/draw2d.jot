@@ -323,6 +323,25 @@ fn triangle(a: vec2, b: vec2, c: vec2, col: vec4):
     __v(b, z, col, 0)
     __v(c, z, col, 0)
 
+# triangle with a color per corner (colors blend across it)
+fn triangle_gradient(a: vec2, b: vec2, c: vec2, ca: vec4, cb: vec4, cc: vec4):
+    __use_tex(__white.id, 3)
+    z := vec2(0, 0)
+    __v(a, z, ca, 0)
+    __v(b, z, cb, 0)
+    __v(c, z, cc, 0)
+
+# quad (a, b, c, d in order around it) with a color per corner
+fn quad_gradient(a: vec2, b: vec2, c: vec2, d: vec2, ca: vec4, cb: vec4, cc: vec4, cd: vec4):
+    __use_tex(__white.id, 6)
+    z := vec2(0, 0)
+    __v(a, z, ca, 0)
+    __v(b, z, cb, 0)
+    __v(c, z, cc, 0)
+    __v(a, z, ca, 0)
+    __v(c, z, cc, 0)
+    __v(d, z, cd, 0)
+
 fn circle(center: vec2, radius: float, c: vec4, segments: int = 0):
     n := segments
     if n <= 0: n = clamp(int(radius * 0.8) + 12, 12, 96)

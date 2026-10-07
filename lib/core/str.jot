@@ -182,6 +182,8 @@ fn to_int(s: str) -> int?:
     if neg: return -v
     v
 
+# Parse a decimal number. The result is the double nearest to the exact decimal value
+# (ties to even), like C's strtod: an estimate, then exact big-integer comparisons.
 fn to_float(s: str) -> float?:
     t := trim(s)
     n := len(t)
@@ -195,24 +197,18 @@ fn to_float(s: str) -> float?:
         if neg: return -1e308 * 10.0
         return 1e308 * 10.0
     if t[i..] == "nan": return 0.0 / 0.0
-    mant: u64 = 0
-    exp := 0
-    digits := 0
+    digs: [u8]            # significant digits (leading zeros dropped)
+    exp := 0              # value = digs * 10^exp
     any := false
     while i < n and is_digit(t[i]):
-        if digits < 19:
-            mant = mant * 10 + u64(t[i] - '0')
-            digits += 1
-        else: exp += 1
+        if digs.len() > 0 or t[i] != '0': digs.push(t[i] - '0')
         any = true
         i += 1
     if i < n and t[i] == '.':
         i += 1
         while i < n and is_digit(t[i]):
-            if digits < 19:
-                mant = mant * 10 + u64(t[i] - '0')
-                digits += 1
-                exp -= 1
+            if digs.len() > 0 or t[i] != '0': digs.push(t[i] - '0')
+            exp -= 1
             any = true
             i += 1
     if not any: return none
@@ -225,14 +221,241 @@ fn to_float(s: str) -> float?:
         e := 0
         if i >= n: return none
         while i < n and is_digit(t[i]):
-            e = e * 10 + int(t[i]) - 48
+            if e < 100000: e = e * 10 + int(t[i]) - 48
             i += 1
         if eneg: exp -= e
         else: exp += e
     if i != n: return none
-    v := __scale10(float(mant), exp)
+    v := __decimal_to_float(digs, exp)
     if neg: return -v
     v
+
+fn __decimal_to_float(digs0: [u8], exp0: int) -> float:
+    digs := digs0
+    exp := exp0
+    # trailing zeros only scale the exponent
+    while digs.len() > 0 and digs[digs.len() - 1] == 0:
+        digs.pop()
+        exp += 1
+    if digs.len() == 0: return 0.0
+    if exp + digs.len() > 310: return 1e308 * 10.0
+    if exp + digs.len() < -330: return 0.0
+    # very long inputs: keep 780 digits plus a sticky digit (enough to decide the rounding)
+    if digs.len() > 780:
+        exp += digs.len() - 781
+        digs.truncate(780)
+        digs.push(1)
+    mant: u64 = 0
+    for k in 0..min(digs.len(), 19): mant = mant * 10 + u64(digs[k])
+    e19 := exp + max(digs.len() - 19, 0)
+    # fast path (Clinger): exact operands, one correctly rounded operation
+    if digs.len() <= 15 and exp >= -22 and exp <= 22:
+        if exp >= 0: return float(mant) * __pow10(exp)
+        return float(mant) / __pow10(-exp)
+    x := __scale10(float(mant), e19)
+    if x != x: x = 1e308
+    __float_correct(digs, exp, x)
+
+# nudge the estimate x until it is the double nearest to digs * 10^exp
+fn __float_correct(digs: [u8], exp: int, x0: float) -> float:
+    d := __big_from_digits(digs)
+    x := x0
+    if x > 1.7976931348623157e308: x = 1.7976931348623157e308
+    if x <= 0.0: x = 5e-324
+    for iter in 0..80:
+        bits := x as u64
+        ef := int((bits >> 52) & 0x7FF)
+        m := int(bits & 0x000FFFFFFFFFFFFF)
+        k := -1074
+        if ef > 0:
+            m = m | (1 << 52)
+            k = ef - 1075
+        # above the halfway point to the next double?
+        c := __cmp_scaled(d, exp, 2 * m + 1, k - 1)
+        if c > 0 or (c == 0 and m & 1 == 1):
+            if bits == 0x7FEFFFFFFFFFFFFF: return 1e308 * 10.0
+            x = (bits + 1) as float
+            continue
+        # below the halfway point to the previous one? (the gap halves below a power of two)
+        c2 := 0
+        if m == 1 << 52 and ef > 1: c2 = __cmp_scaled(d, exp, 4 * m - 1, k - 2)
+        else: c2 = __cmp_scaled(d, exp, 2 * m - 1, k - 1)
+        if c2 < 0 or (c2 == 0 and m & 1 == 1):
+            if bits == 1: return 0.0
+            x = (bits - 1) as float
+            continue
+        return x
+    x
+
+# ---- minimal unsigned big integers: little-endian 32-bit limbs in ints ----
+fn __big_from_digits(digs: [u8]) -> [int]:
+    b := [0]
+    k := 0
+    while k < digs.len():
+        # take up to 9 digits at a time
+        chunk := 0
+        p := 1
+        j := 0
+        while j < 9 and k < digs.len():
+            chunk = chunk * 10 + int(digs[k])
+            p *= 10
+            j += 1
+            k += 1
+        __big_mul_small(b, p)
+        __big_add_small(b, chunk)
+    b
+
+fn __big_mul_small(b: mut [int], m: int):
+    carry := 0
+    for i in 0..b.len():
+        v := b[i] * m + carry
+        b[i] = v & 0xFFFFFFFF
+        carry = v >> 32
+    while carry > 0:
+        b.push(carry & 0xFFFFFFFF)
+        carry = carry >> 32
+
+fn __big_add_small(b: mut [int], a: int):
+    carry := a
+    i := 0
+    while carry > 0:
+        if i == b.len(): b.push(0)
+        v := b[i] + carry
+        b[i] = v & 0xFFFFFFFF
+        carry = v >> 32
+        i += 1
+
+fn __big_mul_pow10(b: mut [int], e: int):
+    k := e
+    while k >= 9:
+        __big_mul_small(b, 1000000000)
+        k -= 9
+    p := 1
+    for _ in 0..k: p *= 10
+    if p > 1: __big_mul_small(b, p)
+
+fn __big_shl(b: mut [int], bits: int):
+    if bits <= 0: return
+    words := bits / 32
+    r := bits % 32
+    if r > 0:
+        carry := 0
+        for i in 0..b.len():
+            v := (b[i] << r) | carry
+            b[i] = v & 0xFFFFFFFF
+            carry = (v >> 32) & 0xFFFFFFFF
+        if carry > 0: b.push(carry)
+    if words > 0:
+        old := b.len()
+        b.resize(old + words)
+        i := old - 1
+        while i >= 0:
+            b[i + words] = b[i]
+            i -= 1
+        for j in 0..words: b[j] = 0
+
+fn __big_of(v: int) -> [int]:
+    if v >> 32 == 0: return [v]
+    [v & 0xFFFFFFFF, v >> 32]
+
+# a + b as a new number
+fn __big_add(a: [int], b: [int]) -> [int]:
+    n := max(a.len(), b.len())
+    out := [0; n]
+    carry := 0
+    for i in 0..n:
+        v := carry
+        if i < a.len(): v += a[i]
+        if i < b.len(): v += b[i]
+        out[i] = v & 0xFFFFFFFF
+        carry = v >> 32
+    if carry > 0: out.push(carry)
+    out
+
+# a -= b (requires a >= b)
+fn __big_sub(a: mut [int], b: [int]):
+    borrow := 0
+    for i in 0..a.len():
+        v := a[i] - borrow
+        if i < b.len(): v -= b[i]
+        borrow = 0
+        if v < 0:
+            v += 1 << 32
+            borrow = 1
+        a[i] = v
+
+fn __big_shr(b: mut [int], bits: int):
+    words := bits / 32
+    r := bits % 32
+    if words >= b.len():
+        b.clear()
+        b.push(0)
+        return
+    if words > 0:
+        for i in 0..b.len() - words: b[i] = b[i + words]
+        b.truncate(b.len() - words)
+    if r > 0:
+        for i in 0..b.len():
+            hi := 0
+            if i + 1 < b.len(): hi = b[i + 1]
+            b[i] = ((b[i] >> r) | (hi << (32 - r))) & 0xFFFFFFFF
+
+# divide in place by a small number; returns the remainder
+fn __big_divmod_small(b: mut [int], d: int) -> int:
+    rem := 0
+    i := b.len() - 1
+    while i >= 0:
+        cur := (rem << 32) | b[i]
+        b[i] = cur / d
+        rem = cur % d
+        i -= 1
+    rem
+
+fn __big_to_dec(b0: [int]) -> str:
+    b := b0
+    chunks: [int]
+    while true:
+        nz := false
+        for w in b:
+            if w != 0: nz = true
+        if not nz: break
+        chunks.push(__big_divmod_small(b, 1000000000))
+    if chunks.len() == 0: return "0"
+    out := "{chunks[chunks.len() - 1]}"
+    i := chunks.len() - 2
+    while i >= 0:
+        c := "{chunks[i]}"
+        out = out + repeat("0", 9 - len(c)) + c
+        i -= 1
+    out
+
+fn __big_cmp(a0: [int], b0: [int]) -> int:
+    a := a0
+    b := b0
+    na := a.len()
+    nb := b.len()
+    while na > 0 and a[na - 1] == 0: na -= 1
+    while nb > 0 and b[nb - 1] == 0: nb -= 1
+    if na != nb:
+        if na < nb: return -1
+        return 1
+    i := na - 1
+    while i >= 0:
+        if a[i] != b[i]:
+            if a[i] < b[i]: return -1
+            return 1
+        i -= 1
+    0
+
+# compare d * 10^exp with q * 2^e (all exact)
+fn __cmp_scaled(d: [int], exp: int, q: int, e: int) -> int:
+    lhs := d
+    rhs: [int] = [q & 0xFFFFFFFF, q >> 32]
+    if exp >= 0: __big_mul_pow10(lhs, exp)
+    else: __big_mul_pow10(rhs, -exp)
+    if e >= 0: __big_shl(rhs, e)
+    else: __big_shl(lhs, -e)
+    __big_cmp(lhs, rhs)
 
 fn reverse(s: str) -> str:
     b := bytes(s)

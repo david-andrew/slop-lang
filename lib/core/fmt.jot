@@ -112,25 +112,141 @@ fn __exp10(x: float) -> int:
             e -= 1
     e
 
-# writes the shortest digit string that round-trips; returns (digits, decimal exponent)
+# The shortest digit string that reads back as x (Steele & White / Burger & Dybvig free-format
+# algorithm on exact big integers); returns (digits, decimal exponent of the first digit).
 fn __shortest(x: float, is_f32: bool) -> (u64, int):
-    e := __exp10(x)
-    p := 1
-    while p <= 17:
-        shift := p - 1 - e
-        scaled := __scale10(x, shift)
-        d := u64(scaled + 0.5)
-        ee := e
-        lim := u64(__pow10(p))
-        if d >= lim:
-            d = d / 10
-            ee = e + 1
-        back := __scale10(float(d), -(p - 1 - ee))
-        if is_f32:
-            if f32(back) == f32(x): return (d, ee)
-        else if back == x: return (d, ee)
-        p += 1
-    (u64(__scale10(x, 16 - e) + 0.5), e)
+    # fast path: candidates with up to 15 digits can be checked with one exact operation
+    if x >= 1e-5 and x < 1e15:
+        e := __exp10(x)
+        p := 1
+        while p <= 15:
+            sh := p - 1 - e
+            if sh > 22 or sh < -22: break
+            scaled := 0.0
+            if sh >= 0: scaled = x * __pow10(sh)
+            else: scaled = x / __pow10(-sh)
+            d := floor(scaled + 0.5)
+            ee := e
+            if d >= __pow10(p):
+                d = d / 10.0
+                ee += 1
+            sh2 := p - 1 - ee
+            back := 0.0
+            if sh2 >= 0: back = d / __pow10(sh2)
+            else: back = d * __pow10(-sh2)
+            if (is_f32 and f32(back) == f32(x)) or (not is_f32 and back == x): return (u64(d), ee)
+            p += 1
+    __shortest_exact(x, is_f32)
+
+fn __shortest_exact(x: float, is_f32: bool) -> (u64, int):
+    m := 0
+    e2 := 0
+    hidden := 0
+    low_exp := false
+    if is_f32:
+        b := int((f32(x) as i32) as u32)
+        ef := (b >> 23) & 0xFF
+        m = b & 0x7FFFFF
+        hidden = 0x800000
+        if ef == 0: e2 = -149
+        else:
+            m = m | hidden
+            e2 = ef - 150
+        low_exp = ef <= 1
+    else:
+        b := int(x as u64)
+        ef := (b >> 52) & 0x7FF
+        m = b & 0x000FFFFFFFFFFFFF
+        hidden = 1 << 52
+        if ef == 0: e2 = -1074
+        else:
+            m = m | hidden
+            e2 = ef - 1075
+        low_exp = ef <= 1
+    even := m & 1 == 0
+    unequal := m == hidden and not low_exp     # the gap below is half the gap above
+    # value = r / s, half-gaps above and below = mp / s, mm / s
+    r := __big_of(m)
+    s: [int] = [1]
+    mp: [int] = [1]
+    mm: [int] = [1]
+    if e2 >= 0:
+        __big_shl(r, e2 + 1)
+        s = [2]
+        __big_shl(mp, e2)
+        __big_shl(mm, e2)
+        if unequal:
+            __big_shl(r, 1)
+            __big_shl(s, 1)
+            __big_shl(mp, 1)
+    else:
+        __big_shl(r, 1)
+        __big_shl(s, 1 - e2)
+        if unequal:
+            __big_shl(r, 1)
+            __big_shl(s, 1)
+            mp = [2]
+    # k: 10^(k-1) <= x < 10^k, from an estimate and exact fix-ups
+    k := int(ceil(log10(x) - 1e-10))
+    if k >= 0: __big_mul_pow10(s, k)
+    else:
+        __big_mul_pow10(r, -k)
+        __big_mul_pow10(mp, -k)
+        __big_mul_pow10(mm, -k)
+    while true:
+        c := __big_cmp(__big_add(r, mp), s)
+        if c > 0 or (c == 0 and even):
+            __big_mul_small(s, 10)
+            k += 1
+        else: break
+    while true:
+        t := __big_add(r, mp)
+        __big_mul_small(t, 10)
+        c := __big_cmp(t, s)
+        if c < 0 or (c == 0 and not even):
+            __big_mul_small(r, 10)
+            __big_mul_small(mp, 10)
+            __big_mul_small(mm, 10)
+            k -= 1
+        else: break
+    # generate digits until the remainder is within the rounding interval
+    digits: [int]
+    while true:
+        __big_mul_small(r, 10)
+        __big_mul_small(mp, 10)
+        __big_mul_small(mm, 10)
+        d := 0
+        while __big_cmp(r, s) >= 0:
+            __big_sub(r, s)
+            d += 1
+        lo := __big_cmp(r, mm)
+        tc1 := lo < 0 or (lo == 0 and even)
+        hi := __big_cmp(__big_add(r, mp), s)
+        tc2 := hi > 0 or (hi == 0 and even)
+        if not tc1 and not tc2:
+            digits.push(d)
+            continue
+        if tc1 and tc2:
+            r2 := r
+            __big_shl(r2, 1)
+            c := __big_cmp(r2, s)
+            if c > 0 or (c == 0 and d % 2 == 1): d += 1
+        else if tc2: d += 1
+        digits.push(d)
+        break
+    # a final round-up can carry into earlier digits
+    i := digits.len() - 1
+    while i > 0 and digits[i] == 10:
+        digits[i] = 0
+        digits[i - 1] += 1
+        i -= 1
+    if digits[0] == 10:
+        digits[0] = 1
+        k += 1
+    while digits.len() > 1 and digits[digits.len() - 1] == 0: digits.pop()
+    dv: u64 = 0
+    for dg in digits: dv = dv * 10 + u64(dg)
+    (dv, k - 1)
 
 fn __fmt_float(buf: mut [u8], x: float, is_f32: bool):
     if x != x:
@@ -201,22 +317,65 @@ fn __fmt_float(buf: mut [u8], x: float, is_f32: bool):
 fn __fmt(buf: mut [u8], x: float): __fmt_float(buf, x, false)
 fn __fmt(buf: mut [u8], x: f32): __fmt_float(buf, float(x), true)
 
+# x with `prec` digits after the point, correctly rounded (ties to even), like C's %.Nf
 fn __fmt_fixed(buf: mut [u8], x: float, prec: int):
     if x != x:
         __buf_append_str(buf, "nan")
         return
     v := x
-    neg := v < 0.0
+    neg := (v as u64) >> 63 == 1          # (the sign of -0.0 and of values that round to zero shows, as in C)
     if neg: v = -v
-    scaled := __scale10(v, prec) + 0.5
-    if scaled >= 9.0e18:
+    if v > 1.7976931348623157e308:
         if neg: __buf_byte(buf, '-')
-        __fmt_float(buf, v, false)
+        __buf_append_str(buf, "inf")
         return
-    d := u64(scaled)
+    # fast path: the scaled value is far enough from a rounding tie to round it in floating point
+    if prec <= 22 and v * __pow10(prec) < 4e15:
+        scaled := v * __pow10(prec)
+        r := floor(scaled)
+        frac := scaled - r
+        if abs(frac - 0.5) > scaled * 4.5e-16 + 1e-300:
+            d := u64(r)
+            if frac > 0.5: d += 1
+            __fixed_digits(buf, neg, d, prec)
+            return
+    # exact: round m * 2^e2 * 10^prec to an integer with big integers
+    b := int(v as u64)
+    ef := (b >> 52) & 0x7FF
+    m := b & 0x000FFFFFFFFFFFFF
+    e2 := -1074
+    if ef > 0:
+        m = m | (1 << 52)
+        e2 = ef - 1075
+    a := __big_of(m)
+    __big_mul_pow10(a, prec)
+    if e2 >= 0: __big_shl(a, e2)
+    else:
+        sh := -e2
+        q := a
+        __big_shr(q, sh)
+        back := q
+        __big_shl(back, sh)
+        rem := a
+        __big_sub(rem, back)
+        __big_shl(rem, 1)
+        half: [int] = [1]
+        __big_shl(half, sh)
+        c := __big_cmp(rem, half)
+        if c > 0 or (c == 0 and q[0] & 1 == 1): __big_add_small(q, 1)
+        a = q
+    ds := __big_to_dec(a)
+    while len(ds) <= prec: ds = "0" + ds
+    if neg: __buf_byte(buf, '-')
+    __buf_append_str(buf, ds[..len(ds) - prec])
+    if prec > 0:
+        __buf_byte(buf, '.')
+        __buf_append_str(buf, ds[len(ds) - prec..])
+
+fn __fixed_digits(buf: mut [u8], neg: bool, d: u64, prec: int):
     ip := d / u64(__pow10(prec))
     fp := d % u64(__pow10(prec))
-    if neg and d != 0: __buf_byte(buf, '-')
+    if neg: __buf_byte(buf, '-')
     __fmt_u64(buf, ip, false, 0, ' ')
     if prec > 0:
         __buf_byte(buf, '.')

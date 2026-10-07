@@ -33,6 +33,7 @@ const GROUND_Y = 600.0
 
 state := State.title
 player := Player(vec2(120, 400), vec2(0, 0))
+start_x := float(to_int(env("LUMEN_X") ?? "120") ?? 120)
 platforms: [Rect]
 seeds: [Seed]
 thorns: [Thorn]
@@ -48,6 +49,21 @@ won_time := 0.0
 music_id := 0
 chime_pitch := 1.0
 hills: [[vec2]]
+
+struct Flower:
+    pos: vec2
+    glow: f32 = 0.0
+    hue: f32
+
+struct Vine:
+    top: vec2
+    len: f32
+    phase: f32
+
+flowers: [Flower]
+vines: [Vine]
+clouds: [vec3]                  # x, y, size
+color_t := 0.0                  # how much color has returned to the world (Gris-like restoration)
 
 # ---------------- world generation ----------------
 fn build_world():
@@ -77,19 +93,33 @@ fn build_world():
             thorns.push(Thorn(Rect(f32(tx), f32(GROUND_Y + h - 22.0), f32(random(60.0, 140.0)), 22)))
         seeds.push(Seed(vec2(f32(x + w * 0.5), f32(GROUND_Y + h - 60.0)), phase = f32(random(0.0, 6.0))))
         x += w + random(120.0, 260.0)
-    # background hill silhouettes (three parallax layers)
+    # flowers on the ground and vines under the ledges
+    flowers.clear()
+    vines.clear()
+    for p in platforms:
+        if p.h > 100.0:
+            fx := p.x + 60.0
+            while fx < p.x + p.w - 40.0:
+                if random() < 0.35: flowers.push(Flower(vec2(f32(fx), p.y), hue = f32(random(0.85, 1.12))))
+                fx += f32(random(70.0, 160.0))
+        else:
+            for k in 0..int(p.w / 40.0):
+                if random() < 0.6: vines.push(Vine(vec2(p.x + f32(k) * 40.0 + 15.0, p.y + p.h - 4.0), f32(random(30.0, 110.0)), f32(random(0.0, 6.0))))
+    clouds.clear()
+    for k in 0..14: clouds.push(vec3(f32(random(-400.0, 3000.0)), f32(random(40.0, 260.0)), f32(random(60.0, 140.0))))
+    # background hill silhouettes (parallax layers)
     hills.clear()
-    for layer in 0..3:
+    for layer in 0..4:
         pts: [vec2]
         for i in 0..80:
             hx := float(i) * 160.0 - 400.0
-            hy := 380.0 + float(layer) * 70.0 - fbm(hx * 0.002 + float(layer) * 10.0, float(layer)) * 260.0
+            hy := 330.0 + float(layer) * 75.0 - fbm(hx * 0.002 + float(layer) * 10.0, float(layer)) * 240.0
             pts.push(vec2(f32(hx), f32(hy)))
         hills.push(pts)
 
 fn reset():
     build_world()
-    player = Player(vec2(120, 400), vec2(0, 0))
+    player = Player(vec2(f32(start_x), 300), vec2(0, 0))
     checkpoint = player.pos
     collected = 0
     deaths = 0
@@ -190,6 +220,7 @@ fn update(dt: float):
     if state == .title:
         if key_pressed(.space) or key_pressed(.enter):
             reset()
+            color_t = 0.0
             state = .play
             music_id = play(theme, 0.7, looping = true)
         return
@@ -202,6 +233,12 @@ fn update(dt: float):
     play_time += dt
     move_player(dt)
     collect_seeds()
+    goal := f32(collected) / f32(max(seeds.len(), 1))
+    color_t = approach(color_t, goal, 1.5, dt)
+    for mut f in flowers:
+        near := length(f.pos - player.pos) < 110.0
+        if near: f.glow = min(f.glow + f32(dt) * 3.0, 1.0)
+        else: f.glow = max(f.glow - f32(dt) * 0.15, 0.0)
     update(sparks, dt)
     update(motes, dt)
     if every(2, 0.05): emit(motes, cam + vec2(f32(random(0.0, 1280.0)), 760), 1, 30.0, rgba(1, 0.9, 0.7, 0.5), 6.0, 3.0, 0.5, -PI / 2.0)
@@ -218,27 +255,108 @@ fn update(dt: float):
 # ---------------- drawing ----------------
 fn progress() -> f32: clamp(cam.x / f32(WORLD_W), 0.0, 1.0)
 
+# palette: muted dusk at the start; warmer and richer as light returns
+fn sky_top() -> vec4: lerp(rgb(0.16, 0.14, 0.3), rgb(0.3, 0.42, 0.72), color_t)
+fn sky_bottom() -> vec4: lerp(rgb(0.78, 0.5, 0.48), rgb(1.0, 0.8, 0.62), color_t)
+fn mist() -> vec4: lerp(rgb(0.62, 0.5, 0.6), rgb(0.98, 0.78, 0.7), color_t)
+
 fn draw_background():
-    p := progress()
-    top := lerp(rgb(0.12, 0.1, 0.28), rgb(0.35, 0.45, 0.75), p)
-    bottom := lerp(rgb(0.85, 0.45, 0.35), rgb(0.98, 0.85, 0.6), p)
-    rect_gradient(0, 0, float(screen_width()), float(screen_height()), top, bottom)
-    # sun / moon glow
+    t := f32(elapsed())
+    w := float(screen_width())
+    h := float(screen_height())
+    rect_gradient(0, 0, w, h, sky_top(), sky_bottom())
+    # a large soft sun
+    sun := vec2(f32(880.0 - cam.x * 0.02), f32(330.0 - 140.0 * color_t))
     blend(.add)
-    circle_gradient(vec2(900, 420 - 200.0 * p), 260, rgba(1, 0.8, 0.5, 0.5), rgba(1, 0.6, 0.4, 0))
+    circle_gradient(sun, 420, rgba(1, 0.75, 0.55, 0.35), rgba(1, 0.6, 0.5, 0))
+    circle_gradient(sun, 90, rgba(1, 0.95, 0.85, 0.9), rgba(1, 0.85, 0.7, 0))
     blend(.alpha)
-    # parallax hills
-    for layer in 0..3:
-        depth := 0.15 + 0.2 * f32(layer)
-        c := lerp(lerp(rgb(0.35, 0.25, 0.45), rgb(0.55, 0.5, 0.7), p), rgb(0.12, 0.1, 0.18), f32(layer) / 2.5)
-        c.w = 0.95
+    # soft drifting clouds
+    for c in clouds:
+        cx := (c.x - cam.x * 0.05 + t * 6.0) % 3400.0 - 300.0
+        if cx < -300.0 or cx > 1600.0: continue
+        col := lerp(rgba(0.85, 0.75, 0.85, 0.16), rgba(1, 0.95, 0.9, 0.22), color_t)
+        clear_ := vec4(col.x, col.y, col.z, 0)
+        for k in 0..5:
+            off := vec2(f32((float(k) - 2.0) * float(c.z) * 0.45), f32(sin(float(k) * 1.7) * float(c.z) * 0.12))
+            circle_gradient(vec2(f32(cx), c.y) + off, float(c.z) * (0.7 + 0.2 * float(k % 2)), col, clear_)
+    # layered hills with mist between them (watercolor depth)
+    for layer in 0..4:
+        depth := 0.08 + 0.16 * f32(layer)
+        far := 1.0 - f32(layer) / 3.0
+        base := lerp(lerp(rgb(0.42, 0.34, 0.5), rgb(0.62, 0.58, 0.78), color_t), lerp(rgb(0.16, 0.13, 0.22), rgb(0.22, 0.28, 0.32), color_t), f32(layer) / 3.0)
+        top := lerp(base, mist(), far * 0.35)
+        bottom := lerp(base, mist(), 0.55)
         pts := hills[layer]
         ox := -cam.x * depth
+        oy := -cam.y * depth * 0.5
         for i in 0..pts.len() - 1:
-            a := pts[i] + vec2(ox, -cam.y * depth * 0.5)
-            b := pts[i + 1] + vec2(ox, -cam.y * depth * 0.5)
+            a := pts[i] + vec2(ox, oy)
+            b := pts[i + 1] + vec2(ox, oy)
             if b.x < -200.0 or a.x > 1500.0: continue
-            polygon([a, b, vec2(b.x, 760), vec2(a.x, 760)], c)
+            quad_gradient(a, b, vec2(b.x, 1400), vec2(a.x, 1400), top, top, bottom, bottom)
+        # mist band in front of each layer
+        my := 520.0 + float(layer) * 40.0 + float(oy)
+        m := mist()
+        rect_gradient(0, my - 120.0, w, 220, rgba(m.x, m.y, m.z, 0), rgba(m.x, m.y, m.z, 0.28))
+
+fn draw_ground(p: Rect, t: f32):
+    # an organic top edge over a deep gradient body
+    top := lerp(rgb(0.24, 0.22, 0.3), rgb(0.2, 0.36, 0.34), color_t)
+    deep := rgb(0.05, 0.04, 0.07)
+    step := 24.0
+    x := float(p.x)
+    prev := vec2(p.x, p.y + f32(fbm(x * 0.03, 1.0) * 8.0 - 4.0))
+    while x < float(p.x + p.w):
+        nx := min(x + step, float(p.x + p.w))
+        cur := vec2(f32(nx), p.y + f32(fbm(nx * 0.03, 1.0) * 8.0 - 4.0))
+        quad_gradient(prev, cur, vec2(cur.x, p.y + p.h), vec2(prev.x, p.y + p.h), top, top, deep, deep)
+        line(prev, cur, 3, lerp(rgba(0.75, 0.7, 0.8, 0.5), rgba(0.95, 0.85, 0.6, 0.7), color_t))
+        # grass tufts swaying in the wind
+        gx := (prev.x + cur.x) * 0.5
+        if fract_hash(float(gx)) > 0.35:
+            sway := sinf(t * 1.6 + gx * 0.05) * 5.0
+            gc := lerp(rgb(0.3, 0.3, 0.36), rgb(0.35, 0.62, 0.45), color_t)
+            for b in 0..3:
+                bx := gx + f32(b) * 5.0 - 5.0
+                hgt := 10.0 + 8.0 * f32(fract_hash(float(bx) * 3.1))
+                triangle(vec2(bx - 2.0, prev.y + 2.0), vec2(bx + sway + f32(b - 1) * 3.0, prev.y - hgt), vec2(bx + 2.0, prev.y + 2.0), gc)
+        prev = cur
+        x = nx
+
+fn fract_hash(x: float) -> float:
+    v := sin(x * 12.9898) * 43758.5453
+    v - floor(v)
+
+fn draw_ledge(p: Rect):
+    # a rounded stone slab
+    top := lerp(rgb(0.3, 0.27, 0.36), rgb(0.42, 0.36, 0.42), color_t)
+    bottom := rgb(0.1, 0.08, 0.13)
+    r := float(p.h) / 2.0
+    circle(vec2(p.x + f32(r), p.y + f32(r)), r, lerp(top, bottom, 0.5))
+    circle(vec2(p.x + p.w - f32(r), p.y + f32(r)), r, lerp(top, bottom, 0.5))
+    rect_gradient(float(p.x) + r, float(p.y), float(p.w) - r * 2.0, float(p.h), top, bottom)
+    rect(float(p.x) + r * 0.5, float(p.y), float(p.w) - r, 3, lerp(rgba(0.8, 0.75, 0.85, 0.45), rgba(1, 0.9, 0.7, 0.6), color_t))
+
+# the old tree: branches recurse; blossoms open as the light returns
+fn draw_branch(pos: vec2, angle: float, len: float, depth: int, lit: f32, t: f32):
+    sway := sin(float(t) * 0.7 + float(pos.x) * 0.01) * 0.025 * float(7 - depth)
+    end := pos + from_angle(angle + sway) * f32(len)
+    line(pos, end, float(depth) * 3.2 + 1.5, lerp(rgb(0.1, 0.08, 0.12), rgb(0.22, 0.14, 0.16), lit))
+    if depth == 0:
+        bc := lerp(rgba(0.4, 0.36, 0.44, 0.9), hsv(0.93 + 0.1 * fract_hash(float(end.x)), 0.4, 1.0), lit)
+        circle(end, 10.0 + 8.0 * float(lit), bc)
+        if lit > 0.3:
+            blend(.add)
+            circle_gradient(end, 26, rgba(1, 0.8, 0.85, 0.25 * lit), rgba(1, 0.7, 0.8, 0))
+            blend(.alpha)
+        return
+    up := -PI / 2.0
+    spread := 0.32 + 0.18 * fract_hash(float(pos.x) * 1.3 + float(depth))
+    for side in [-1.0, 1.0]:
+        a := angle + side * spread
+        a = a + (up - a) * 0.18                     # branches keep reaching for the sky
+        draw_branch(end, a, len * (0.68 + 0.08 * fract_hash(float(end.y) + side)), depth - 1, lit, t)
 
 fn draw_world():
     push_transform()
@@ -246,42 +364,57 @@ fn draw_world():
     sy := f32(random(-shake, shake))
     translate(float(-cam.x + sx), float(-cam.y + sy))
     t := f32(elapsed())
+    # vines hang under the ledges (drawn first, behind the stone)
+    for v in vines:
+        if v.top.x < cam.x - 100.0 or v.top.x > cam.x + 1400.0: continue
+        sw := sinf(t * 1.3 + v.phase) * 6.0
+        line(v.top, v.top + vec2(sw, v.len), 2, lerp(rgba(0.3, 0.3, 0.38, 0.9), rgba(0.3, 0.55, 0.4, 0.9), color_t))
+        circle(v.top + vec2(sw, v.len), 3, lerp(rgba(0.5, 0.45, 0.55, 1), rgba(0.95, 0.6, 0.7, 1), color_t))
     # ground and ledges
     for p in platforms:
         if p.x > cam.x + 1400.0 or p.x + p.w < cam.x - 100.0: continue
-        rect_gradient(float(p.x), float(p.y), float(p.w), float(p.h), rgb(0.16, 0.12, 0.2), rgb(0.06, 0.05, 0.08))
-        rect(float(p.x), float(p.y), float(p.w), 5, rgba(0.95, 0.75, 0.6, 0.45))
+        if p.h > 100.0: draw_ground(p, t)
+        else: draw_ledge(p)
     for th in thorns:
         r := th.rect
         n := int(r.w / 18.0)
         for k in 0..n:
             bx := r.x + f32(k) * 18.0
-            triangle(vec2(bx, r.y + r.h), vec2(bx + 9.0, r.y - 6.0 * sinf(t * 3.0 + bx)), vec2(bx + 18.0, r.y + r.h), rgb(0.5, 0.1, 0.25))
+            triangle(vec2(bx, r.y + r.h), vec2(bx + 9.0, r.y - 6.0 * sinf(t * 3.0 + bx)), vec2(bx + 18.0, r.y + r.h), lerp(rgb(0.4, 0.15, 0.25), rgb(0.62, 0.12, 0.28), color_t))
+    # flowers wake up as the spirit passes
+    for f in flowers:
+        if f.pos.x < cam.x - 50.0 or f.pos.x > cam.x + 1350.0: continue
+        stem := f.pos + vec2(0, -26)
+        line(f.pos, stem, 2, lerp(rgb(0.3, 0.3, 0.35), rgb(0.3, 0.55, 0.4), color_t))
+        petal := lerp(rgba(0.55, 0.5, 0.6, 1), hsv(float(f.hue % 1.0), 0.55, 1.0), f32(max(float(f.glow), float(color_t) * 0.6)))
+        for k in 0..5:
+            circle(stem + from_angle(float(k) * TAU / 5.0 + float(t) * 0.2) * 6.0, 5, petal)
+        if f.glow > 0.01:
+            blend(.add)
+            circle_gradient(stem, 40, rgba(1, 0.8, 0.6, 0.35 * f.glow), rgba(1, 0.6, 0.5, 0))
+            blend(.alpha)
+        circle(stem, 3, rgba(1, 0.9, 0.6, 1))
     # seeds
     blend(.add)
     for s in seeds:
         if s.taken: continue
         bob := vec2(0, sinf(t * 2.0 + s.phase) * 6.0)
-        circle_gradient(s.pos + bob, 34, rgba(1, 0.8, 0.4, 0.55), rgba(1, 0.5, 0.2, 0))
-        circle(s.pos + bob, 7, rgba(1, 0.95, 0.8, 1))
+        circle_gradient(s.pos + bob, 38, rgba(1, 0.8, 0.45, 0.6), rgba(1, 0.5, 0.2, 0))
+        circle(s.pos + bob, 7, rgba(1, 0.95, 0.85, 1))
     # the old tree at the end of the valley
     tree := vec2(f32(WORLD_W - 250.0), f32(GROUND_Y))
     lit := f32(collected) / f32(max(seeds.len(), 1))
     if state == .won: lit = 1.0
-    circle_gradient(tree + vec2(0, -320), 320, rgba(1, 0.8, 0.5, 0.15 + 0.6 * lit), rgba(1, 0.6, 0.3, 0))
+    circle_gradient(tree + vec2(0, -300), 380, rgba(1, 0.8, 0.55, 0.12 + 0.55 * lit), rgba(1, 0.6, 0.4, 0))
     blend(.alpha)
-    line(tree, tree + vec2(0, -300), 40, rgb(0.15, 0.1, 0.15))
-    for k in 0..7:
-        a := -PI / 2.0 + (float(k) - 3.0) * 0.35
-        line(tree + vec2(0, -260), tree + vec2(0, -260) + from_angle(a) * 180.0, 12, rgb(0.15, 0.1, 0.15))
-        circle(tree + vec2(0, -260) + from_angle(a) * 190.0, 40, lerp(rgba(0.25, 0.2, 0.3, 1), rgba(1, 0.8, 0.5, 1), lit))
-    # player: glowing spirit with a ribbon trail
+    draw_branch(tree, -PI / 2.0, 150.0, 7, lit, t)
+    # player: a glowing spirit with a ribbon trail
     blend(.add)
     for i, p in player.trail:
         k := 1.0 - f32(i) / f32(player.trail.len())
         circle_gradient(p, float(14.0 * k + 4.0), rgba(0.6, 0.85, 1, 0.35 * k), rgba(0.4, 0.6, 1, 0))
     pc := player.pos + vec2(0, -18)
-    circle_gradient(pc, 60, rgba(0.7, 0.9, 1, 0.5), rgba(0.5, 0.7, 1, 0))
+    circle_gradient(pc, 70, rgba(0.7, 0.9, 1, 0.5), rgba(0.5, 0.7, 1, 0))
     blend(.alpha)
     circle(pc, 13, rgb(0.95, 0.98, 1))
     circle(pc + vec2(player.facing * 4.0, -2), 3, rgb(0.2, 0.3, 0.5))
@@ -291,7 +424,8 @@ fn draw_world():
 
 fn draw():
     clear(BLACK)
-    post_effects(0.8, 0.55, 0.45, 1.1)
+    # Gris-like restoration: the world is almost grey until the seeds bring its color back
+    post_effects(0.8, 0.55, 0.45, float(0.35 + 0.85 * color_t), lerp(vec3(0.95, 0.97, 1.05), vec3(1.05, 1.0, 0.95), color_t))
     draw_background()
     if state == .title:
         text_centered("L U M E N", vec2(640, 260), 96, rgba(1, 0.95, 0.85, 1))
