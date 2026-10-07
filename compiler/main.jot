@@ -77,6 +77,7 @@ fn compile(path: str, out0: str) -> str:
     t1 := time()
     roots: [int]
     for f in init_fns: roots.push(lf_of_inst(f))
+    for f in export_fns: lf_of_inst(f)
     main_lf := -1
     if main_fn != 0: main_lf = lf_of_inst(main_fn)
     i := 0

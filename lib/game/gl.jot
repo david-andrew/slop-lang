@@ -85,18 +85,18 @@ when TARGET == "wasm":
     extern fn glCreateBuffer() -> u32
     extern fn glDeleteBuffer(b: u32)
     extern fn glBindBuffer(target: u32, b: u32)
-    extern fn glBufferData(target: u32, size: i32, data: *u8, usage: u32)
-    extern fn glBufferSubData(target: u32, offset: i32, size: i32, data: *u8)
+    extern fn glBufferData(target: u32, size: int, data: *u8, usage: u32)
+    extern fn glBufferSubData(target: u32, offset: int, size: int, data: *u8)
     extern fn glCreateVertexArray() -> u32
     extern fn glDeleteVertexArray(v: u32)
     extern fn glBindVertexArray(v: u32)
     extern fn glEnableVertexAttribArray(i: u32)
-    extern fn glVertexAttribPointer(i: u32, size: i32, ty: u32, normalized: u32, stride: i32, offset: i32)
+    extern fn glVertexAttribPointer(i: u32, size: i32, ty: u32, normalized: u8, stride: i32, offset: int)
     extern fn glVertexAttribDivisor(i: u32, d: u32)
     extern fn glDrawArrays(mode: u32, first: i32, count: i32)
-    extern fn glDrawElements(mode: u32, count: i32, ty: u32, offset: i32)
+    extern fn glDrawElements(mode: u32, count: i32, ty: u32, offset: int)
     extern fn glDrawArraysInstanced(mode: u32, first: i32, count: i32, instances: i32)
-    extern fn glDrawElementsInstanced(mode: u32, count: i32, ty: u32, offset: i32, instances: i32)
+    extern fn glDrawElementsInstanced(mode: u32, count: i32, ty: u32, offset: int, instances: i32)
     extern fn glCreateProgramFrom(vs: *u8, vs_len: i32, fs: *u8, fs_len: i32) -> u32
     extern fn glUseProgram(p: u32)
     extern fn glDeleteProgram(p: u32)
@@ -106,7 +106,7 @@ when TARGET == "wasm":
     extern fn glUniform2f(loc: i32, x: f32, y: f32)
     extern fn glUniform3f(loc: i32, x: f32, y: f32, z: f32)
     extern fn glUniform4f(loc: i32, x: f32, y: f32, z: f32, w: f32)
-    extern fn glUniformMatrix4fv(loc: i32, count: i32, transpose: u32, v: *u8)
+    extern fn glUniformMatrix4fv(loc: i32, count: i32, transpose: u8, v: *u8)
     extern fn glUniform4fv(loc: i32, count: i32, v: *u8)
     extern fn glCreateTexture() -> u32
     extern fn glDeleteTexture(t: u32)

@@ -240,7 +240,11 @@ fn register_decls(m: int, decls: [int]):
         nodes[d].mod = i32(m)
         k := nodes[d].kind
         nm := int(nodes[d].name)
-        if k == .fn_: scope_add_module(m, nm, .fns, 0, d)
+        if k == .fn_:
+            scope_add_module(m, nm, .fns, 0, d)
+            if nodes[d].c != 0:
+                for ai in 0..nkids(int(nodes[d].c)):
+                    if name_of(int(nodes[kid(int(nodes[d].c), ai)].name)) == "export": export_decls.push(d)
         else if k == .struct_: scope_add_module(m, nm, .struct_, d, d)
         else if k == .enum_: scope_add_module(m, nm, .enum_, d, d)
         else if k == .const_:
@@ -1323,6 +1327,8 @@ fn load_prelude():
 
 dfs_state: [bool]
 skip_main := false
+export_decls: [int]
+export_fns: [int]
 fn order_modules(m: int, out: mut [int]):
     if dfs_state[m]: return
     dfs_state[m] = true
@@ -1398,6 +1404,7 @@ fn check_program(main_path: str):
         if syms[s].kind == .fns: update_fn = get_fn_inst(int(syms[s].decl), [], 0)
     if s := modules[mainm].names.get(intern("draw")):
         if syms[s].kind == .fns: draw_fn = get_fn_inst(int(syms[s].decl), [], 0)
+    for d in export_decls: export_fns.push(get_fn_inst(d, [], nodes[d].pos))
     for nm in runtime_names: runtime_fn(nm)
     for nm in optional_runtime:
         if prelude.get(intern(nm)) != none: runtime_fn(nm)

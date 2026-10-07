@@ -724,7 +724,10 @@ fn base64(b: [u8]) -> str:
     str_from_bytes(out)
 
 fn write_html(path: str, wasm: [u8], title: str) -> bool:
-    js := read_file("{lib_dir}/web/runtime.js") ?? ""
-    if len(js) == 0: ice("missing {lib_dir}/web/runtime.js")
+    js := ""
+    for part in ["runtime.js", "gfx.js", "audio.js", "boot.js"]:
+        src := read_file("{lib_dir}/web/{part}") ?? ""
+        if len(src) == 0 and part != "audio.js": ice("missing {lib_dir}/web/{part}")
+        js += src + "\n"
     html := "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>{title}</title>\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<style>html,body\{margin:0;height:100%;background:#111;color:#ddd;font:14px monospace}canvas\{display:block;margin:auto;outline:none}#log\{white-space:pre-wrap;margin:8px;max-height:40vh;overflow:auto}</style>\n</head><body><canvas id=\"jot-canvas\" tabindex=\"1\" width=\"0\" height=\"0\"></canvas><div id=\"log\"></div>\n<script>\nconst JOT_WASM = \"{base64(wasm)}\";\n{js}\n</script></body></html>\n"
     write_file(path, html)
