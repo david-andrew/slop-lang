@@ -371,7 +371,26 @@ fn __no_draw(): pass
 __fps_acc := 0.0
 __fps_n := 0
 
+# testing aid: JOT_INPUT="5:space+,7:space-,10:right+" presses (+) / releases (-) keys at frames
+__script: [(int, int, bool)]
+__script_loaded := false
+fn __scripted_input():
+    when TARGET != "wasm":
+        if not __script_loaded:
+            __script_loaded = true
+            if s := env("JOT_INPUT"):
+                for item in split(s, ","):
+                    c := find(item, ":")
+                    if c < 0 or len(item) < c + 3: continue
+                    fr := to_int(item[..c]) ?? 0
+                    name := item[c + 1..len(item) - 1]
+                    for k in 0..__NKEYS:
+                        if "{k as Key}" == name: __script.push((fr, k, item[len(item) - 1] == '+'))
+        for e in __script:
+            if e.0 == __frame_count: __key_event(e.1, e.2)
+
 fn __run_frame(dt: float, update: fn(float), draw: fn()):
+    __scripted_input()
     __dt = dt
     __fps_acc += dt
     __fps_n += 1

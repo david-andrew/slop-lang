@@ -1,0 +1,120 @@
+# Common game helpers: noise, collision shapes, easing, timers and 2D particles.
+
+# ---------------- noise ----------------
+fn __hash2(x: int, y: int) -> float:
+    h := u64(x) * 0x9E3779B97F4A7C15 ^ u64(y) * 0xC2B2AE3D27D4EB4F
+    h = (h ^ (h >> 29)) * 0xBF58476D1CE4E5B9
+    h = h ^ (h >> 32)
+    float(h & 0xFFFFFF) / 16777216.0
+
+# smooth value noise in [0, 1]
+fn noise(x: float, y: float) -> float:
+    xi := int(floor(x))
+    yi := int(floor(y))
+    fx := x - float(xi)
+    fy := y - float(yi)
+    u := fx * fx * (3.0 - 2.0 * fx)
+    v := fy * fy * (3.0 - 2.0 * fy)
+    a := __hash2(xi, yi)
+    b := __hash2(xi + 1, yi)
+    c := __hash2(xi, yi + 1)
+    d := __hash2(xi + 1, yi + 1)
+    lerp(lerp(a, b, u), lerp(c, d, u), v)
+
+# fractal noise (several octaves) in roughly [0, 1]
+fn fbm(x: float, y: float, octaves: int = 4) -> float:
+    s := 0.0
+    amp := 0.5
+    f := 1.0
+    total := 0.0
+    for i in 0..octaves:
+        s += noise(x * f, y * f) * amp
+        total += amp
+        amp *= 0.5
+        f *= 2.0
+    s / total
+
+# ---------------- easing ----------------
+fn ease_in_out(t: float) -> float:
+    if t < 0.5: return 2.0 * t * t
+    1.0 - pow(-2.0 * t + 2.0, 2.0) / 2.0
+fn ease_out(t: float) -> float: 1.0 - (1.0 - t) * (1.0 - t)
+fn ease_out_back(t: float) -> float:
+    c1 := 1.70158
+    c3 := c1 + 1.0
+    1.0 + c3 * pow(t - 1.0, 3.0) + c1 * pow(t - 1.0, 2.0)
+# frame-rate independent smoothing toward a target (higher speed = snappier)
+fn approach(current: float, target: float, speed: float, dt: float) -> float: target + (current - target) * exp(-speed * dt)
+fn approach(current: vec2, target: vec2, speed: float, dt: float) -> vec2: target + (current - target) * f32(exp(-speed * dt))
+fn approach(current: vec3, target: vec3, speed: float, dt: float) -> vec3: target + (current - target) * f32(exp(-speed * dt))
+
+# ---------------- collision ----------------
+struct Rect:
+    x: f32
+    y: f32
+    w: f32
+    h: f32
+
+fn overlaps(a: Rect, b: Rect) -> bool: a.x < b.x + b.w and a.x + a.w > b.x and a.y < b.y + b.h and a.y + a.h > b.y
+fn contains(r: Rect, p: vec2) -> bool: p.x >= r.x and p.x < r.x + r.w and p.y >= r.y and p.y < r.y + r.h
+fn center(r: Rect) -> vec2: vec2(r.x + r.w / 2.0, r.y + r.h / 2.0)
+fn circles_overlap(a: vec2, ra: float, b: vec2, rb: float) -> bool: length_sq(a - b) < f32((ra + rb) * (ra + rb))
+fn circle_rect(c: vec2, r: float, rect: Rect) -> bool:
+    q := vec2(clamp(c.x, rect.x, rect.x + rect.w), clamp(c.y, rect.y, rect.y + rect.h))
+    length_sq(c - q) < f32(r * r)
+
+# ---------------- 2D particles ----------------
+struct Particle:
+    pos: vec2
+    vel: vec2
+    life: f32
+    max_life: f32
+    size: f32
+    color: vec4
+
+struct Particles:
+    items: [Particle]
+    gravity: vec2
+    drag: f32 = 1.0
+
+fn emit(ps: mut Particles, pos: vec2, count: int, speed: float, color: vec4, life: float = 1.0, size: float = 4.0, spread: float = TAU, direction: float = 0.0):
+    for i in 0..count:
+        a := direction + random(-spread / 2.0, spread / 2.0)
+        sp := random(speed * 0.3, speed)
+        l := f32(random(life * 0.6, life))
+        ps.items.push(Particle(pos, from_angle(a) * f32(sp), l, l, f32(random(size * 0.5, size)), color))
+
+fn update(ps: mut Particles, dt: float):
+    k := 0
+    while k < ps.items.len():
+        if ps.items[k].life <= 0.0:
+            ps.items[k] = ps.items[ps.items.len() - 1]
+            ps.items.pop()
+        else: k += 1
+    damp := f32(exp(-float(ps.drag) * dt))
+    for mut p in ps.items:
+        p.vel = (p.vel + ps.gravity * f32(dt)) * damp
+        p.pos += p.vel * f32(dt)
+        p.life -= f32(dt)
+
+# draw particles as soft glowing dots (additive blending)
+fn draw(ps: Particles, glow: bool = true):
+    if glow: blend(.add)
+    for p in ps.items:
+        t := p.life / p.max_life
+        c := p.color
+        c.w = c.w * t
+        if glow: circle_gradient(p.pos, float(p.size * (0.5 + t)), c, with_alpha(c, 0), 12)
+        else: circle(p.pos, float(p.size * t), c, 8)
+    if glow: blend(.alpha)
+
+# ---------------- timing ----------------
+# true once every `period` seconds (pass a stable id per timer)
+__timers: {int: float} = {}
+fn every(id: int, period: float) -> bool:
+    now := elapsed()
+    last := __timers.get(id, -1e9)
+    if now - last >= period:
+        __timers[id] = now
+        return true
+    false

@@ -1,0 +1,314 @@
+# LUMEN - a small 2D platformer vertical slice written in Jot.
+# Guide a spirit of light across a dusky valley, gather the scattered light seeds and
+# wake the old tree. Arrows/WASD to move, Space/Up to jump (double jump in the air).
+
+build:
+    output = "lumen"
+
+enum State: title, play, won
+
+struct Player:
+    pos: vec2
+    vel: vec2
+    on_ground := false
+    coyote: f32 = 0.0
+    jumps := 0
+    facing: f32 = 1.0
+    trail: [vec2]
+    hurt: f32 = 0.0
+
+struct Seed:
+    pos: vec2
+    taken := false
+    phase: f32
+
+struct Thorn:
+    rect: Rect
+
+const GRAVITY = 1900.0
+const RUN = 420.0
+const JUMP = 760.0
+const WORLD_W = 7200.0
+const GROUND_Y = 600.0
+
+state := State.title
+player := Player(vec2(120, 400), vec2(0, 0))
+platforms: [Rect]
+seeds: [Seed]
+thorns: [Thorn]
+checkpoint := vec2(120, 400)
+cam := vec2(0, 0)
+shake := 0.0
+sparks := Particles(gravity = vec2(0, -40), drag = 1.5)
+motes := Particles(gravity = vec2(0, -12), drag = 0.3)
+collected := 0
+deaths := 0
+play_time := 0.0
+won_time := 0.0
+music_id := 0
+chime_pitch := 1.0
+hills: [[vec2]]
+
+# ---------------- world generation ----------------
+fn build_world():
+    seed_random(2024)
+    platforms.clear()
+    seeds.clear()
+    thorns.clear()
+    x := -200.0
+    while x < WORLD_W:
+        w := random(500.0, 1100.0)
+        h := random(-60.0, 60.0)
+        platforms.push(Rect(f32(x), f32(GROUND_Y + h), f32(w), 400))
+        # floating ledges above the ground
+        if random() < 0.8 and x > 300.0:
+            lw := random(140.0, 260.0)
+            ly := GROUND_Y + h - random(150.0, 260.0)
+            lx := x + random(40.0, w - lw - 40.0)
+            platforms.push(Rect(f32(lx), f32(ly), f32(lw), 24))
+            seeds.push(Seed(vec2(f32(lx + lw / 2.0), f32(ly - 50.0)), phase = f32(random(0.0, 6.0))))
+            if random() < 0.5:
+                l2 := lx + random(-120.0, 160.0)
+                platforms.push(Rect(f32(l2), f32(ly - 170.0), 150, 24))
+                seeds.push(Seed(vec2(f32(l2 + 75.0), f32(ly - 220.0)), phase = f32(random(0.0, 6.0))))
+        # thorns on the ground
+        if x > 600.0 and random() < 0.6:
+            tx := x + random(100.0, w - 200.0)
+            thorns.push(Thorn(Rect(f32(tx), f32(GROUND_Y + h - 22.0), f32(random(60.0, 140.0)), 22)))
+        seeds.push(Seed(vec2(f32(x + w * 0.5), f32(GROUND_Y + h - 60.0)), phase = f32(random(0.0, 6.0))))
+        x += w + random(120.0, 260.0)
+    # background hill silhouettes (three parallax layers)
+    hills.clear()
+    for layer in 0..3:
+        pts: [vec2]
+        for i in 0..80:
+            hx := float(i) * 160.0 - 400.0
+            hy := 380.0 + float(layer) * 70.0 - fbm(hx * 0.002 + float(layer) * 10.0, float(layer)) * 260.0
+            pts.push(vec2(f32(hx), f32(hy)))
+        hills.push(pts)
+
+fn reset():
+    build_world()
+    player = Player(vec2(120, 400), vec2(0, 0))
+    checkpoint = player.pos
+    collected = 0
+    deaths = 0
+    play_time = 0.0
+    chime_pitch = 1.0
+
+# ---------------- audio ----------------
+snd_jump := sfx_jump()
+snd_chime := sfx_chime()
+snd_hit := sfx_hit()
+snd_land := tone(90.0, 0.08, .sine, 0.25, 0.001, 0.07)
+theme := mix([melody("E4 - G4 B4 - A4 G4 - E4 - D4 E4 - - . . C4 - E4 G4 - F#4 E4 - B3 - C4 D4 - - . .", 84.0, .triangle, 0.16),
+              melody("E3 - - - - - - - C3 - - - - - - - A2 - - - - - - - B2 - - - - - - -", 84.0, .sine, 0.18)])
+
+# ---------------- gameplay ----------------
+fn solid_at(r: Rect) -> int:
+    for i, p in platforms:
+        if overlaps(r, p): return i
+    -1
+
+fn player_rect(p: vec2) -> Rect: Rect(p.x - 14.0, p.y - 34.0, 28, 34)
+
+fn move_player(dt: float):
+    input := input_axis()
+    target := input.x * f32(RUN)
+    accel := 12.0
+    if not player.on_ground: accel = 6.0
+    player.vel.x = f32(approach(float(player.vel.x), float(target), accel, dt))
+    if input.x != 0.0: player.facing = sign(input.x)
+    player.coyote -= f32(dt)
+    if key_pressed(.space) or key_pressed(.up) or key_pressed(.w):
+        if player.on_ground or player.coyote > 0.0:
+            player.vel.y = f32(-JUMP)
+            player.jumps = 1
+            player.coyote = 0.0
+            play(snd_jump, 0.5, pitch = random(0.95, 1.05))
+            emit(sparks, player.pos, 10, 160.0, rgba(1, 0.9, 0.6, 0.8), 0.5, 5.0, PI, PI / 2.0)
+        else if player.jumps < 2:
+            player.vel.y = f32(-JUMP * 0.85)
+            player.jumps = 2
+            play(snd_jump, 0.4, pitch = 1.3)
+            emit(sparks, player.pos, 16, 220.0, rgba(0.6, 0.9, 1, 0.9), 0.6, 5.0)
+    # variable jump height
+    if player.vel.y < 0.0 and not (key_down(.space) or key_down(.up) or key_down(.w)): player.vel.y += f32(GRAVITY * dt)
+    player.vel.y = min(player.vel.y + f32(GRAVITY * dt), 1400.0)
+    # horizontal then vertical collision
+    was_ground := player.on_ground
+    nx := player.pos + vec2(player.vel.x * f32(dt), 0)
+    if solid_at(player_rect(nx)) < 0: player.pos = nx
+    else: player.vel.x = 0.0
+    ny := player.pos + vec2(0, player.vel.y * f32(dt))
+    hit := solid_at(player_rect(ny))
+    player.on_ground = false
+    if hit < 0: player.pos = ny
+    else:
+        p := platforms[hit]
+        if player.vel.y > 0.0:
+            player.pos.y = p.y
+            player.on_ground = true
+            player.coyote = 0.12
+            player.jumps = 0
+            if not was_ground and player.vel.y > 500.0:
+                play(snd_land, 0.6)
+                emit(motes, player.pos, 6, 80.0, rgba(1, 1, 1, 0.4), 0.6, 3.0, PI, -PI / 2.0)
+        else: player.pos.y = p.y + p.h + 34.0
+        player.vel.y = 0.0
+    player.pos.x = clamp(player.pos.x, 20.0, f32(WORLD_W))
+    # hazards and falling
+    pr := player_rect(player.pos)
+    for t in thorns:
+        if overlaps(pr, t.rect): hurt()
+    if player.pos.y > 1400.0: hurt()
+    if player.on_ground and player.pos.x > checkpoint.x + 600.0: checkpoint = player.pos
+    # trail
+    player.trail.insert(0, player.pos + vec2(0, -18))
+    if player.trail.len() > 18: player.trail.pop()
+
+fn hurt():
+    play(snd_hit, 0.7)
+    shake = 14.0
+    deaths += 1
+    emit(sparks, player.pos, 40, 400.0, rgba(1, 0.4, 0.3, 1), 0.8, 6.0)
+    player.pos = checkpoint
+    player.vel = vec2(0, 0)
+    player.trail.clear()
+
+fn collect_seeds():
+    for mut s in seeds:
+        if s.taken: continue
+        if circles_overlap(player.pos + vec2(0, -18), 26.0, s.pos, 18.0):
+            s.taken = true
+            collected += 1
+            play(snd_chime, 0.5, pitch = chime_pitch)
+            chime_pitch = min(chime_pitch * 1.06, 2.2)
+            emit(sparks, s.pos, 30, 260.0, rgba(1, 0.85, 0.4, 1), 0.9, 6.0)
+
+fn update(dt: float):
+    if state == .title:
+        if key_pressed(.space) or key_pressed(.enter):
+            reset()
+            state = .play
+            music_id = play(theme, 0.7, looping = true)
+        return
+    if state == .won:
+        won_time += dt
+        update(sparks, dt)
+        if every(1, 0.4): emit(sparks, vec2(f32(WORLD_W - 250.0), 300), 25, 300.0, hsv(random(), 0.5, 1.0), 1.5, 7.0)
+        if key_pressed(.enter): state = .title
+        return
+    play_time += dt
+    move_player(dt)
+    collect_seeds()
+    update(sparks, dt)
+    update(motes, dt)
+    if every(2, 0.05): emit(motes, cam + vec2(f32(random(0.0, 1280.0)), 760), 1, 30.0, rgba(1, 0.9, 0.7, 0.5), 6.0, 3.0, 0.5, -PI / 2.0)
+    if player.pos.x > WORLD_W - 300.0 and collected * 10 >= seeds.len() * 6:
+        state = .won
+        won_time = 0.0
+        play(sfx_powerup(), 0.6)
+    target := vec2(player.pos.x - 520.0 + player.facing * 90.0, player.pos.y - 430.0)
+    cam = approach(cam, target, 4.0, dt)
+    cam.y = clamp(cam.y, -200.0, 200.0)
+    shake = approach(shake, 0.0, 6.0, dt)
+    if key_pressed(.escape): quit()
+
+# ---------------- drawing ----------------
+fn progress() -> f32: clamp(cam.x / f32(WORLD_W), 0.0, 1.0)
+
+fn draw_background():
+    p := progress()
+    top := lerp(rgb(0.12, 0.1, 0.28), rgb(0.35, 0.45, 0.75), p)
+    bottom := lerp(rgb(0.85, 0.45, 0.35), rgb(0.98, 0.85, 0.6), p)
+    rect_gradient(0, 0, float(screen_width()), float(screen_height()), top, bottom)
+    # sun / moon glow
+    blend(.add)
+    circle_gradient(vec2(900, 420 - 200.0 * p), 260, rgba(1, 0.8, 0.5, 0.5), rgba(1, 0.6, 0.4, 0))
+    blend(.alpha)
+    # parallax hills
+    for layer in 0..3:
+        depth := 0.15 + 0.2 * f32(layer)
+        c := lerp(lerp(rgb(0.35, 0.25, 0.45), rgb(0.55, 0.5, 0.7), p), rgb(0.12, 0.1, 0.18), f32(layer) / 2.5)
+        c.w = 0.95
+        pts := hills[layer]
+        ox := -cam.x * depth
+        for i in 0..pts.len() - 1:
+            a := pts[i] + vec2(ox, -cam.y * depth * 0.5)
+            b := pts[i + 1] + vec2(ox, -cam.y * depth * 0.5)
+            if b.x < -200.0 or a.x > 1500.0: continue
+            polygon([a, b, vec2(b.x, 760), vec2(a.x, 760)], c)
+
+fn draw_world():
+    push_transform()
+    sx := f32(random(-shake, shake))
+    sy := f32(random(-shake, shake))
+    translate(float(-cam.x + sx), float(-cam.y + sy))
+    t := f32(elapsed())
+    # ground and ledges
+    for p in platforms:
+        if p.x > cam.x + 1400.0 or p.x + p.w < cam.x - 100.0: continue
+        rect_gradient(float(p.x), float(p.y), float(p.w), float(p.h), rgb(0.16, 0.12, 0.2), rgb(0.06, 0.05, 0.08))
+        rect(float(p.x), float(p.y), float(p.w), 5, rgba(0.95, 0.75, 0.6, 0.45))
+    for th in thorns:
+        r := th.rect
+        n := int(r.w / 18.0)
+        for k in 0..n:
+            bx := r.x + f32(k) * 18.0
+            triangle(vec2(bx, r.y + r.h), vec2(bx + 9.0, r.y - 6.0 * sinf(t * 3.0 + bx)), vec2(bx + 18.0, r.y + r.h), rgb(0.5, 0.1, 0.25))
+    # seeds
+    blend(.add)
+    for s in seeds:
+        if s.taken: continue
+        bob := vec2(0, sinf(t * 2.0 + s.phase) * 6.0)
+        circle_gradient(s.pos + bob, 34, rgba(1, 0.8, 0.4, 0.55), rgba(1, 0.5, 0.2, 0))
+        circle(s.pos + bob, 7, rgba(1, 0.95, 0.8, 1))
+    # the old tree at the end of the valley
+    tree := vec2(f32(WORLD_W - 250.0), f32(GROUND_Y))
+    lit := f32(collected) / f32(max(seeds.len(), 1))
+    if state == .won: lit = 1.0
+    circle_gradient(tree + vec2(0, -320), 320, rgba(1, 0.8, 0.5, 0.15 + 0.6 * lit), rgba(1, 0.6, 0.3, 0))
+    blend(.alpha)
+    line(tree, tree + vec2(0, -300), 40, rgb(0.15, 0.1, 0.15))
+    for k in 0..7:
+        a := -PI / 2.0 + (float(k) - 3.0) * 0.35
+        line(tree + vec2(0, -260), tree + vec2(0, -260) + from_angle(a) * 180.0, 12, rgb(0.15, 0.1, 0.15))
+        circle(tree + vec2(0, -260) + from_angle(a) * 190.0, 40, lerp(rgba(0.25, 0.2, 0.3, 1), rgba(1, 0.8, 0.5, 1), lit))
+    # player: glowing spirit with a ribbon trail
+    blend(.add)
+    for i, p in player.trail:
+        k := 1.0 - f32(i) / f32(player.trail.len())
+        circle_gradient(p, float(14.0 * k + 4.0), rgba(0.6, 0.85, 1, 0.35 * k), rgba(0.4, 0.6, 1, 0))
+    pc := player.pos + vec2(0, -18)
+    circle_gradient(pc, 60, rgba(0.7, 0.9, 1, 0.5), rgba(0.5, 0.7, 1, 0))
+    blend(.alpha)
+    circle(pc, 13, rgb(0.95, 0.98, 1))
+    circle(pc + vec2(player.facing * 4.0, -2), 3, rgb(0.2, 0.3, 0.5))
+    draw(sparks)
+    pop_transform()
+    draw(motes)
+
+fn draw():
+    clear(BLACK)
+    post_effects(0.8, 0.55, 0.45, 1.1)
+    draw_background()
+    if state == .title:
+        text_centered("L U M E N", vec2(640, 260), 96, rgba(1, 0.95, 0.85, 1))
+        text_centered("gather the light seeds and wake the old tree", vec2(640, 350), 26, rgba(1, 1, 1, 0.8))
+        a := f32(0.5 + 0.5 * sin(elapsed() * 3.0))
+        text_centered("press space to begin", vec2(640, 470), 28, rgba(1, 0.9, 0.6, a))
+        text_centered("arrows / wasd to move   space to jump (twice for a double jump)", vec2(640, 660), 18, rgba(1, 1, 1, 0.5))
+        return
+    draw_world()
+    text("seeds {collected} / {seeds.len()}", vec2(30, 24), 30, rgba(1, 0.9, 0.7, 1))
+    text("time {play_time:.1}s   falls {deaths}", vec2(30, 64), 20, rgba(1, 1, 1, 0.6))
+    if collected * 10 < seeds.len() * 6 and player.pos.x > WORLD_W - 900.0:
+        text_centered("the tree needs more light...", vec2(640, 140), 26, rgba(1, 1, 1, 0.8))
+    if state == .won:
+        a := f32(clamp(won_time / 2.0, 0.0, 1.0))
+        text_centered("the old tree awakens", vec2(640, 220), 64, rgba(1, 0.95, 0.8, a))
+        text_centered("{collected} seeds in {play_time:.1} seconds - press enter", vec2(640, 300), 26, rgba(1, 1, 1, a * 0.8))
+
+window("Lumen", 1280, 720)
+build_world()
