@@ -14,7 +14,8 @@
 #include <time.h>
 #include <errno.h>
 
-typedef struct { uint64_t addr, size; char *name; long self, total; int seen; } Sym;
+typedef struct { uint64_t addr, size; char *name; long self, total; int seen; long callers; } Sym;
+static const char *focus = NULL;
 static Sym *syms; static int nsyms;
 
 static int cmp(const void *a, const void *b) {
@@ -62,7 +63,11 @@ static int by_total(const void *a, const void *b) { const Sym *x = *(Sym **)a, *
 int main(int argc, char **argv) {
   int interval = 500;
   int ai = 1;
-  if (argc > 2 && strcmp(argv[1], "-i") == 0) { interval = atoi(argv[2]); ai = 3; }
+  while (ai + 1 < argc && argv[ai][0] == '-') {
+    if (strcmp(argv[ai], "-i") == 0) interval = atoi(argv[ai + 1]);
+    else if (strcmp(argv[ai], "-c") == 0) focus = argv[ai + 1];
+    ai += 2;
+  }
   if (ai >= argc) { fprintf(stderr, "usage: prof [-i usec] program args...\n"); return 2; }
   load_syms(argv[ai]);
   pid_t pid = fork();
@@ -93,6 +98,8 @@ int main(int argc, char **argv) {
       for (int i = 0; i < nsyms; i++) syms[i].seen = 0;
       if (s) { s->total++; s->seen = 1; }
       uint64_t bp = regs.rbp;
+      int focus_hit = s && focus && strstr(s->name, focus) != NULL;
+      int depth0 = 1;
       // the leaf may not have set up its frame yet; walk the rbp chain
       for (int d = 0; d < 200 && bp; d++) {
         errno = 0;
@@ -100,6 +107,7 @@ int main(int argc, char **argv) {
         uint64_t nbp = ptrace(PTRACE_PEEKDATA, pid, bp, 0);
         if (errno) break;
         Sym *c = find(ret);
+        if (focus_hit && depth0 && c) { c->callers++; depth0 = 0; }
         if (c && !c->seen) { c->total++; c->seen = 1; }
         if (nbp <= bp) break;
         bp = nbp;
@@ -117,5 +125,10 @@ int main(int argc, char **argv) {
   qsort(v, nsyms, sizeof(Sym *), by_total);
   for (int i = 0; i < nsyms && i < 30 && v[i]->total; i++)
     fprintf(stderr, "%6.1f %6.1f   %s\n", 100.0 * v[i]->self / samples, 100.0 * v[i]->total / samples, v[i]->name);
+  if (focus) {
+    fprintf(stderr, "\n  callers of %s:\n", focus);
+    for (int i = 0; i < nsyms; i++) for (int j = i + 1; j < nsyms; j++) if (v[j]->callers > v[i]->callers) { Sym *t = v[i]; v[i] = v[j]; v[j] = t; }
+    for (int i = 0; i < nsyms && i < 15 && v[i]->callers; i++) fprintf(stderr, "%6ld   %s\n", v[i]->callers, v[i]->name);
+  }
   return 0;
 }

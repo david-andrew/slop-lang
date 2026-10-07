@@ -60,6 +60,13 @@ fn lf_helper(hk: HK, t: int, p: int) -> int:
 
 fn rt(name: str) -> int: lf_of_inst(runtime_fn(name))
 
+# call to a function that never returns (panics): registers need not survive it
+fn e_call_nr(f: int, args: [int], rtype: int) -> int:
+    start := ir.args.len()
+    for a in args: ir.args.push(i32(a))
+    emit(.call, rtype, -1, i32(start), i32(args.len()), 1, f)
+    -1
+
 fn str_data(s: str) -> int:
     if o := str_off.get(s): return o
     while rodata.len() % 8 != 0: rodata.push(0)
@@ -376,7 +383,7 @@ fn bounds_check(arr: int, idx: int, pos: int):
     n := arr_len(arr)
     bad := e_bin(.geu, VI, idx, n)
     iff(bad)
-    e_call(rt("__panic_bounds"), [idx, n, e_daddr(str_data(loc_str(pos)))], -1)
+    e_call_nr(rt("__panic_bounds"), [idx, n, e_daddr(str_data(loc_str(pos)))], -1)
     endc()
 
 fn loc_str(pos: int) -> str:
@@ -489,7 +496,7 @@ fn gen_place(e: int, write: bool) -> Place:
         addr := place_addr(base, ot)
         has := e_load(VI, addr, tsize(int(types[ot].elem)), 1)
         iff(e_bin(.eq, VI, has, e_iconst(0)))
-        e_call(rt("__panic_unwrap"), [e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
+        e_call_nr(rt("__panic_unwrap"), [e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
         endc()
         return Place(true, addr)
     # not a place: evaluate into a temporary
@@ -808,7 +815,7 @@ fn gen_match(m: int, want: bool) -> Val:
         leave_cond()
         br_to(end_level)
         endc()
-    if val: e_call(rt("__panic"), [e_daddr(str_data("no match arm matched"))], -1)
+    if val: e_call_nr(rt("__panic"), [e_daddr(str_data("no match arm matched"))], -1)
     endc()
     scope_pop()
     if val: return result_from_slot(rs, rtp)
@@ -929,7 +936,7 @@ fn gen_binary(e: int) -> Val:
     sg := (types[lt].kind == .int_ and types[lt].sign)
     if op == .slash or op == .percent:
         iff(e_bin(.eq, VI, vb, e_iconst(0)))
-        e_call(rt("__div_zero"), [e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
+        e_call_nr(rt("__div_zero"), [e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
         endc()
     if types[lt].kind == .bool_ and (op == .amp or op == .pipe or op == .caret):
         return V(e_bin(int_op(op, false), VI, va, vb), false)
@@ -1119,7 +1126,7 @@ fn gen_intrinsic(e: int) -> Val:
         p := read_place(pl, at)
         n := arr_len(p)
         iff(e_bin(.eq, VI, n, e_iconst(0)))
-        e_call(rt("__panic"), [e_daddr(str_data("pop() from an empty array"))], -1)
+        e_call_nr(rt("__panic"), [e_daddr(str_data("pop() from an empty array"))], -1)
         endc()
         nn := e_bin(.sub, VI, n, e_iconst(1))
         e_store(p, 8, nn, 8)
@@ -1270,10 +1277,10 @@ fn gen_intrinsic(e: int) -> Val:
         m := 0
         if args.len() > 0: m = gen_borrowed(args[0]).v
         else: m = e_daddr(str_data("panic"))
-        e_call(rt("__panic"), [m], -1)
+        e_call_nr(rt("__panic"), [m], -1)
         return V(-1, false)
     if id == .unreachable:
-        e_call(rt("__panic"), [e_daddr(str_data("unreachable code reached"))], -1)
+        e_call_nr(rt("__panic"), [e_daddr(str_data("unreachable code reached"))], -1)
         return V(-1, false)
     if id == .assert:
         c := gen_expr(args[0]).v
@@ -1281,7 +1288,7 @@ fn gen_intrinsic(e: int) -> Val:
         m := 0
         if args.len() > 1: m = gen_borrowed(args[1]).v
         else: m = e_daddr(str_data("assertion failed"))
-        e_call(rt("__assert_fail"), [m, e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
+        e_call_nr(rt("__assert_fail"), [m, e_daddr(str_data(loc_str(nodes[e].pos)))], -1)
         endc()
         return V(-1, false)
     if id == .embed:
@@ -1867,7 +1874,7 @@ fn gen_assign(s: int):
         sg := types[t].kind == .int_ and types[t].sign
         if op == .slash or op == .percent:
             iff(e_bin(.eq, VI, rhs, e_iconst(0)))
-            e_call(rt("__div_zero"), [e_daddr(str_data(loc_str(nodes[s].pos)))], -1)
+            e_call_nr(rt("__div_zero"), [e_daddr(str_data(loc_str(nodes[s].pos)))], -1)
             endc()
         if types[t].kind == .bool_: r = e_bin(int_op(op, false), VI, cur, rhs)
         else: r = norm(e_bin(int_op(op, sg), VI, cur, rhs), t)
