@@ -126,8 +126,12 @@ fn __gfx_begin_frame():
     __apply_blend(.alpha)
     glDisable(GL_DEPTH_TEST)
     glDisable(GL_CULL_FACE)
+    __post_begin()
 
-fn __gfx_end_frame(): flush()
+fn __gfx_end_frame():
+    __render3d()
+    flush()
+    __post_end()
 
 fn __set_target_size(w: int, h: int):
     __target_w = w
@@ -256,6 +260,7 @@ fn flush():
     __b_count = 0
 
 fn __use_tex(id: int, nverts: int):
+    if __draws.len() > 0: __render3d()
     if id != __b_tex or __b_count + nverts > __BATCH_MAX:
         flush()
         __b_tex = id

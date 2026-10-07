@@ -380,7 +380,10 @@ fn match_type(pat0: int, a0: int, binds: mut [int], depth: int) -> int:
             if ak == .opt and pk == .opt: return 0
         if ak == .none_lit and pk == .opt: return 0
         if can_coerce(0, a, pat):
-            if (ak == .int_ and pk == .float_) or (ak == .float_ and pk == .float_) or pk == .opt: return 2
+            if ak == .float_ and pk == .float_:
+                if int(types[a].bits) < int(types[pat].bits): return 4
+                return 5
+            if (ak == .int_ and pk == .float_) or pk == .opt: return 2
             return 1
         return -1
     if ak == .var: return 0
@@ -1217,11 +1220,12 @@ fn check_intrinsic(n: int, id: IN, args: [int], expected: int) -> int:
             check_expr(a, 0)
             if nodes[a].kind != .fnref: fatal(nodes[a].pos, "expected a function name")
             f := int(nodes[a].sym)
-            if fns[f].ptypes.len() != 2: fatal(nodes[a].pos, "shader functions take (input, uniforms)")
+            np := fns[f].ptypes.len()
+            if np != 2 and not (i == 0 and np == 3): fatal(nodes[a].pos, "shader functions take (input, uniforms); vertex functions may also take (input, instance, uniforms)")
         vsf := int(nodes[args[0]].sym)
         fsf := int(nodes[args[1]].sym)
         if not type_eq(int(fns[vsf].ret), fns[fsf].ptypes[0]): fatal(nodes[n].pos, "the fragment function's input must be the vertex function's output type")
-        if not type_eq(fns[vsf].ptypes[1], fns[fsf].ptypes[1]): fatal(nodes[n].pos, "both shader functions must take the same uniforms type")
+        if not type_eq(fns[vsf].ptypes[fns[vsf].ptypes.len() - 1], fns[fsf].ptypes[1]): fatal(nodes[n].pos, "both shader functions must take the same uniforms type")
         if not type_eq(int(fns[fsf].ret), T_VEC4): fatal(nodes[n].pos, "the fragment function must return a vec4 color")
         s := prelude.get(intern("ShaderSource")) ?? 0
         if s == 0: fatal(nodes[n].pos, "ShaderSource is not available")

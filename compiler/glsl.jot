@@ -323,7 +323,10 @@ fn glsl_build(vsf: int, fsf: int) -> (str, str, str):
     gl_done_structs = {}
     vpos := nodes[int(fns[vsf].decl)].pos
     vtype_ := int(fns[vsf].ptypes[0])
-    utype := int(fns[vsf].ptypes[1])
+    np := fns[vsf].ptypes.len()
+    itype := 0
+    if np == 3: itype = int(fns[vsf].ptypes[1])
+    utype := int(fns[vsf].ptypes[np - 1])
     otype := int(fns[vsf].ret)
     gl_function(vsf)
     vdecls := gl_decls
@@ -354,6 +357,27 @@ fn glsl_build(vsf: int, fsf: int) -> (str, str, str):
         if c > 1: ty = "vec{c}"
         vs += "layout(location={i}) in {ty} a_{f.0};\n"
         adesc += ";{f.0},{c},{int(fields[int(structs[vsi].fields) + i].offset)}"
+    idesc := ""
+    ifields: [(str, int)]
+    if itype != 0:
+        ifields = gl_struct_fields(itype)
+        isi := int(types[prune(itype)].st)
+        layout(itype)
+        idesc = "|I{tsize(itype)}"
+        loc := vfields.len()
+        for i, f in ifields:
+            off := int(fields[int(structs[isi].fields) + i].offset)
+            if prune(f.1) == T_MAT4:
+                vs += "layout(location={loc}) in mat4 i_{f.0};\n"
+                for col in 0..4: idesc += ";{f.0},4,{off + 16 * col}"
+                loc += 4
+            else:
+                c := gl_attrib_comps(f.1, vpos)
+                ty := "float"
+                if c > 1: ty = "vec{c}"
+                vs += "layout(location={loc}) in {ty} i_{f.0};\n"
+                idesc += ";{f.0},{c},{off}"
+                loc += 1
     ofields := gl_struct_fields(otype)
     if ofields.len() == 0 or prune(ofields[0].1) != T_VEC4: gl_err(vpos, "the vertex shader must return a struct whose first field is the clip position (vec4)")
     vs += "uniform {ustruct} u;\n"
@@ -366,7 +390,13 @@ fn glsl_build(vsf: int, fsf: int) -> (str, str, str):
     vin: [str]
     for f in vfields: vin.push("a_{f.0}")
     vs += "void main() \{\n    {gl_type(vtype_, vpos)} vin = {gl_type(vtype_, vpos)}({join(vin, ", ")});\n"
-    vs += "    {gl_type(otype, vpos)} o = {gl_fn_name(vsf)}(vin, u);\n    gl_Position = o.{ofields[0].0}_;\n"
+    if itype != 0:
+        iin: [str]
+        for f in ifields: iin.push("i_{f.0}")
+        vs += "    {gl_type(itype, vpos)} iin = {gl_type(itype, vpos)}({join(iin, ", ")});\n"
+        vs += "    {gl_type(otype, vpos)} o = {gl_fn_name(vsf)}(vin, iin, u);\n    gl_Position = o.{ofields[0].0}_;\n"
+    else:
+        vs += "    {gl_type(otype, vpos)} o = {gl_fn_name(vsf)}(vin, u);\n    gl_Position = o.{ofields[0].0}_;\n"
     for i, f in ofields:
         if i > 0: vs += "    v_{f.0} = o.{f.0}_;\n"
     vs += "}\n"
@@ -385,7 +415,7 @@ fn glsl_build(vsf: int, fsf: int) -> (str, str, str):
     # the uniform struct definition must precede `uniform S u;` in both stages
     vs = __hoist_struct(vs, ustruct)
     fs = __hoist_struct(fs, ustruct)
-    (vs, fs, "{adesc}|{udesc}")
+    (vs, fs, "{adesc}|{udesc}{idesc}")
 
 # move every struct definition above the first `uniform` declaration
 fn __hoist_struct(src: str, ustruct: str) -> str:

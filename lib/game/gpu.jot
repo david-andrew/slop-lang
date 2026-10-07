@@ -30,6 +30,8 @@ struct Shader:
     attribs: [ShaderAttrib]
     uniforms: [ShaderUniform]
     usize: int
+    istride: int
+    iattribs: [ShaderAttrib]
 
 struct Mesh:
     vao: int
@@ -53,6 +55,13 @@ fn make_shader(src: ShaderSource) -> Shader:
             continue
         f := split(part, ",")
         sh.attribs.push(ShaderAttrib(to_int(f[1]) ?? 0, to_int(f[2]) ?? 0))
+    if halves.len() > 2:
+        for part in split(halves[2], ";"):
+            if starts_with(part, "I"):
+                sh.istride = to_int(part[1..]) ?? 0
+                continue
+            f := split(part, ",")
+            sh.iattribs.push(ShaderAttrib(to_int(f[1]) ?? 0, to_int(f[2]) ?? 0))
     for part in split(halves[1], ";"):
         if starts_with(part, "U"):
             sh.usize = to_int(part[1..]) ?? 0
@@ -93,6 +102,7 @@ fn __bind_attribs(sh: Shader, m: Mesh):
     glBindBuffer(GL_ARRAY_BUFFER, u32(m.vbo))
     for i, a in sh.attribs:
         glEnableVertexAttribArray(u32(i))
+        glVertexAttribDivisor(u32(i), 0)
         glVertexAttribPointer(u32(i), i32(a.comps), GL_FLOAT, 0, i32(m.stride), a.offset)
         glVertexAttribDivisor(u32(i), 0)
 
@@ -132,3 +142,36 @@ fn draw[U](sh: Shader, m: Mesh, params: U):
     glBindVertexArray(0)
 
 fn __bind_uniforms_sized(sh: Shader, p: *u8): __bind_uniforms(sh, p)
+
+# draw many copies of a mesh in one call; `instances` holds the per-instance shader input
+fn draw_instanced[U, I](sh: Shader, m: mut Mesh, instances: [I], params: U):
+    if instances.len() == 0: return
+    flush()
+    glUseProgram(u32(sh.prog))
+    p := params
+    __bind_uniforms(sh, (&p) as *u8)
+    __bind_attribs(sh, m)
+    if m.instance_vbo == 0: m.instance_vbo = gl_create_buffer()
+    glBindBuffer(GL_ARRAY_BUFFER, u32(m.instance_vbo))
+    glBufferData(GL_ARRAY_BUFFER, instances.len() * size_of(I), data(instances) as *u8, GL_STREAM_DRAW)
+    base := sh.attribs.len()
+    for i, a in sh.iattribs:
+        loc := u32(base + i)
+        glEnableVertexAttribArray(loc)
+        glVertexAttribPointer(loc, i32(a.comps), GL_FLOAT, 0, i32(sh.istride), a.offset)
+        glVertexAttribDivisor(loc, 1)
+    if m.index_count > 0:
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, u32(m.ibo))
+        glDrawElementsInstanced(u32(m.mode), i32(m.index_count), GL_UNSIGNED_INT, 0, i32(instances.len()))
+    else: glDrawArraysInstanced(u32(m.mode), 0, i32(m.count), i32(instances.len()))
+    for i in 0..sh.iattribs.len():
+        glVertexAttribDivisor(u32(base + i), 0)
+        glDisableVertexAttribArray(u32(base + i))
+    glBindVertexArray(0)
+
+# texture lookup inside shader functions (maps to GLSL texture()); on the CPU it returns white
+fn sample(t: Texture, uv: vec2) -> vec4: vec4(1, 1, 1, 1)
+fn fract(v: vec2) -> vec2: v - floor(v)
+fn step(edge: f32, x: f32) -> f32:
+    if x < edge: return 0.0
+    1.0
