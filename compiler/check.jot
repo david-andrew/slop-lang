@@ -1404,30 +1404,45 @@ fn check_program(main_path: str):
         if syms[s].kind == .fns: update_fn = get_fn_inst(int(syms[s].decl), [], 0)
     if s := modules[mainm].names.get(intern("draw")):
         if syms[s].kind == .fns: draw_fn = get_fn_inst(int(syms[s].decl), [], 0)
-    for d in export_decls: export_fns.push(get_fn_inst(d, [], nodes[d].pos))
+    for d in export_decls:
+        if not modules[int(nodes[d].mod)].is_prelude: export_fns.push(get_fn_inst(d, [], nodes[d].pos))
     for nm in runtime_names: runtime_fn(nm)
     for nm in optional_runtime:
         if prelude.get(intern(nm)) != none: runtime_fn(nm)
-    # check everything reachable
+    # check everything reachable; library exports join once their module is in use
     k := 0
-    while k < fns.len():
-        if fns[k].state == 0 and (fns[k].kind == FK_NORMAL or fns[k].kind == FK_INIT) and k != 0:
-            if fns[k].kind == FK_INIT:
-                m := int(fns[k].mod)
-                cx = module_ctx[m]
-                fns[k].state = 1
-                mark := scope_mark()
-                ctxs[cx].floor = i32(sc_names.len())
-                body := int(fns[k].body)
-                for j in 0..nkids(body): check_stmt(kid(body, j))
-                scope_reset(mark)
-                zonk_tree(body)
-                for l in fns[k].locals: locals[l].type = i32(zonk(int(locals[l].type)))
-                fns[k].ret = i32(T_VOID)
-                fns[k].state = 2
-                cx = -1
-            else: check_fn_body(k)
-        k += 1
+    exp_added: [bool] = [false; export_decls.len()]
+    while true:
+        while k < fns.len():
+            if fns[k].state == 0 and (fns[k].kind == FK_NORMAL or fns[k].kind == FK_INIT) and k != 0:
+                if fns[k].kind == FK_INIT:
+                    m := int(fns[k].mod)
+                    cx = module_ctx[m]
+                    fns[k].state = 1
+                    mark := scope_mark()
+                    ctxs[cx].floor = i32(sc_names.len())
+                    body := int(fns[k].body)
+                    for j in 0..nkids(body): check_stmt(kid(body, j))
+                    scope_reset(mark)
+                    zonk_tree(body)
+                    for l in fns[k].locals: locals[l].type = i32(zonk(int(locals[l].type)))
+                    fns[k].ret = i32(T_VOID)
+                    fns[k].state = 2
+                    cx = -1
+                else: check_fn_body(k)
+            k += 1
+
+        used: {int: bool} = {}
+        for fi in 1..fns.len():
+            if fns[fi].state == 2 and fns[fi].decl != 0: used[int(nodes[int(fns[fi].decl)].mod)] = true
+        more := false
+        for ei, d in export_decls:
+            if exp_added[ei] or not modules[int(nodes[d].mod)].is_prelude: continue
+            if used.get(int(nodes[d].mod)) != none:
+                exp_added[ei] = true
+                export_fns.push(get_fn_inst(d, [], nodes[d].pos))
+                more = true
+        if not more: break
     # prelude init: referenced prelude globals in declaration order
     pl: [int]
     for g in global_ids:

@@ -135,8 +135,8 @@ when TARGET == "wasm":
     fn __platform_open(): __web_canvas_open(data(__win_title), i32(len(__win_title)), i32(__win_w), i32(__win_h))
 
     # the page calls this every animation frame
-    __web_update: fn(float) = __no_update
-    __web_draw: fn() = __no_draw
+    __web_update: fn(float)
+    __web_draw: fn()
     __web_last := -1.0
 
     @export("__frame")

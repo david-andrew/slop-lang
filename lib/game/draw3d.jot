@@ -410,7 +410,7 @@ fn __rebind_target():
 fn __depth_target(size: int) -> RenderTarget:
     id := gl_create_texture()
     glBindTexture(GL_TEXTURE_2D, u32(id))
-    glTexImage2D(GL_TEXTURE_2D, 0, i32(GL_DEPTH_COMPONENT24), i32(size), i32(size), 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, null)
+    gl_tex_image(size, size, GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, null, 0)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, i32(GL_NEAREST))
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, i32(GL_NEAREST))
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, i32(GL_CLAMP_TO_EDGE))

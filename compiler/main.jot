@@ -77,27 +77,65 @@ fn compile(path: str, out0: str) -> str:
     t1 := time()
     roots: [int]
     for f in init_fns: roots.push(lf_of_inst(f))
-    for f in export_fns: lf_of_inst(f)
+    # exports from user code are always kept; library exports only when their module is used
+    exp_done := [false; export_fns.len()]
+    used_mods: {int: bool} = {}
+    for k, f in export_fns:
+        if not modules[int(fns[f].mod)].is_prelude:
+            lf_of_inst(f)
+            exp_done[k] = true
     main_lf := -1
     if main_fn != 0: main_lf = lf_of_inst(main_fn)
+    pinit := init_fns[0]
+    pinit_lf := roots[0]
     i := 0
-    while i < lfuncs.len():
-        if lfuncs[i].kind == LK_INST and fns[lfuncs[i].inst].decl != 0 and has_flag(int(fns[lfuncs[i].inst].decl), NF_EXTERN):
-            fi := lfuncs[i].inst
-            if target_wasm:
+    while true:
+        while i < lfuncs.len():
+            if i == pinit_lf:
                 i += 1
                 continue
-            if len(fns[fi].clib) == 0: fatal(nodes[int(fns[fi].decl)].pos, "extern functions need @lib(\"library.so\") on native targets")
-            lower_extern_thunk(i, fi)
+            if lfuncs[i].kind == LK_INST:
+                fd := int(fns[lfuncs[i].inst].decl)
+                if fd != 0 and nodes[fd].mod != 0 or fd != 0:
+                    fm := int(nodes[fd].mod)
+                    if used_mods.get(fm) == none:
+                        used_mods[fm] = true
+                        for k, f in export_fns:
+                            if not exp_done[k] and nodes[int(fns[f].decl)].mod == i32(fm):
+                                exp_done[k] = true
+                                lf_of_inst(f)
+            if lfuncs[i].kind == LK_INST and fns[lfuncs[i].inst].decl != 0 and has_flag(int(fns[lfuncs[i].inst].decl), NF_EXTERN):
+                fi := lfuncs[i].inst
+                if target_wasm:
+                    i += 1
+                    continue
+                if len(fns[fi].clib) == 0: fatal(nodes[int(fns[fi].decl)].pos, "extern functions need @lib(\"library.so\") on native targets")
+                lower_extern_thunk(i, fi)
+                if dump: dump_ir()
+                x64_function()
+                i += 1
+                continue
+            lower_function(i)
             if dump: dump_ir()
-            x64_function()
+            if target_wasm: wasm_collect()
+            else: x64_function()
             i += 1
-            continue
-        lower_function(i)
+
+        # library globals: initialize only the ones compiled code refers to (fixed point)
+        nglob := global_off.len()
+        decls: [int]
+        for g in global_ids:
+            if not modules[int(globals[g].mod)].is_prelude or global_off.get(g) == none: continue
+            d := int(globals[g].decl)
+            if not decls.contains(d): decls.push(d)
+        set_list(int(fns[pinit].body), decls)
+        nl := lfuncs.len()
+        lower_function(pinit_lf)
+        if lfuncs.len() > nl or global_off.len() > nglob: continue
         if dump: dump_ir()
         if target_wasm: wasm_collect()
         else: x64_function()
-        i += 1
+        break
     t2 := time()
     ok := false
     size := 0

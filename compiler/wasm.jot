@@ -597,6 +597,11 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
         wfn_index[lf] = k
         k += 1
     start_index := k
+    # exported functions get adapters with JavaScript-friendly parameter types (i32/f32/f64)
+    exp_lfs: [int]
+    for lf in defined:
+        if len(wfuncs[lf].export_name) > 0: exp_lfs.push(lf)
+    adapter_base := start_index + 1
     data_base = align_up(RO_BASE + rodata.len(), 16)
     stack_top = align_up(data_base + data_size + STACK_SIZE, 16)
     pages := (stack_top + 65535) / 65536 + 1
@@ -613,6 +618,29 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
         uleb(eb, wfn_index[main_lf])
     eb.push(0x0B)
     start_sig := sig_index([], [])
+    adapter_sigs: [int]
+    adapter_bodies: [[u8]]
+    for lf in exp_lfs:
+        f := lfuncs[lf].inst
+        ps: [int]
+        for t in fns[f].ptypes: ps.push(import_wt(t))
+        rs: [int]
+        rt := int(fns[f].ret)
+        if tkind(rt) != .void_: rs.push(import_wt(rt))
+        adapter_sigs.push(sig_index(ps, rs))
+        ab: [u8] = [0]
+        for i, t in fns[f].ptypes:
+            ab.push(0x20)
+            uleb(ab, i)
+            if import_wt(t) == WT_I32:
+                tt := prune(t)
+                if types[tt].kind == .int_ and types[tt].sign: ab.push(0xAC)
+                else: ab.push(0xAD)
+        ab.push(0x10)
+        uleb(ab, wfn_index[lf])
+        if tkind(rt) != .void_ and import_wt(rt) == WT_I32: ab.push(0xA7)
+        ab.push(0x0B)
+        adapter_bodies.push(ab)
     sigs: [int]
     for lf in imports: sigs.push(import_sig(lf))
     for lf in defined: sigs.push(fn_sig_of(wfuncs[lf]))
@@ -634,9 +662,10 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
     section(out, 2, s)
     # functions
     s = []
-    uleb(s, defined.len() + 1)
+    uleb(s, defined.len() + 1 + exp_lfs.len())
     for i in 0..defined.len(): uleb(s, sigs[imports.len() + i])
     uleb(s, start_sig)
+    for a in adapter_sigs: uleb(s, a)
     section(out, 3, s)
     # table
     s = [1, 0x70, 0]
@@ -655,9 +684,7 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
     s = []
     exports: [(str, int)]
     exports.push(("__start", start_index))
-    for lf in defined:
-        en := wfuncs[lf].export_name
-        if len(en) > 0: exports.push((en, wfn_index[lf]))
+    for i, lf in exp_lfs: exports.push((wfuncs[lf].export_name, adapter_base + i))
     uleb(s, exports.len() + 2)
     wstr(s, "memory")
     s.push(2)
@@ -679,12 +706,15 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
     section(out, 9, s)
     # code
     s = []
-    uleb(s, defined.len() + 1)
+    uleb(s, defined.len() + 1 + exp_lfs.len())
     for bd in bodies:
         uleb(s, bd.len())
         for c in bd: s.push(c)
     uleb(s, eb.len())
     for c in eb: s.push(c)
+    for ab in adapter_bodies:
+        uleb(s, ab.len())
+        for c in ab: s.push(c)
     section(out, 10, s)
     # data: rodata
     s = [1, 0, 0x41]
