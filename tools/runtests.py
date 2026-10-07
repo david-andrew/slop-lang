@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Run Jot test programs and compare output with .out files.
-usage: runtests.py [--compiler jot0|jot] [--target native|wasm] [pattern]"""
+usage: runtests.py [--compiler jot0|jot|path] [--release] [--target native|wasm] [pattern]"""
 import os, subprocess, sys, glob, time
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 args = sys.argv[1:]
 compiler = "jot0"
+release = False
 target = "native"
 pattern = ""
 i = 0
 while i < len(args):
     if args[i] == "--compiler": compiler = args[i + 1]; i += 2
+    elif args[i] == "--release": release = True; i += 1
     elif args[i] == "--target": target = args[i + 1]; i += 2
     else: pattern = args[i]; i += 1
 
@@ -26,7 +28,8 @@ for t in tests:
     if compiler == "jot0":
         cmd = [os.path.join(root, "stage0", "jot0"), t, "-o", exe]
     else:
-        cmd = [os.path.join(root, "bin", "jot"), "build", t, "-o", exe] + (["--target", "wasm"] if target == "wasm" else [])
+        jot = os.path.join(root, "bin", "jot") if compiler == "jot" else os.path.abspath(compiler)
+        cmd = [jot, "build", t, "-o", exe] + (["--target", "wasm"] if target == "wasm" else []) + (["--release"] if release else [])
         env = dict(os.environ, JOT_LIB=os.path.join(root, "lib"))
     t0 = time.time()
     r = subprocess.run(cmd, capture_output=True, text=True, env=dict(os.environ, JOT_LIB=os.path.join(root, "lib")))
@@ -38,7 +41,12 @@ for t in tests:
         run = ["node", os.path.join(root, "tools", "runwasm.js"), exe + ".html"]
     else:
         run = [exe]
-    r = subprocess.run(run, capture_output=True, text=True, timeout=60)
+    try:
+        r = subprocess.run(run, capture_output=True, text=True, timeout=20)
+    except subprocess.TimeoutExpired:
+        print(f"FAIL {name}: timed out")
+        failed += 1
+        continue
     out = r.stdout
     if r.returncode != 0 and not name.startswith("panic"):
         out += f"[exit {r.returncode}] {r.stderr}"

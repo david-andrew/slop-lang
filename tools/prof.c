@@ -1,5 +1,5 @@
 // Tiny sampling profiler for Jot executables (uses ptrace + frame pointers).
-// usage: prof [-i usec] program args...
+// usage: prof [-i usec] [-c func (callers)] [-a func (hot addresses)] program args...
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +16,8 @@
 
 typedef struct { uint64_t addr, size; char *name; long self, total; int seen; long callers; } Sym;
 static const char *focus = NULL;
+static const char *afocus = NULL;
+static uint64_t ahist_addr[65536]; static long ahist_n[65536]; static int nah;
 static Sym *syms; static int nsyms;
 
 static int cmp(const void *a, const void *b) {
@@ -66,6 +68,7 @@ int main(int argc, char **argv) {
   while (ai + 1 < argc && argv[ai][0] == '-') {
     if (strcmp(argv[ai], "-i") == 0) interval = atoi(argv[ai + 1]);
     else if (strcmp(argv[ai], "-c") == 0) focus = argv[ai + 1];
+    else if (strcmp(argv[ai], "-a") == 0) afocus = argv[ai + 1];
     ai += 2;
   }
   if (ai >= argc) { fprintf(stderr, "usage: prof [-i usec] program args...\n"); return 2; }
@@ -94,12 +97,17 @@ int main(int argc, char **argv) {
     if (ptrace(PTRACE_GETREGS, pid, 0, &regs) == 0) {
       samples++;
       Sym *s = find(regs.rip);
+      if (s && afocus && strcmp(s->name, afocus) == 0) {
+        int k = 0;
+        while (k < nah && ahist_addr[k] != regs.rip) k++;
+        if (k == nah && nah < 65536) { ahist_addr[nah++] = regs.rip; }
+        if (k < 65536) ahist_n[k]++;
+      }
       if (s) s->self++; else { unknown++; if (unknown < 6) fprintf(stderr, "unknown rip %llx\n", (unsigned long long)regs.rip); }
       for (int i = 0; i < nsyms; i++) syms[i].seen = 0;
       if (s) { s->total++; s->seen = 1; }
       uint64_t bp = regs.rbp;
       int focus_hit = s && focus && strstr(s->name, focus) != NULL;
-      int depth0 = 1;
       // the leaf may not have set up its frame yet; walk the rbp chain
       for (int d = 0; d < 200 && bp; d++) {
         errno = 0;
@@ -107,7 +115,8 @@ int main(int argc, char **argv) {
         uint64_t nbp = ptrace(PTRACE_PEEKDATA, pid, bp, 0);
         if (errno) break;
         Sym *c = find(ret);
-        if (focus_hit && depth0 && c) { c->callers++; depth0 = 0; }
+        if (focus_hit == 1 && c) { c->callers++; focus_hit = 2; }
+        if (!focus_hit && c && focus && strstr(c->name, focus) != NULL) focus_hit = 1;
         if (c && !c->seen) { c->total++; c->seen = 1; }
         if (nbp <= bp) break;
         bp = nbp;
@@ -129,6 +138,13 @@ int main(int argc, char **argv) {
     fprintf(stderr, "\n  callers of %s:\n", focus);
     for (int i = 0; i < nsyms; i++) for (int j = i + 1; j < nsyms; j++) if (v[j]->callers > v[i]->callers) { Sym *t = v[i]; v[i] = v[j]; v[j] = t; }
     for (int i = 0; i < nsyms && i < 15 && v[i]->callers; i++) fprintf(stderr, "%6ld   %s\n", v[i]->callers, v[i]->name);
+  }
+  if (afocus) {
+    fprintf(stderr, "\n  hot addresses in %s:\n", afocus);
+    for (int i = 0; i < nah; i++) for (int j = i + 1; j < nah; j++) if (ahist_n[j] > ahist_n[i]) {
+      long t = ahist_n[i]; ahist_n[i] = ahist_n[j]; ahist_n[j] = t;
+      uint64_t a = ahist_addr[i]; ahist_addr[i] = ahist_addr[j]; ahist_addr[j] = a; }
+    for (int i = 0; i < nah && i < 40; i++) fprintf(stderr, "%6ld   %llx\n", ahist_n[i], (unsigned long long)ahist_addr[i]);
   }
   return 0;
 }

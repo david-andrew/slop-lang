@@ -84,6 +84,31 @@ fn __free(p: *u8):
     (h as **u8)[0] = __free_lists[c]
     __free_lists[c] = h as *u8
 
+# Grow an allocation to at least `size` bytes, keeping the first `used` bytes. Large blocks are
+# remapped in place (no copy); small ones stay put if their size class has room.
+fn __grow_alloc(p: *u8, used: int, size: int) -> *u8:
+    h := (p - 16) as *int
+    n := size + 16
+    if h[1] == -1:
+        total := (n + 65535) & ~65535
+        if total <= h[0]: return p
+        when TARGET != "wasm":
+            q := syscall(25, h, h[0], total, 1, 0)
+            if q < 0 and q > -4096: __out_of_memory()
+            (q as *int)[0] = total
+            return (q as *u8) + 16
+    else if n <= 32 << h[0]: return p
+    q := __alloc(size)
+    mem_copy(q, p, used)
+    __free(p)
+    q
+
+# usable bytes of an allocation
+fn __alloc_size(p: *u8) -> int:
+    h := (p - 16) as *int
+    if h[1] == -1: return h[0] - 16
+    (32 << h[0]) - 16
+
 fn __free_obj(p: *u8):
     __free(p)
 
@@ -201,10 +226,9 @@ fn __arr_grow(slot: **u8, es: int, need: int):
     if h[2] >= need: return
     cap := h[2] * 2
     if cap < need: cap = need
-    q := __arr_new_raw(cap, es)
-    (q as *int)[1] = h[1]
-    mem_copy(q + 24, p + 24, h[1] * es)
-    __free(p)
+    q := __grow_alloc(p, 24 + h[1] * es, 24 + cap * es)
+    if es > 0: cap = (__alloc_size(q) - 24) / es
+    (q as *int)[2] = cap
     slot[0] = q
 
 fn __arr_push_slot(slot: **u8, es: int) -> *u8:

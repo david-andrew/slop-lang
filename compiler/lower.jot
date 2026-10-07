@@ -188,15 +188,40 @@ tl_cond: [int]
 fn V(v: int, owned: bool) -> Val: Val(v, owned, -1)
 
 # ---------------- reference counting ----------------
+# release builds (`opt = release`) inline the fast paths of refcounting, uniqueness and bounds
+# checks; debug builds keep them out of line so the IR (and compile time) stays small.
+opt_release := false
+
+# rc <= 0 marks immortal objects
 fn retain(v: int, t: int):
-    e_call(rt("__rc_inc"), [v], -1)
+    if not opt_release:
+        e_call(rt("__rc_inc"), [v], -1)
+        return
+    iff(e_bin(.ne, VI, v, e_iconst(0)))
+    rc := e_load(VI, v, 0, 8)
+    iff(e_bin(.gts, VI, rc, e_iconst(0)))
+    e_store(v, 0, e_addi(rc, 1), 8)
+    endc()
+    endc()
 
 fn release(v: int, t0: int):
     t := prune(t0)
-    if types[t].kind == .array and is_managed(int(types[t].elem)):
-        e_call(lf_helper(.arrrel, t, 0), [v], -1)
+    if not opt_release:
+        if types[t].kind == .array and is_managed(int(types[t].elem)): e_call(lf_helper(.arrrel, t, 0), [v], -1)
+        else: e_call(rt("__rc_dec"), [v], -1)
         return
-    e_call(rt("__rc_dec"), [v], -1)
+    iff(e_bin(.ne, VI, v, e_iconst(0)))
+    rc := e_load(VI, v, 0, 8)
+    iff(e_bin(.gts, VI, rc, e_iconst(1)))
+    e_store(v, 0, e_addi(rc, -1), 8)
+    els()
+    # last reference: the out-of-line path frees (and releases elements)
+    iff(e_bin(.eq, VI, rc, e_iconst(1)))
+    if types[t].kind == .array and is_managed(int(types[t].elem)): e_call(lf_helper(.arrrel, t, 0), [v], -1)
+    else: e_call(rt("__rc_dec"), [v], -1)
+    endc()
+    endc()
+    endc()
 
 fn drop_at(addr: int, t0: int):
     t := prune(t0)
@@ -380,10 +405,19 @@ fn local_place(l: int, write: bool) -> Place:
 
 fn bounds_check(arr: int, idx: int, pos: int):
     # arr: array object pointer (may be null), idx: index
-    n := arr_len(arr)
-    bad := e_bin(.geu, VI, idx, n)
-    iff(bad)
-    e_call_nr(rt("__panic_bounds"), [idx, n, e_daddr(str_data(loc_str(pos)))], -1)
+    loc := str_data(loc_str(pos))
+    if not opt_release:
+        n := arr_len(arr)
+        iff(e_bin(.geu, VI, idx, n))
+        e_call_nr(rt("__panic_bounds"), [idx, n, e_daddr(loc)], -1)
+        endc()
+        return
+    iff(e_bin(.eq, VI, arr, e_iconst(0)))
+    e_call_nr(rt("__panic_bounds"), [idx, e_iconst(0), e_daddr(loc)], -1)
+    endc()
+    n := e_load(VI, arr, 8, 8)
+    iff(e_bin(.geu, VI, idx, n))
+    e_call_nr(rt("__panic_bounds"), [idx, n, e_daddr(loc)], -1)
     endc()
 
 fn loc_str(pos: int) -> str:
@@ -420,9 +454,18 @@ fn arr_len(p: int) -> int:
 
 fn arr_unique(slot_addr_or_place: Place, at: int):
     # ensure the array in the place is uniquely owned
+    # (fast path inline: a non-null array with refcount 1 is already unique)
     p := read_place(slot_addr_or_place, at)
+    if not opt_release:
+        write_place(slot_addr_or_place, at, e_call(lf_helper(.arruniq, at, 0), [p], VI))
+        return
+    iff(e_bin(.ne, VI, p, e_iconst(0)))
+    iff(e_bin(.ne, VI, e_load(VI, p, 0, 8), e_iconst(1)))
     np := e_call(lf_helper(.arruniq, at, 0), [p], VI)
     write_place(slot_addr_or_place, at, np)
+    endc()
+    endc()
+    emit(.assume, 0, 0, read_place(slot_addr_or_place, at), 0, 0, A_RC1)
 
 fn gen_place(e: int, write: bool) -> Place:
     k := nodes[e].kind
@@ -444,6 +487,7 @@ fn gen_place(e: int, write: bool) -> Place:
             return Place(true, e_addi(place_addr(base, bt), ci * 4))
         addr := 0
         if types[bt].kind == .ptr:
+            ir.raw_mem = true
             addr = gen_expr(a).v
             bt = prune(int(types[bt].elem))
         else:
@@ -459,6 +503,7 @@ fn gen_place(e: int, write: bool) -> Place:
         bt := prune(ntype(a))
         bk := types[bt].kind
         if bk == .ptr:
+            ir.raw_mem = true
             p := gen_expr(a).v
             i := gen_expr(int(nodes[e].b)).v
             sz := tsize(int(types[bt].elem))
@@ -773,6 +818,96 @@ fn gen_match_test(p: int, st0: int, hidden_addr: int) -> int:
     fatal(nodes[p].pos, "invalid pattern")
     0
 
+# constant value of an integer literal pattern
+fn pat_int(a0: int) -> (bool, int):
+    a := a0
+    if nodes[a].kind == .conv: a = int(nodes[a].a)
+    if nodes[a].kind == .int_lit: return (true, nodes[a].ival)
+    (false, 0)
+
+fn gen_arm_body(arm: int, rs: int, rtp: int, val: bool):
+    enter_cond()
+    body := int(nodes[arm].b)
+    if val: gen_value_block(body, rs, rtp)
+    else:
+        scope_push()
+        gen_block_stmts(body)
+        scope_pop()
+    leave_cond()
+
+# matches on enum tags or integer literals with a dense value range dispatch through a jump table
+fn gen_match_switch(m: int, st0: int, rs: int, rtp: int, val: bool) -> bool:
+    st := prune(st0)
+    is_enum := types[st].kind == .enum_
+    if not is_enum and types[st].kind != .int_: return false
+    na := nkids(m)
+    if na < 3: return false
+    vals: [int]
+    arms: [int]
+    wild := -1
+    for i in 0..na:
+        arm := kid(m, i)
+        for k in 0..nkids(arm):
+            p := kid(arm, k)
+            pk := nodes[p].kind
+            if pk == .pwild:
+                if wild < 0: wild = i
+            else if pk == .pvariant and is_enum:
+                si := int(types[st].st)
+                v := int(nodes[p].aux2)
+                if structs[si].simple_enum: v = variants[int(structs[si].variants) + int(nodes[p].aux2)].value
+                vals.push(v)
+                arms.push(i)
+            else if pk == .plit and not is_enum:
+                ok, v := pat_int(int(nodes[p].a))
+                if not ok: return false
+                vals.push(v)
+                arms.push(i)
+            else: return false
+    if vals.len() < 3: return false
+    lo := vals[0]
+    hi := vals[0]
+    for v in vals:
+        if v < lo: lo = v
+        if v > hi: hi = v
+    span := hi - lo + 1
+    if span > 2 * vals.len() + 16 or span > 4096: return false
+    if is_enum: layout(st)
+    # blocks: end, fail, then one per arm (arm 0 innermost)
+    blk()
+    end_level := ctl
+    blk()
+    fail_level := ctl
+    arm_level := [0; na]
+    i := na - 1
+    while i >= 0:
+        blk()
+        arm_level[i] = ctl
+        i -= 1
+    ha := e_slot(int(locals[int(nodes[m].sym)].offset))
+    x := 0
+    if is_enum: x = e_load(VI, ha, 0, 4)
+    else: x = load_val(st, ha, 0)
+    idx := e_bin(.sub, VI, x, e_iconst(lo))
+    table := [-1; span]
+    for j, v in vals:
+        if table[v - lo] < 0: table[v - lo] = arms[j]
+    def_level := fail_level
+    if wild >= 0: def_level = arm_level[wild]
+    depths: [int]
+    for t in table:
+        if t < 0: depths.push(ctl - def_level)
+        else: depths.push(ctl - arm_level[t])
+    e_brtable(idx, depths, ctl - def_level)
+    for a in 0..na:
+        endc()
+        gen_arm_body(kid(m, a), rs, rtp, val)
+        br_to(end_level)
+    endc()
+    if val: e_call_nr(rt("__panic"), [e_daddr(str_data("no match arm matched"))], -1)
+    endc()
+    true
+
 fn gen_match(m: int, want: bool) -> Val:
     hidden := int(nodes[m].sym)
     st := ntype(int(nodes[m].a))
@@ -788,6 +923,10 @@ fn gen_match(m: int, want: bool) -> Val:
     store_val(st, e_slot(int(locals[hidden].offset)), 0, sv.v)
     stmt_end()
     scope_add_local(hidden)
+    if gen_match_switch(m, st, rs, rtp, val):
+        scope_pop()
+        if val: return result_from_slot(rs, rtp)
+        return V(-1, false)
     blk()
     end_level := ctl
     for i in 0..nkids(m):
@@ -1662,7 +1801,30 @@ fn gen_array(e: int, t: int) -> Val:
     et := int(types[t].elem)
     esz := tsize(et)
     if nodes[e].b != 0:
+        # fresh heap memory is zeroed, so [0; n] needs no fill loop
+        z := kid(e, 0)
+        if nodes[z].kind == .conv: z = int(nodes[z].a)
+        zk := nodes[z].kind
+        if (zk == .int_lit and nodes[z].ival == 0) or (zk == .bool_lit and nodes[z].ival == 0) or zk == .null_lit or (zk == .float_lit and nodes[z].fval == 0.0 and (nodes[z].fval as int) == 0):
+            n := gen_expr(int(nodes[e].b)).v
+            return V(e_call(rt("__arr_repeat"), [n, e_iconst(esz)], VI), true)
         val := gen_owned(kid(e, 0))
+        if vc(et) != VC_AGG and not is_managed(et):
+            n := gen_expr(int(nodes[e].b)).v
+            res := vreg(VI)
+            e_mov(res, e_call(rt("__arr_repeat"), [n, e_iconst(esz)], VI))
+            i := vreg(VI)
+            e_mov(i, e_iconst(0))
+            cnt := arr_len(res)
+            blk()
+            lop()
+            brif_to(e_bin(.ges, VI, i, cnt), ctl - 1)
+            store_val(et, e_bin(.add, VI, e_addi(res, 24), e_bin(.mul, VI, i, e_iconst(esz))), 0, val.v)
+            e_mov(i, e_addi(i, 1))
+            br_to(ctl)
+            endc()
+            endc()
+            return V(res, true)
         vs := new_temp(et)
         va := e_slot(vs)
         store_val(et, va, 0, val.v)
@@ -1975,6 +2137,13 @@ fn gen_for(s: int):
         scope_add_local(snap)
     ip := local_place(idx, true)
     write_place(ip, T_INT, e_iconst(0))
+    # the snapshot of an array cannot change while iterating: hoist its length and data
+    n_snap := 0
+    base_snap := 0
+    if aux == 1:
+        sv := read_place(local_place(snap, false), ct)
+        n_snap = arr_len(sv)
+        base_snap = e_addi(sv, 24)
     blk()
     brk := ctl
     lop()
@@ -1983,9 +2152,8 @@ fn gen_for(s: int):
     if aux == 1:
         et := T_U8
         if types[ct].kind == .array: et = int(types[ct].elem)
-        sv := read_place(local_place(snap, false), ct)
-        brif_to(e_bin(.ges, VI, i, arr_len(sv)), brk)
-        ea := e_bin(.add, VI, e_addi(sv, 24), e_bin(.mul, VI, i, e_iconst(tsize(et))))
+        brif_to(e_bin(.ges, VI, i, n_snap), brk)
+        ea := e_bin(.add, VI, base_snap, e_bin(.mul, VI, i, e_iconst(tsize(et))))
         e_mov(int(locals[el].vreg), ea)
     else if aux == 2:
         p := read_place(gen_place(int(nodes[s].a), false), ct)

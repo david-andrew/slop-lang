@@ -195,7 +195,7 @@ fn emit_wins(ins: Ins):
     a := int(ins.a)
     bb := int(ins.b)
     match o:
-        nop: pass
+        nop, assume: pass
         iconst:
             i64c(ins.imm)
             lset(d)
@@ -520,6 +520,19 @@ fn emit_wins(ins: Ins):
             op(0x50)
             op(0x45)
             op(0x0D)
+            uleb(wb, int(ins.imm))
+        brtable:
+            # out-of-range indices (unsigned) select the default entry
+            lget(a)
+            op(0xA7)                    # i32.wrap_i64
+            i32c(bb)
+            lget(a)
+            i64c(bb)
+            op(0x54)                    # i64.lt_u
+            op(0x1B)                    # select
+            op(0x0E)
+            uleb(wb, bb)
+            for k in 0..bb: uleb(wb, int(cur_wf.args[int(ins.c) + k]))
             uleb(wb, int(ins.imm))
         ret:
             if a >= 0: lget(a)

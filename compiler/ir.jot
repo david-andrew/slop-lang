@@ -13,7 +13,9 @@ enum Op:
     i2f, u2f, f2i, f2f, bits2f, f2bits,
     load, store, slot, gaddr, daddr, faddr, copy, zero, memcpy, memset, zeroslots,
     call, calli, callc, syscall, intr,
-    block, loop, if_, else_, end, br, brif, ret, trap, select
+    block, loop, if_, else_, end, br, brif, ret, trap, select,
+    assume,           # a = vreg, imm = A_* fact (no code)
+    brtable           # a = index, b = count, c = args start (depths), imm = default depth; index >= count (unsigned) -> default
 
 const VI = 0
 const VF = 1
@@ -22,6 +24,9 @@ const VS = 2
 # memory access encodings (Ins.c for load/store)
 const M_SIGNED = 16
 const M_FLOAT = 32
+
+# facts for the optimizer (Op.assume)
+const A_RC1 = 1       # the array/string object a (if not null) has refcount 1
 
 struct Ins:
     op: Op
@@ -44,6 +49,7 @@ struct IrFn:
     cabi: bool
     export_name: str
     fn_index: int
+    raw_mem: bool     # dereferences raw pointers (disables type-based alias reasoning)
 
 # current function being built
 ir: IrFn
@@ -141,6 +147,10 @@ fn e_else(): emit(.else_, 0, 0, 0, 0, 0, 0)
 fn e_end(): emit(.end, 0, 0, 0, 0, 0, 0)
 fn e_br(depth: int): emit(.br, 0, 0, 0, 0, 0, depth)
 fn e_brif(c: int, depth: int): emit(.brif, 0, 0, c, 0, 0, depth)
+fn e_brtable(idx: int, depths: [int], default_depth: int):
+    start := ir.args.len()
+    for d in depths: ir.args.push(i32(d))
+    emit(.brtable, 0, 0, idx, depths.len(), start, default_depth)
 fn e_ret(v: int): emit(.ret, 0, 0, v, 0, 0, 0)
 fn e_trap(): emit(.trap, 0, 0, 0, 0, 0, 0)
 
@@ -154,7 +164,7 @@ fn dump_ir():
         if ins.op == .end or ins.op == .else_: ind -= 1
         pad := repeat("  ", ind)
         line := "{pad}{ins.op}"
-        if ins.dst >= 0 and ins.op != .store and ins.op != .br and ins.op != .brif and ins.op != .block and ins.op != .loop and ins.op != .end and ins.op != .if_ and ins.op != .else_ and ins.op != .ret: line = "{pad}v{ins.dst} = {ins.op}"
+        if ins.dst >= 0 and ins.op != .store and ins.op != .br and ins.op != .brif and ins.op != .brtable and ins.op != .block and ins.op != .loop and ins.op != .end and ins.op != .if_ and ins.op != .else_ and ins.op != .ret: line = "{pad}v{ins.dst} = {ins.op}"
         line += " a={ins.a} b={ins.b} c={ins.c} imm={ins.imm} ty={ins.ty}"
         if ins.op == .call or ins.op == .calli or ins.op == .callc or ins.op == .syscall or ins.op == .intr:
             al := ""

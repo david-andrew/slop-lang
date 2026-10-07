@@ -1,6 +1,9 @@
 # The Jot compiler.
 #   jot file.jot [args]     compile and run
-#   jot build file.jot [-o out] [--target wasm]
+#   jot build file.jot [-o out] [--target wasm] [--release]
+
+build:
+    opt = release
 
 use util
 use lex
@@ -11,12 +14,13 @@ use check
 use expr
 use ir
 use lower
+use opt
 use x64
 use elf
 use wasm
 
 fn usage():
-    eprint("usage: jot file.jot [args...]\n       jot build file.jot [-o output] [--target native|wasm] [--ir]")
+    eprint("usage: jot file.jot [args...]\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
     exit(2)
 
 fn find_lib_dir() -> str:
@@ -30,6 +34,7 @@ fn find_lib_dir() -> str:
     "{d}/lib"
 
 dump := false
+cli_release := false
 timing := false
 
 # build options written in the program itself:
@@ -62,10 +67,16 @@ fn scan_build_block(path: str):
         if len(val) >= 2 and val[0] == '"': val = val[1..len(val) - 1]
         if key == "target": build_target = val
         else if key == "output": build_output = val
+        else if key == "opt":
+            if val != "debug" and val != "release":
+                eprint("error: build option 'opt' must be debug or release\n")
+                exit(1)
+            opt_release = val == "release"
 
 fn compile(path: str, out0: str) -> str:
     t0 := time()
     scan_build_block(path)
+    if cli_release: opt_release = true
     tgt := build_target
     if len(cli_target) > 0: tgt = cli_target
     target_wasm = tgt == "wasm"
@@ -116,6 +127,7 @@ fn compile(path: str, out0: str) -> str:
                 i += 1
                 continue
             lower_function(i)
+            if opt_release: optimize()
             if dump: dump_ir()
             if target_wasm: wasm_collect()
             else: x64_function()
@@ -132,6 +144,7 @@ fn compile(path: str, out0: str) -> str:
         nl := lfuncs.len()
         lower_function(pinit_lf)
         if lfuncs.len() > nl or global_off.len() > nglob: continue
+        if opt_release: optimize()
         if dump: dump_ir()
         if target_wasm: wasm_collect()
         else: x64_function()
@@ -177,6 +190,7 @@ fn main():
                 cli_target = a[i + 1]
                 i += 1
             else if x == "--ir": dump = true
+            else if x == "--release": cli_release = true
             else if x == "--time": timing = true
             else: path = x
             i += 1
