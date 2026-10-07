@@ -89,6 +89,7 @@ struct FnInst:
     cabi: bool
     export_name: str
     aux_void: bool
+    clib: str
 
 struct FnSig:
     ntp: i32
@@ -536,6 +537,9 @@ fn get_fn_inst(decl: int, targs: [int], use_pos: int) -> int:
             at := kid(ab, i)
             an := name_of(int(nodes[at].name))
             if an == "cabi": fns[f].cabi = true
+            else if an == "lib":
+                if nodes[at].a == 0 or nodes[int(nodes[at].a)].kind != .str_lit: fatal(nodes[at].pos, "@lib needs a library name, e.g. @lib(\"libGL.so.1\")")
+                fns[f].clib = name_of(int(nodes[int(nodes[at].a)].sval))
             else if an == "export":
                 fns[f].cabi = true
                 if nodes[at].a != 0: fns[f].export_name = name_of(int(nodes[int(nodes[at].a)].sval))
@@ -606,7 +610,7 @@ fn ensure_global(g: int, use_pos: int):
             else: t = T_INT
         else: t = et
         globals[g].type = i32(zonk(t))
-        globals[g].init = i32(cl)
+        globals[g].init = nodes[d].b      # unchecked original: each use checks a fresh copy
     else if nodes[d].nlist > 0:
         if not has_flag(d, NF_CHECKED):
             t := prune(check_expr(int(nodes[d].b), 0))
@@ -996,7 +1000,7 @@ fn check_stmt(s: int):
         else if has_flag(cl, NF_LITERAL): t = lit_default(cl)
         else: t = et
         g.type = i32(t)
-        g.init = i32(cl)
+        g.init = nodes[s].b
         globals.push(g)
         push_scope_sym(int(nodes[s].name), new_sym(int(nodes[s].name), .const_, globals.len() - 1, 0))
         nodes[s].kind = .block
@@ -1276,7 +1280,7 @@ runtime_names := ["__alloc", "__free", "__panic", "__panic_bounds", "__panic_unw
     "__arr_reserve", "__arr_insert_slot", "__arr_remove_slot", "__arr_slice", "__arr_concat", "__str_concat", "__str_eq",
     "__str_cmp", "__str_slice", "__str_append", "__buf_finish", "__buf_append_str", "__arr_resize", "__arr_repeat",
     "__print_str", "__str_from_bytes", "__assert_fail", "__hash_bytes", "__str_hash", "__div_zero", "__rc_inc", "__rc_dec"]
-optional_runtime := ["__mat4_mul", "__mat4_mul_vec4", "__fmt_i32", "__fmt_f32"]
+optional_runtime := ["__mat4_mul", "__mat4_mul_vec4", "__fmt_i32", "__fmt_f32", "__ffi_resolve"]
 runtime_insts: {str: int} = {}
 
 fn runtime_fn(name: str) -> int:
@@ -1310,13 +1314,15 @@ fn add_universe():
     register_intrinsics()
 
 fn load_prelude():
-    # all .jot files in lib/core are loaded into the shared prelude scope
-    names_ := list_dir("{lib_dir}/core")
-    names_.sort()
-    for n in names_:
-        if ends_with(n, ".jot"): load_module("{lib_dir}/core/{n}", true, 0)
+    # all .jot files in lib/core and lib/game are loaded into the shared prelude scope
+    for sub in ["core", "game"]:
+        names_ := list_dir("{lib_dir}/{sub}")
+        names_.sort()
+        for n in names_:
+            if ends_with(n, ".jot"): load_module("{lib_dir}/{sub}/{n}", true, 0)
 
 dfs_state: [bool]
+skip_main := false
 fn order_modules(m: int, out: mut [int]):
     if dfs_state[m]: return
     dfs_state[m] = true
@@ -1337,6 +1343,33 @@ fn check_program(main_path: str):
     while i < modules.len():
         register_decls(i, modules[i].decls)
         i += 1
+    # programs with update()/draw() run the game loop after main()
+    has_upd := modules[mainm].names.get(intern("update")) != none
+    has_drw := modules[mainm].names.get(intern("draw")) != none
+    if has_upd or has_drw:
+        if s := modules[mainm].names.get(intern("main")):
+            mc := mk(.call, 0)
+            mid := mk(.ident, 0)
+            nodes[mid].name = i32(intern("main"))
+            nodes[mc].a = i32(mid)
+            st := mk(.exprstmt, 0)
+            nodes[st].a = i32(mc)
+            modules[mainm].inits.push(st)
+            skip_main = true
+        gc := mk(.call, 0)
+        gid := mk(.ident, 0)
+        nodes[gid].name = i32(intern("__game_run"))
+        nodes[gc].a = i32(gid)
+        ua := mk(.ident, 0)
+        if has_upd: nodes[ua].name = i32(intern("update"))
+        else: nodes[ua].name = i32(intern("__no_update"))
+        da := mk(.ident, 0)
+        if has_drw: nodes[da].name = i32(intern("draw"))
+        else: nodes[da].name = i32(intern("__no_draw"))
+        set_list(gc, [ua, da])
+        st2 := mk(.exprstmt, 0)
+        nodes[st2].a = i32(gc)
+        modules[mainm].inits.push(st2)
     prelude_init := new_inst(FK_INIT, 0, "init_prelude")
     fns[prelude_init].body = i32(mk(.block, 0))
     fns[prelude_init].ret = i32(T_VOID)
@@ -1360,7 +1393,7 @@ fn check_program(main_path: str):
         if not modules[m].is_prelude: init_fns.push(int(modules[m].init_fn))
     cx = -1
     if s := modules[mainm].names.get(intern("main")):
-        if syms[s].kind == .fns: main_fn = get_fn_inst(int(syms[s].decl), [], 0)
+        if syms[s].kind == .fns and not skip_main: main_fn = get_fn_inst(int(syms[s].decl), [], 0)
     if s := modules[mainm].names.get(intern("update")):
         if syms[s].kind == .fns: update_fn = get_fn_inst(int(syms[s].decl), [], 0)
     if s := modules[mainm].names.get(intern("draw")):

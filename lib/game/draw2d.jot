@@ -1,0 +1,463 @@
+# 2D drawing: batched shapes, textured sprites, SDF text, transforms, blend modes and
+# render targets. Coordinates are in pixels with (0, 0) at the top-left.
+
+struct Texture:
+    id: int
+    width: int
+    height: int
+
+struct RenderTarget:
+    texture: Texture
+    fbo: int
+    depth: int
+
+enum Blend: alpha, add, multiply, premultiplied
+
+const __VFLOATS = 9          # x, y, u, v, r, g, b, a, mode (0 color/texture, 1 sdf text)
+const __BATCH_MAX = 16384
+
+__g_init := false
+__b_buf: *f32 = null
+__b_count := 0
+__b_tex := 0
+__b_vbo := 0
+__b_vao := 0
+__b_prog := 0
+__b_loc_proj := 0
+__b_loc_tex := 0
+__white := Texture(0, 1, 1)
+__font_tex := Texture(0, 1, 1)
+__font_adv: [float]
+__font_cell := 48.0
+__font_px := 34.0
+__font_base := 36.0
+__font_spread := 6.0
+__proj := mat4()
+__xform := mat4()
+__xform_stack: [mat4]
+__target_w := 0
+__target_h := 0
+__cur_target := -1
+__blend := Blend.alpha
+
+const __VS2D = r"""
+#version 300 es
+precision highp float;
+layout(location=0) in vec2 a_pos;
+layout(location=1) in vec2 a_uv;
+layout(location=2) in vec4 a_color;
+layout(location=3) in float a_mode;
+uniform mat4 u_proj;
+out vec2 v_uv;
+out vec4 v_color;
+out float v_mode;
+void main() {
+    v_uv = a_uv;
+    v_color = a_color;
+    v_mode = a_mode;
+    gl_Position = u_proj * vec4(a_pos, 0.0, 1.0);
+}
+"""
+
+const __FS2D = r"""
+#version 300 es
+precision highp float;
+in vec2 v_uv;
+in vec4 v_color;
+in float v_mode;
+uniform sampler2D u_tex;
+out vec4 frag;
+void main() {
+    vec4 t = texture(u_tex, v_uv);
+    if (v_mode > 0.5) {
+        float d = t.r;
+        float w = max(fwidth(d), 0.02);
+        float a = smoothstep(0.5 - w, 0.5 + w, d);
+        frag = vec4(v_color.rgb, v_color.a * a);
+    } else {
+        frag = t * v_color;
+    }
+}
+"""
+
+fn __gfx_init():
+    if __g_init: return
+    __g_init = true
+    __b_prog = gl_create_program(__VS2D, __FS2D)
+    __b_loc_proj = gl_uniform_location(__b_prog, "u_proj")
+    __b_loc_tex = gl_uniform_location(__b_prog, "u_tex")
+    __b_buf = __alloc(__BATCH_MAX * __VFLOATS * 4) as *f32
+    __b_vao = gl_create_vertex_array()
+    glBindVertexArray(u32(__b_vao))
+    __b_vbo = gl_create_buffer()
+    glBindBuffer(GL_ARRAY_BUFFER, u32(__b_vbo))
+    glBufferData(GL_ARRAY_BUFFER, __BATCH_MAX * __VFLOATS * 4, null, GL_DYNAMIC_DRAW)
+    stride := __VFLOATS * 4
+    glEnableVertexAttribArray(0)
+    glVertexAttribPointer(0, 2, GL_FLOAT, 0, i32(stride), 0)
+    glEnableVertexAttribArray(1)
+    glVertexAttribPointer(1, 2, GL_FLOAT, 0, i32(stride), 8)
+    glEnableVertexAttribArray(2)
+    glVertexAttribPointer(2, 4, GL_FLOAT, 0, i32(stride), 16)
+    glEnableVertexAttribArray(3)
+    glVertexAttribPointer(3, 1, GL_FLOAT, 0, i32(stride), 32)
+    glBindVertexArray(0)
+    white := image(1, 1, vec4(1, 1, 1, 1))
+    __white = texture(white)
+    # default font (signed distance field atlas)
+    font_img := load_image(embed("assets/font.png"))
+    __font_tex = texture(font_img, true)
+    meta := lines(str_from_bytes(embed("assets/font.txt")))
+    head := words(meta[0])
+    __font_cell = to_float(head[0]) ?? 48.0
+    __font_base = to_float(head[3]) ?? 36.0
+    __font_spread = to_float(head[4]) ?? 6.0
+    __font_px = to_float(head[5]) ?? 34.0
+    for a in words(meta[1]): __font_adv.push(to_float(a) ?? 10.0)
+
+fn __gfx_begin_frame():
+    __gfx_init()
+    __cur_target = -1
+    __set_target_size(__win_w, __win_h)
+    glBindFramebuffer(GL_FRAMEBUFFER, 0)
+    glViewport(0, 0, i32(__win_w), i32(__win_h))
+    __xform = mat4()
+    __xform_stack.clear()
+    __apply_blend(.alpha)
+    glDisable(GL_DEPTH_TEST)
+    glDisable(GL_CULL_FACE)
+
+fn __gfx_end_frame(): flush()
+
+fn __set_target_size(w: int, h: int):
+    __target_w = w
+    __target_h = h
+    __proj = orthographic(0.0, float(w), float(h), 0.0, -1.0, 1.0)
+
+# ---------------- textures ----------------
+# upload an image to the GPU
+fn texture(img: Image, smooth: bool = true) -> Texture:
+    __gfx_init_gl_only()
+    id := gl_create_texture()
+    glBindTexture(GL_TEXTURE_2D, u32(id))
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+    gl_tex_image(img.width, img.height, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, data(img.pixels), img.pixels.len())
+    f := GL_NEAREST
+    if smooth: f = GL_LINEAR
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, i32(f))
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, i32(f))
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, i32(GL_CLAMP_TO_EDGE))
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, i32(GL_CLAMP_TO_EDGE))
+    Texture(id, img.width, img.height)
+
+fn __gfx_init_gl_only():
+    if not __win_open: window(__win_title, __win_w, __win_h)
+
+fn set_repeat(t: Texture, on: bool):
+    glBindTexture(GL_TEXTURE_2D, u32(t.id))
+    m := GL_CLAMP_TO_EDGE
+    if on: m = GL_REPEAT
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, i32(m))
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, i32(m))
+
+fn update_texture(t: Texture, img: Image):
+    flush()
+    glBindTexture(GL_TEXTURE_2D, u32(t.id))
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+    gl_tex_sub_image(0, 0, img.width, img.height, GL_RGBA, GL_UNSIGNED_BYTE, data(img.pixels), img.pixels.len())
+
+fn load_texture(file: [u8], smooth: bool = true) -> Texture: texture(load_image(file), smooth)
+
+# ---------------- render targets ----------------
+__targets: [RenderTarget]
+
+fn render_target(w: int, h: int, smooth: bool = true) -> RenderTarget:
+    __gfx_init_gl_only()
+    tex := texture(image(w, h), smooth)
+    fbo := gl_create_framebuffer()
+    glBindFramebuffer(GL_FRAMEBUFFER, u32(fbo))
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, u32(tex.id), 0)
+    rb := gl_create_renderbuffer()
+    glBindRenderbuffer(GL_RENDERBUFFER, u32(rb))
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, i32(w), i32(h))
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, u32(rb))
+    glBindFramebuffer(GL_FRAMEBUFFER, 0)
+    RenderTarget(tex, fbo, rb)
+
+# draw into a render target until draw_to_screen() is called
+fn draw_to(rt: RenderTarget):
+    flush()
+    glBindFramebuffer(GL_FRAMEBUFFER, u32(rt.fbo))
+    glViewport(0, 0, i32(rt.texture.width), i32(rt.texture.height))
+    __set_target_size(rt.texture.width, rt.texture.height)
+    __cur_target = rt.fbo
+
+fn draw_to_screen():
+    flush()
+    glBindFramebuffer(GL_FRAMEBUFFER, 0)
+    glViewport(0, 0, i32(__win_w), i32(__win_h))
+    __set_target_size(__win_w, __win_h)
+    __cur_target = -1
+
+# ---------------- state ----------------
+fn clear(c: vec4 = vec4(0, 0, 0, 1)):
+    flush()
+    glClearColor(c.x, c.y, c.z, c.w)
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+
+fn __apply_blend(b: Blend):
+    glEnable(GL_BLEND)
+    match b:
+        alpha: glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+        add: glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+        multiply: glBlendFunc(GL_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA)
+        premultiplied: glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+    __blend = b
+
+fn blend(b: Blend):
+    if b == __blend: return
+    flush()
+    __apply_blend(b)
+
+fn push_transform(): __xform_stack.push(__xform)
+fn pop_transform():
+    if __xform_stack.len() > 0: __xform = __xform_stack.pop()
+fn translate(x: float, y: float): __xform = __xform * translation(vec3(f32(x), f32(y), 0))
+fn rotate(angle: float): __xform = __xform * rotation_z(angle)
+fn scale(sx: float, sy: float): __xform = __xform * scaling(vec3(f32(sx), f32(sy), 1))
+fn reset_transform(): __xform = mat4()
+
+# 2D camera: `target` appears at the screen center, scaled by zoom
+fn camera2d(target: vec2, zoom: float = 1.0, angle: float = 0.0):
+    __xform = mat4()
+    translate(float(__target_w) / 2.0, float(__target_h) / 2.0)
+    rotate(angle)
+    scale(zoom, zoom)
+    translate(-float(target.x), -float(target.y))
+
+# convert a screen position to world coordinates under the current transform
+fn screen_to_world(p: vec2) -> vec2:
+    w := inverse(__xform) * vec4(p, 0, 1)
+    vec2(w.x, w.y)
+
+# ---------------- batching ----------------
+fn flush():
+    if __b_count == 0: return
+    glUseProgram(u32(__b_prog))
+    glUniformMatrix4fv(i32(__b_loc_proj), 1, 0, (&__proj) as *u8)
+    glActiveTexture(GL_TEXTURE0)
+    glBindTexture(GL_TEXTURE_2D, u32(__b_tex))
+    glUniform1i(i32(__b_loc_tex), 0)
+    glBindVertexArray(u32(__b_vao))
+    glBindBuffer(GL_ARRAY_BUFFER, u32(__b_vbo))
+    glBufferSubData(GL_ARRAY_BUFFER, 0, __b_count * __VFLOATS * 4, __b_buf as *u8)
+    glDrawArrays(GL_TRIANGLES, 0, i32(__b_count))
+    glBindVertexArray(0)
+    __b_count = 0
+
+fn __use_tex(id: int, nverts: int):
+    if id != __b_tex or __b_count + nverts > __BATCH_MAX:
+        flush()
+        __b_tex = id
+
+fn __v(p: vec2, uv: vec2, c: vec4, mode: f32):
+    q := __xform * vec4(p, 0, 1)
+    o := __b_buf + __b_count * __VFLOATS
+    o[0] = q.x
+    o[1] = q.y
+    o[2] = uv.x
+    o[3] = uv.y
+    o[4] = c.x
+    o[5] = c.y
+    o[6] = c.z
+    o[7] = c.w
+    o[8] = mode
+    __b_count += 1
+
+fn __quad(a: vec2, b: vec2, c: vec2, d: vec2, ua: vec2, ub: vec2, uc: vec2, ud: vec2, col: vec4, mode: f32):
+    __v(a, ua, col, mode)
+    __v(b, ub, col, mode)
+    __v(c, uc, col, mode)
+    __v(a, ua, col, mode)
+    __v(c, uc, col, mode)
+    __v(d, ud, col, mode)
+
+# ---------------- shapes ----------------
+fn rect(x: float, y: float, w: float, h: float, c: vec4):
+    __use_tex(__white.id, 6)
+    z := vec2(0, 0)
+    __quad(vec2(f32(x), f32(y)), vec2(f32(x + w), f32(y)), vec2(f32(x + w), f32(y + h)), vec2(f32(x), f32(y + h)), z, z, z, z, c, 0)
+
+fn rect(pos: vec2, size: vec2, c: vec4): rect(float(pos.x), float(pos.y), float(size.x), float(size.y), c)
+
+# rectangle with a vertical color gradient
+fn rect_gradient(x: float, y: float, w: float, h: float, top: vec4, bottom: vec4):
+    __use_tex(__white.id, 6)
+    z := vec2(0, 0)
+    a := vec2(f32(x), f32(y))
+    b := vec2(f32(x + w), f32(y))
+    cc := vec2(f32(x + w), f32(y + h))
+    d := vec2(f32(x), f32(y + h))
+    __v(a, z, top, 0)
+    __v(b, z, top, 0)
+    __v(cc, z, bottom, 0)
+    __v(a, z, top, 0)
+    __v(cc, z, bottom, 0)
+    __v(d, z, bottom, 0)
+
+fn rect_outline(x: float, y: float, w: float, h: float, thickness: float, c: vec4):
+    rect(x, y, w, thickness, c)
+    rect(x, y + h - thickness, w, thickness, c)
+    rect(x, y + thickness, thickness, h - 2.0 * thickness, c)
+    rect(x + w - thickness, y + thickness, thickness, h - 2.0 * thickness, c)
+
+fn triangle(a: vec2, b: vec2, c: vec2, col: vec4):
+    __use_tex(__white.id, 3)
+    z := vec2(0, 0)
+    __v(a, z, col, 0)
+    __v(b, z, col, 0)
+    __v(c, z, col, 0)
+
+fn circle(center: vec2, radius: float, c: vec4, segments: int = 0):
+    n := segments
+    if n <= 0: n = clamp(int(radius * 0.8) + 12, 12, 96)
+    __use_tex(__white.id, n * 3)
+    z := vec2(0, 0)
+    prev := center + vec2(f32(radius), 0)
+    for i in 1..n + 1:
+        a := TAU * float(i) / float(n)
+        p := center + vec2(f32(cos(a) * radius), f32(sin(a) * radius))
+        __v(center, z, c, 0)
+        __v(prev, z, c, 0)
+        __v(p, z, c, 0)
+        prev = p
+
+# circle that fades from `inner` color at the center to `outer` at the edge (glows, soft lights)
+fn circle_gradient(center: vec2, radius: float, inner: vec4, outer: vec4, segments: int = 48):
+    __use_tex(__white.id, segments * 3)
+    z := vec2(0, 0)
+    prev := center + vec2(f32(radius), 0)
+    for i in 1..segments + 1:
+        a := TAU * float(i) / float(segments)
+        p := center + vec2(f32(cos(a) * radius), f32(sin(a) * radius))
+        __v(center, z, inner, 0)
+        __v(prev, z, outer, 0)
+        __v(p, z, outer, 0)
+        prev = p
+
+fn ring(center: vec2, radius: float, thickness: float, c: vec4, segments: int = 48):
+    __use_tex(__white.id, segments * 6)
+    z := vec2(0, 0)
+    r0 := radius - thickness / 2.0
+    r1 := radius + thickness / 2.0
+    for i in 0..segments:
+        a0 := TAU * float(i) / float(segments)
+        a1 := TAU * float(i + 1) / float(segments)
+        d0 := vec2(f32(cos(a0)), f32(sin(a0)))
+        d1 := vec2(f32(cos(a1)), f32(sin(a1)))
+        __quad(center + d0 * f32(r0), center + d0 * f32(r1), center + d1 * f32(r1), center + d1 * f32(r0), z, z, z, z, c, 0)
+
+fn line(a: vec2, b: vec2, thickness: float, c: vec4):
+    d := b - a
+    l := length(d)
+    if l == 0.0: return
+    n := perp(d / l) * f32(thickness / 2.0)
+    __use_tex(__white.id, 6)
+    z := vec2(0, 0)
+    __quad(a + n, b + n, b - n, a - n, z, z, z, z, c, 0)
+
+fn polyline(points: [vec2], thickness: float, c: vec4, closed: bool = false):
+    for i in 0..points.len() - 1: line(points[i], points[i + 1], thickness, c)
+    if closed and points.len() > 2: line(points[points.len() - 1], points[0], thickness, c)
+
+# convex polygon (triangle fan)
+fn polygon(points: [vec2], c: vec4):
+    if points.len() < 3: return
+    __use_tex(__white.id, (points.len() - 2) * 3)
+    z := vec2(0, 0)
+    for i in 1..points.len() - 1:
+        __v(points[0], z, c, 0)
+        __v(points[i], z, c, 0)
+        __v(points[i + 1], z, c, 0)
+
+# ---------------- sprites ----------------
+# draw a texture at `pos` (top-left), optionally scaled, rotated around its center and tinted
+fn sprite(t: Texture, pos: vec2, size: vec2 = vec2(0, 0), tint: vec4 = vec4(1, 1, 1, 1), angle: float = 0.0):
+    sz := size
+    if sz.x == 0.0 and sz.y == 0.0: sz = vec2(f32(t.width), f32(t.height))
+    sprite_region(t, vec4(0, 0, f32(t.width), f32(t.height)), pos + sz * 0.5, sz, tint, angle)
+
+# draw part of a texture (src = x, y, w, h in pixels) centered at `center`
+fn sprite_region(t: Texture, src: vec4, center: vec2, size: vec2, tint: vec4 = vec4(1, 1, 1, 1), angle: float = 0.0):
+    __use_tex(t.id, 6)
+    tw := f32(t.width)
+    th := f32(t.height)
+    u0 := src.x / tw
+    v0 := src.y / th
+    u1 := (src.x + src.z) / tw
+    v1 := (src.y + src.w) / th
+    h := size * 0.5
+    a := vec2(-h.x, -h.y)
+    b := vec2(h.x, -h.y)
+    c := vec2(h.x, h.y)
+    d := vec2(-h.x, h.y)
+    if angle != 0.0:
+        a = rotate(a, angle)
+        b = rotate(b, angle)
+        c = rotate(c, angle)
+        d = rotate(d, angle)
+    __quad(center + a, center + b, center + c, center + d, vec2(u0, v0), vec2(u1, v0), vec2(u1, v1), vec2(u0, v1), tint, 0)
+
+# draw a render target's texture (flipped: render targets are stored bottom-up)
+fn draw_target(rt: RenderTarget, pos: vec2 = vec2(0, 0), size: vec2 = vec2(0, 0), tint: vec4 = vec4(1, 1, 1, 1)):
+    t := rt.texture
+    sz := size
+    if sz.x == 0.0: sz = vec2(f32(t.width), f32(t.height))
+    __use_tex(t.id, 6)
+    __quad(pos, pos + vec2(sz.x, 0), pos + sz, pos + vec2(0, sz.y), vec2(0, 1), vec2(1, 1), vec2(1, 0), vec2(0, 0), tint, 0)
+
+# ---------------- text ----------------
+fn text_width(s: str, size: float = 20.0) -> float:
+    __gfx_init()
+    k := size / __font_px
+    w := 0.0
+    for ch in s:
+        c := int(ch)
+        if c >= 32 and c < 127: w += __font_adv[c - 32] * k
+    w
+
+# draw text with its top-left corner at `pos`
+fn text(s: str, pos: vec2, size: float = 20.0, color: vec4 = vec4(1, 1, 1, 1)):
+    __gfx_init()
+    __use_tex(__font_tex.id, len(s) * 6)
+    k := f32(size / __font_px)
+    cell := f32(__font_cell)
+    pad := f32(__font_spread)
+    atlas_w := f32(__font_tex.width)
+    atlas_h := f32(__font_tex.height)
+    x := pos.x
+    y := pos.y + f32(size * 0.82) - f32(__font_base) * k
+    for ch in s:
+        c := int(ch)
+        if c == '\n':
+            x = pos.x
+            y += f32(size * 1.25)
+            continue
+        if c < 32 or c >= 127: continue
+        gi := c - 32
+        if c != ' ':
+            col := f32(gi % 16)
+            row := f32(gi / 16)
+            u0 := col * cell / atlas_w
+            v0 := row * cell / atlas_h
+            u1 := (col + 1.0) * cell / atlas_w
+            v1 := (row + 1.0) * cell / atlas_h
+            x0 := x - pad * k
+            y0 := y
+            s_ := cell * k
+            __quad(vec2(x0, y0), vec2(x0 + s_, y0), vec2(x0 + s_, y0 + s_), vec2(x0, y0 + s_), vec2(u0, v0), vec2(u1, v0), vec2(u1, v1), vec2(u0, v1), color, 1)
+        x += f32(__font_adv[gi]) * k
+
+# text centered horizontally at `center`
+fn text_centered(s: str, center: vec2, size: float = 20.0, color: vec4 = vec4(1, 1, 1, 1)):
+    text(s, center - vec2(f32(text_width(s, size) / 2.0), f32(size / 2.0)), size, color)

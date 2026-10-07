@@ -82,7 +82,14 @@ fn compile(path: str, out0: str) -> str:
     i := 0
     while i < lfuncs.len():
         if lfuncs[i].kind == LK_INST and fns[lfuncs[i].inst].decl != 0 and has_flag(int(fns[lfuncs[i].inst].decl), NF_EXTERN):
-            if not target_wasm: fatal(nodes[int(fns[lfuncs[i].inst].decl)].pos, "extern functions are only available when targeting wasm")
+            fi := lfuncs[i].inst
+            if target_wasm:
+                i += 1
+                continue
+            if len(fns[fi].clib) == 0: fatal(nodes[int(fns[fi].decl)].pos, "extern functions need @lib(\"library.so\") on native targets")
+            lower_extern_thunk(i, fi)
+            if dump: dump_ir()
+            x64_function()
             i += 1
             continue
         lower_function(i)

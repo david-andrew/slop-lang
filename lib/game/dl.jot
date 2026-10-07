@@ -321,3 +321,24 @@ fn dl_sym(lib: *u8, name: str) -> *u8:
 fn dl_error() -> str:
     if not dl_ready: return "dynamic loading unavailable"
     __cstr(dl_error_fn())
+
+# resolve a C function for `@lib(...) extern fn` declarations (called on first use)
+fn __ffi_resolve(lib: str, name: str) -> *u8:
+    h := __lib_handle(lib)
+    if h == null: panic("cannot load library {lib} (needed for {name}): {dl_error()}")
+    p := dl_sym(h, name)
+    if p == null: panic("function {name} not found in {lib}")
+    p
+
+__lib_names: [str]
+__lib_handles: [*u8]
+fn __lib_handle(lib: str) -> *u8:
+    for i, n in __lib_names:
+        if n == lib: return __lib_handles[i]
+    h := dl_open(lib)
+    __lib_names.push(lib)
+    __lib_handles.push(h)
+    h
+
+# true if the library can be loaded on this system
+fn lib_available(lib: str) -> bool: __lib_handle(lib) != null

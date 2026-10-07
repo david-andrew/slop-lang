@@ -282,6 +282,9 @@ fn check_place(n: int, for_mut: bool):
         bk := types[bt].kind
         if bk == .ptr: return
         if bk == .str_: fatal(nodes[n].pos, "strings are immutable")
+        if bk == .vec:
+            check_place(int(nodes[n].a), for_mut)
+            return
         if bk != .array: fatal(nodes[n].pos, "cannot assign to this index expression")
         if nodes[n].aux == 1: fatal(nodes[n].pos, "cannot assign to a slice")
         check_place(int(nodes[n].a), for_mut)
@@ -486,8 +489,10 @@ fn arg_cost(a: int, pat: int, binds: mut [int]) -> int:
                 return 1
             return -1
         if pk == .float_:
-            if nodes[a].kind == .int_lit: return 1
-            if p == T_FLOAT: return 0
+            if p == T_FLOAT:
+                if nodes[a].kind == .int_lit: return 1
+                return 0
+            if nodes[a].kind == .int_lit: return 2
             return 1
         if pk == .opt and is_numeric(int(types[p].elem)): return 2
         if pk == .vec: return -1
@@ -608,12 +613,17 @@ fn resolve_fn_call(n: int, name: int, decls: [int], args: [int], expected: int) 
         cd.ok = true
         cd.cost = cost
         cands.push(cd)
-        ci := cands.len() - 1
-        if best < 0 or cost < cands[best].cost: best = ci
-        else if cost == cands[best].cost:
-            if cands[best].sig.generic and not cd.sig.generic: best = ci
-            else if cands[best].sig.generic == cd.sig.generic:
-                fatal(nodes[n].pos, "ambiguous call to '{name_of(name)}': candidates at {pos_str(nodes[cands[best].decl].pos)} and {pos_str(nodes[d].pos)}")
+    # pick the cheapest candidate; prefer non-generic ones; report real ties
+    for ci, cd in cands:
+        if best < 0 or cd.cost < cands[best].cost or (cd.cost == cands[best].cost and cands[best].sig.generic and not cd.sig.generic): best = ci
+    if best >= 0:
+        for ci, cd in cands:
+            if ci != best and cd.cost == cands[best].cost and cd.sig.generic == cands[best].sig.generic:
+                ats := ""
+                for ai, a0 in args:
+                    if ai > 0: ats += ", "
+                    if nodes[unnamed(a0)].type != 0: ats += type_str(ntype(unnamed(a0)))
+                fatal(nodes[n].pos, "ambiguous call to '{name_of(name)}({ats})': candidates at {pos_str(nodes[cands[best].decl].pos)} and {pos_str(nodes[cd.decl].pos)}")
     if best < 0:
         if decls.len() == 1:
             if len(last_err) == 0: last_err = "arguments do not match"
@@ -792,9 +802,10 @@ fn variant_ctor(n: int, et: int, vi: int, args: [int]) -> int:
     et
 
 fn conversion(n: int, to0: int, args: [int]) -> int:
-    if args.len() != 1 or nodes[args[0]].kind == .namedarg: fatal(nodes[n].pos, "{type_str(to0)}(...) takes one argument")
     to := prune(to0)
     tk := types[to].kind
+    if tk == .vec: return check_vec_ctor(n, to, args)
+    if args.len() != 1 or nodes[args[0]].kind == .namedarg: fatal(nodes[n].pos, "{type_str(to0)}(...) takes one argument")
     if tk == .str_:
         part := mk(.pair, nodes[n].pos)
         nodes[part].a = i32(args[0])
@@ -802,7 +813,6 @@ fn conversion(n: int, to0: int, args: [int]) -> int:
         nodes[n] = Node(kind = .str_lit, pos = nodes[n].pos, aux = 1)
         set_list(n, [part])
         return check_expr(n, 0)
-    if tk == .vec: return check_vec_ctor(n, to, args)
     a := args[0]
     check_expr(a, 0)
     ft := prune(ntype(a))
@@ -1330,7 +1340,7 @@ fn check_binary(n: int, expected: int) -> int:
             nodes[n].type = i32(T_BOOL)
             return T_BOOL
         fatal(nodes[n].pos, "operator {opn} is not defined for {type_str(ta)} and {type_str(tb)}")
-    if is_shift:
+    if is_shift and not (is_lit(a) and is_lit(b)):
         finalize_literal(a)
         finalize_literal(b)
         ta = prune(ntype(a))
@@ -1407,29 +1417,47 @@ fn check_binary(n: int, expected: int) -> int:
     if not is_numeric(ta) or not is_numeric(tb):
         if tka == .opt and is_numeric(int(types[ta].elem)): fatal(nodes[n].pos, "operator {tok_text(op)} on an optional value: unwrap it first with `x!` or `x ?? default`")
         fatal(nodes[n].pos, "operator {tok_text(op)} is not defined for {type_str(ta)} and {type_str(tb)}")
+    if is_lit(a) and is_lit(b) and not is_cmp:
+        # fold literal arithmetic, keeping the result an untyped literal
+        if nodes[a].kind == .int_lit and nodes[b].kind == .int_lit:
+            x := nodes[a].ival
+            y := nodes[b].ival
+            v := 0
+            ok := true
+            if op == .plus: v = x + y
+            else if op == .minus: v = x - y
+            else if op == .star: v = x * y
+            else if op == .slash:
+                if y == 0: ok = false
+                else: v = x / y
+            else if op == .percent:
+                if y == 0: ok = false
+                else: v = x % y
+            else if op == .amp: v = x & y
+            else if op == .pipe: v = x | y
+            else if op == .caret: v = x ^ y
+            else if op == .shl: v = x << y
+            else if op == .shr: v = x >> y
+            else: ok = false
+            if ok:
+                nodes[n] = Node(kind = .int_lit, pos = nodes[n].pos, ival = v, flags = i32(NF_LITERAL | NF_CHECKED), type = i32(T_INT))
+                return T_INT
+        else if op == .plus or op == .minus or op == .star or op == .slash:
+            x := nodes[a].fval
+            if nodes[a].kind == .int_lit: x = float(nodes[a].ival)
+            y := nodes[b].fval
+            if nodes[b].kind == .int_lit: y = float(nodes[b].ival)
+            v := 0.0
+            if op == .plus: v = x + y
+            else if op == .minus: v = x - y
+            else if op == .star: v = x * y
+            else: v = x / y
+            nodes[n] = Node(kind = .float_lit, pos = nodes[n].pos, fval = v, flags = i32(NF_LITERAL | NF_CHECKED), type = i32(T_FLOAT))
+            return T_FLOAT
     j := join_types(a, b, nodes[n].pos)
     if (op == .amp or op == .pipe or op == .caret) and not is_int(j): fatal(nodes[n].pos, "bitwise operators need integers")
     if is_cmp: nodes[n].type = i32(T_BOOL)
     else: nodes[n].type = i32(j)
-    if not is_cmp and is_lit(a) and is_lit(b) and nodes[a].kind == .int_lit and nodes[b].kind == .int_lit:
-        x := nodes[a].ival
-        y := nodes[b].ival
-        v := 0
-        ok := true
-        if op == .plus: v = x + y
-        else if op == .minus: v = x - y
-        else if op == .star: v = x * y
-        else if op == .slash:
-            if y == 0: ok = false
-            else: v = x / y
-        else if op == .percent:
-            if y == 0: ok = false
-            else: v = x % y
-        else if op == .amp: v = x & y
-        else if op == .pipe: v = x | y
-        else if op == .caret: v = x ^ y
-        else: ok = false
-        if ok: nodes[n] = Node(kind = .int_lit, pos = nodes[n].pos, ival = v, flags = i32(NF_LITERAL | NF_CHECKED), type = i32(T_INT))
     ntype(n)
 
 fn check_vec_binary(n: int, op: Tok, ta: int, tb: int) -> int:
@@ -1972,11 +2000,20 @@ fn check_expr(n: int, expected: int) -> int:
     else if k == .iflet: t = check_iflet(n, ex)
     else if k == .match_: t = check_match(n, expected)
     else if k == .cast:
-        check_expr(int(nodes[n].a), 0)
-        finalize_literal(int(nodes[n].a))
         a := int(nodes[n].a)
-        ft := prune(ntype(a))
         tt := prune(resolve_type(int(nodes[n].b)))
+        ak := nodes[a].kind
+        if ak == .array or ak == .map_lit or ak == .tuple or ((ak == .int_lit or ak == .float_lit) and (is_numeric(tt))):
+            # `[1, 2] as [u8]`, `0.5 as f32`: the target type guides the literal
+            check_expr(a, tt)
+            if can_coerce(a, ntype(a), tt):
+                coerce(a, tt)
+                nodes[n] = nodes[a]
+                last_checked = n
+                return tt
+        check_expr(a, 0)
+        finalize_literal(a)
+        ft := prune(ntype(a))
         if has_var(ft) and unify(ft, tt):
             nodes[n] = nodes[a]
             last_checked = n

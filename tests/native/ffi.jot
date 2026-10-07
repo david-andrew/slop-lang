@@ -1,0 +1,8 @@
+@lib("libc.so.6")
+extern fn getpid() -> i32
+@lib("libc.so.6")
+extern fn abs(x: i32) -> i32
+@lib("libm.so.6")
+extern fn cbrt(x: float) -> float
+print(int(getpid()) == syscall(39), abs(-42), cbrt(27.0))
+print(lib_available("libGLESv2.so.2"), lib_available("libnonexistent.so.9"))

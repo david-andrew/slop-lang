@@ -1,0 +1,397 @@
+# Windows, the frame loop and input. Native: X11 + EGL (OpenGL ES 3) loaded from the
+# system at runtime. Web: a <canvas> with WebGL2 driven by requestAnimationFrame.
+
+enum Key:
+    unknown, a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z,
+    n0, n1, n2, n3, n4, n5, n6, n7, n8, n9,
+    space, enter, escape, tab, backspace, delete, insert, home, end, page_up, page_down,
+    left, right, up, down, shift, ctrl, alt, super,
+    f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12,
+    minus, equals, comma, period, slash, semicolon, quote, lbracket, rbracket, backslash, grave
+
+enum Mouse: left, middle, right
+
+const __NKEYS = 128
+
+__win_open := false
+__win_w := 1280
+__win_h := 720
+__win_title := "jot"
+__win_close := false
+__key_down: [bool]
+__key_pressed: [bool]
+__key_released: [bool]
+__mouse_x := 0.0
+__mouse_y := 0.0
+__mouse_dx := 0.0
+__mouse_dy := 0.0
+__mouse_wheel := 0.0
+__mouse_btn: [bool]
+__mouse_pressed: [bool]
+__mouse_released: [bool]
+__text_input := ""
+__time0 := 0.0
+__frame_count := 0
+__dt := 0.0
+__fps := 0.0
+
+fn __input_init():
+    if __key_down.len() == 0:
+        __key_down = [false; __NKEYS]
+        __key_pressed = [false; __NKEYS]
+        __key_released = [false; __NKEYS]
+        __mouse_btn = [false; 8]
+        __mouse_pressed = [false; 8]
+        __mouse_released = [false; 8]
+
+fn __key_event(k: int, down: bool):
+    if k <= 0 or k >= __NKEYS: return
+    if down:
+        if not __key_down[k]: __key_pressed[k] = true
+        __key_down[k] = true
+    else:
+        if __key_down[k]: __key_released[k] = true
+        __key_down[k] = false
+
+fn __mouse_event(b: int, down: bool):
+    if b < 0 or b >= 8: return
+    if down:
+        if not __mouse_btn[b]: __mouse_pressed[b] = true
+        __mouse_btn[b] = true
+    else:
+        if __mouse_btn[b]: __mouse_released[b] = true
+        __mouse_btn[b] = false
+
+fn __input_end_frame():
+    for mut x in __key_pressed: x = false
+    for mut x in __key_released: x = false
+    for mut x in __mouse_pressed: x = false
+    for mut x in __mouse_released: x = false
+    __mouse_dx = 0.0
+    __mouse_dy = 0.0
+    __mouse_wheel = 0.0
+    __text_input = ""
+
+# ---------------- public input API ----------------
+# true while the key is held
+fn key_down(k: Key) -> bool:
+    __input_init()
+    __key_down[int(k)]
+# true only in the frame the key was pressed
+fn key_pressed(k: Key) -> bool:
+    __input_init()
+    __key_pressed[int(k)]
+fn key_released(k: Key) -> bool:
+    __input_init()
+    __key_released[int(k)]
+fn mouse_pos() -> vec2: vec2(__mouse_x, __mouse_y)
+fn mouse_delta() -> vec2: vec2(__mouse_dx, __mouse_dy)
+fn mouse_wheel() -> float: __mouse_wheel
+fn mouse_down(b: Mouse) -> bool:
+    __input_init()
+    __mouse_btn[int(b)]
+fn mouse_pressed(b: Mouse) -> bool:
+    __input_init()
+    __mouse_pressed[int(b)]
+fn mouse_released(b: Mouse) -> bool:
+    __input_init()
+    __mouse_released[int(b)]
+# characters typed this frame
+fn text_input() -> str: __text_input
+
+# arrows/WASD as a direction vector (y down)
+fn input_axis() -> vec2:
+    v := vec2(0, 0)
+    if key_down(.left) or key_down(.a): v.x -= 1
+    if key_down(.right) or key_down(.d): v.x += 1
+    if key_down(.up) or key_down(.w): v.y -= 1
+    if key_down(.down) or key_down(.s): v.y += 1
+    v
+
+fn screen_width() -> int: __win_w
+fn screen_height() -> int: __win_h
+fn screen_size() -> vec2: vec2(f32(__win_w), f32(__win_h))
+fn frame_time() -> float: __dt
+fn fps() -> float: __fps
+fn elapsed() -> float: time() - __time0
+fn frame_number() -> int: __frame_count
+fn quit(): __win_close = true
+
+# Open the game window (called automatically when the program defines update/draw).
+fn window(title: str = "jot", width: int = 1280, height: int = 720):
+    __win_title = title
+    __win_w = width
+    __win_h = height
+    __input_init()
+    if __win_open: return
+    __platform_open()
+    __win_open = true
+    __time0 = time()
+
+when TARGET == "wasm":
+    extern fn __web_canvas_open(title: *u8, title_len: i32, w: i32, h: i32)
+    extern fn __web_canvas_size(out: *i32)
+
+    fn __platform_open(): __web_canvas_open(data(__win_title), i32(len(__win_title)), i32(__win_w), i32(__win_h))
+
+    # the page calls this every animation frame
+    __web_update: fn(float) = __no_update
+    __web_draw: fn() = __no_draw
+    __web_last := -1.0
+
+    @export("__frame")
+    fn __web_frame(now_ms: float):
+        now := now_ms / 1000.0
+        dt := 0.016
+        if __web_last >= 0.0: dt = clamp(now - __web_last, 0.0, 0.1)
+        __web_last = now
+        sz: (i32, i32)
+        __web_canvas_size(&sz as *i32)
+        __win_w = int(sz.0)
+        __win_h = int(sz.1)
+        __run_frame(dt, __web_update, __web_draw)
+
+    @export("__key")
+    fn __web_key(k: i32, down: i32): __key_event(int(k), down != 0)
+
+    @export("__mouse")
+    fn __web_mouse(kind: i32, x: f32, y: f32, b: i32):
+        if kind == 0:
+            __mouse_dx += float(x) - __mouse_x
+            __mouse_dy += float(y) - __mouse_y
+            __mouse_x = float(x)
+            __mouse_y = float(y)
+        else if kind == 1: __mouse_event(int(b), true)
+        else if kind == 2: __mouse_event(int(b), false)
+        else if kind == 3: __mouse_wheel += float(y)
+
+    @export("__char")
+    fn __web_char(c: i32): __text_input += chr(int(c))
+
+    fn __game_run(update: fn(float), draw: fn()):
+        window(__win_title, __win_w, __win_h)
+        __web_update = update
+        __web_draw = draw
+else:
+    @lib("libX11.so.6")
+    extern fn XOpenDisplay(name: *u8) -> *u8
+    @lib("libX11.so.6")
+    extern fn XDefaultScreen(d: *u8) -> i32
+    @lib("libX11.so.6")
+    extern fn XRootWindow(d: *u8, screen: i32) -> int
+    @lib("libX11.so.6")
+    extern fn XCreateSimpleWindow(d: *u8, parent: int, x: i32, y: i32, w: u32, h: u32, bw: u32, border: int, bg: int) -> int
+    @lib("libX11.so.6")
+    extern fn XStoreName(d: *u8, w: int, name: *u8) -> i32
+    @lib("libX11.so.6")
+    extern fn XSelectInput(d: *u8, w: int, mask: int) -> i32
+    @lib("libX11.so.6")
+    extern fn XMapWindow(d: *u8, w: int) -> i32
+    @lib("libX11.so.6")
+    extern fn XInternAtom(d: *u8, name: *u8, only_if_exists: i32) -> int
+    @lib("libX11.so.6")
+    extern fn XSetWMProtocols(d: *u8, w: int, protocols: *int, count: i32) -> i32
+    @lib("libX11.so.6")
+    extern fn XPending(d: *u8) -> i32
+    @lib("libX11.so.6")
+    extern fn XNextEvent(d: *u8, ev: *u8) -> i32
+    @lib("libX11.so.6")
+    extern fn XLookupKeysym(ev: *u8, index: i32) -> int
+    @lib("libX11.so.6")
+    extern fn XLookupString(ev: *u8, buf: *u8, n: i32, keysym: *int, status: *u8) -> i32
+    @lib("libX11.so.6")
+    extern fn XFlush(d: *u8) -> i32
+    @lib("libX11.so.6")
+    extern fn XSetWMNormalHints(d: *u8, w: int, hints: *u8)
+
+    @lib("libEGL.so.1")
+    extern fn eglGetDisplay(native: *u8) -> *u8
+    @lib("libEGL.so.1")
+    extern fn eglGetPlatformDisplay(platform: u32, native: *u8, attribs: *int) -> *u8
+    @lib("libEGL.so.1")
+    extern fn eglInitialize(d: *u8, major: *i32, minor: *i32) -> u32
+    @lib("libEGL.so.1")
+    extern fn eglBindAPI(api: u32) -> u32
+    @lib("libEGL.so.1")
+    extern fn eglChooseConfig(d: *u8, attribs: *i32, configs: **u8, size: i32, num: *i32) -> u32
+    @lib("libEGL.so.1")
+    extern fn eglCreateWindowSurface(d: *u8, config: *u8, win: int, attribs: *i32) -> *u8
+    @lib("libEGL.so.1")
+    extern fn eglCreatePlatformWindowSurface(d: *u8, config: *u8, win: *int, attribs: *int) -> *u8
+    @lib("libEGL.so.1")
+    extern fn eglCreateContext(d: *u8, config: *u8, share: *u8, attribs: *i32) -> *u8
+    @lib("libEGL.so.1")
+    extern fn eglMakeCurrent(d: *u8, draw: *u8, read: *u8, ctx: *u8) -> u32
+    @lib("libEGL.so.1")
+    extern fn eglSwapBuffers(d: *u8, surf: *u8) -> u32
+    @lib("libEGL.so.1")
+    extern fn eglSwapInterval(d: *u8, interval: i32) -> u32
+    @lib("libEGL.so.1")
+    extern fn eglGetError() -> i32
+
+    __xdpy: *u8 = null
+    __xwin := 0
+    __wm_delete := 0
+    __egl_dpy: *u8 = null
+    __egl_surf: *u8 = null
+    __xev: *u8 = null
+
+    fn __need(ok: bool, what: str):
+        if not ok: panic("cannot open a window: {what}")
+
+    fn __platform_open():
+        __need(lib_available("libX11.so.6"), "libX11 is not available")
+        __need(lib_available("libEGL.so.1") and lib_available("libGLESv2.so.2"), "no OpenGL ES driver (libEGL/libGLESv2) found")
+        __xdpy = XOpenDisplay(null)
+        __need(__xdpy != null, "cannot connect to the X server (is DISPLAY set?)")
+        scr := XDefaultScreen(__xdpy)
+        root := XRootWindow(__xdpy, scr)
+        __xwin = XCreateSimpleWindow(__xdpy, root, 0, 0, u32(__win_w), u32(__win_h), 0, 0, 0)
+        XStoreName(__xdpy, __xwin, data(__zstr(__win_title)))
+        # key, button, motion, structure and focus events
+        XSelectInput(__xdpy, __xwin, 0x1 | 0x2 | 0x4 | 0x8 | 0x40 | 0x20000 | 0x200000)
+        __wm_delete = XInternAtom(__xdpy, data("WM_DELETE_WINDOW"), 0)
+        XSetWMProtocols(__xdpy, __xwin, &__wm_delete, 1)
+        XMapWindow(__xdpy, __xwin)
+        XFlush(__xdpy)
+        __egl_dpy = eglGetPlatformDisplay(0x31D5, __xdpy, null)      # EGL_PLATFORM_X11_KHR
+        if __egl_dpy == null: __egl_dpy = eglGetDisplay(__xdpy)
+        __need(__egl_dpy != null, "eglGetDisplay failed")
+        maj: i32 = 0
+        mn: i32 = 0
+        __need(eglInitialize(__egl_dpy, &maj, &mn) != 0, "eglInitialize failed")
+        eglBindAPI(0x30A0)             # EGL_OPENGL_ES_API
+        attrs: [i32] = [0x3024, 8, 0x3023, 8, 0x3022, 8, 0x3025, 24, 0x3040, 0x40, 0x3033, 4, 0x3038]
+        cfg: *u8 = null
+        n: i32 = 0
+        __need(eglChooseConfig(__egl_dpy, data(attrs), &cfg, 1, &n) != 0 and n > 0, "no suitable EGL config")
+        __egl_surf = eglCreateWindowSurface(__egl_dpy, cfg, __xwin, null)
+        if __egl_surf == null:
+            # try the platform-specific entry point, which takes a pointer to the window id
+            __egl_surf = eglCreatePlatformWindowSurface(__egl_dpy, cfg, &__xwin, null)
+        __need(__egl_surf != null, "eglCreateWindowSurface failed (EGL error 0x{eglGetError():x})")
+        cattrs: [i32] = [0x3098, 3, 0x30FB, 0, 0x3038]
+        ctx := eglCreateContext(__egl_dpy, cfg, null, data(cattrs))
+        __need(ctx != null, "eglCreateContext failed (OpenGL ES 3 needed)")
+        __need(eglMakeCurrent(__egl_dpy, __egl_surf, __egl_surf, ctx) != 0, "eglMakeCurrent failed")
+        eglSwapInterval(__egl_dpy, 1)
+        __xev = __alloc(256)
+
+    fn __xkey(sym: int) -> int:
+        if sym >= 0x61 and sym <= 0x7a: return int(Key.a) + sym - 0x61
+        if sym >= 0x41 and sym <= 0x5a: return int(Key.a) + sym - 0x41
+        if sym >= 0x30 and sym <= 0x39: return int(Key.n0) + sym - 0x30
+        if sym >= 0xffbe and sym <= 0xffc9: return int(Key.f1) + sym - 0xffbe
+        match sym:
+            0x20: int(Key.space)
+            0xff0d: int(Key.enter)
+            0xff8d: int(Key.enter)
+            0xff1b: int(Key.escape)
+            0xff09: int(Key.tab)
+            0xff08: int(Key.backspace)
+            0xffff: int(Key.delete)
+            0xff63: int(Key.insert)
+            0xff50: int(Key.home)
+            0xff57: int(Key.end)
+            0xff55: int(Key.page_up)
+            0xff56: int(Key.page_down)
+            0xff51: int(Key.left)
+            0xff52: int(Key.up)
+            0xff53: int(Key.right)
+            0xff54: int(Key.down)
+            0xffe1, 0xffe2: int(Key.shift)
+            0xffe3, 0xffe4: int(Key.ctrl)
+            0xffe9, 0xffea: int(Key.alt)
+            0xffeb, 0xffec: int(Key.super)
+            0x2d: int(Key.minus)
+            0x3d: int(Key.equals)
+            0x2c: int(Key.comma)
+            0x2e: int(Key.period)
+            0x2f: int(Key.slash)
+            0x3b: int(Key.semicolon)
+            0x27: int(Key.quote)
+            0x5b: int(Key.lbracket)
+            0x5d: int(Key.rbracket)
+            0x5c: int(Key.backslash)
+            0x60: int(Key.grave)
+            _: 0
+
+    fn __platform_poll():
+        while XPending(__xdpy) > 0:
+            XNextEvent(__xdpy, __xev)
+            ev := __xev as *i32
+            kind := int(ev[0])
+            if kind == 2 or kind == 3:
+                sym := XLookupKeysym(__xev, 0)
+                __key_event(__xkey(sym), kind == 2)
+                if kind == 2:
+                    buf := __alloc(16)
+                    n := XLookupString(__xev, buf, 15, null, null)
+                    if n == 1 and buf[0] >= 32 and buf[0] < 127: __text_input += chr(int(buf[0]))
+                    __free(buf)
+            else if kind == 4 or kind == 5:
+                btn := int(ev[21])
+                if btn == 1: __mouse_event(0, kind == 4)
+                else if btn == 2: __mouse_event(1, kind == 4)
+                else if btn == 3: __mouse_event(2, kind == 4)
+                else if btn == 4 and kind == 4: __mouse_wheel += 1.0
+                else if btn == 5 and kind == 4: __mouse_wheel -= 1.0
+            else if kind == 6:
+                x := float(ev[16])
+                y := float(ev[17])
+                __mouse_dx += x - __mouse_x
+                __mouse_dy += y - __mouse_y
+                __mouse_x = x
+                __mouse_y = y
+            else if kind == 22:
+                __win_w = int(ev[14])
+                __win_h = int(ev[15])
+            else if kind == 33:
+                if (__xev as *int)[7] == __wm_delete: __win_close = true
+            else if kind == 10:
+                for mut kd in __key_down: kd = false
+
+    fn __platform_present(): eglSwapBuffers(__egl_dpy, __egl_surf)
+
+    fn __game_run(update: fn(float), draw: fn()):
+        window(__win_title, __win_w, __win_h)
+        last := time()
+        while not __win_close:
+            __platform_poll()
+            now := time()
+            dt := clamp(now - last, 0.0, 0.1)
+            last = now
+            __run_frame(dt, update, draw)
+            __platform_present()
+        exit(0)
+
+fn __no_update(dt: float): pass
+fn __no_draw(): pass
+
+__fps_acc := 0.0
+__fps_n := 0
+
+fn __run_frame(dt: float, update: fn(float), draw: fn()):
+    __dt = dt
+    __fps_acc += dt
+    __fps_n += 1
+    if __fps_acc >= 0.5:
+        __fps = float(__fps_n) / __fps_acc
+        __fps_acc = 0.0
+        __fps_n = 0
+    __gfx_begin_frame()
+    update(dt)
+    draw()
+    __gfx_end_frame()
+    __maybe_screenshot()
+    __input_end_frame()
+    __frame_count += 1
+
+# testing aid: JOT_SCREENSHOT=out.png [JOT_FRAMES=n] saves frame n and exits
+fn __maybe_screenshot():
+    when TARGET != "wasm":
+        if path := env("JOT_SCREENSHOT"):
+            n := to_int(env("JOT_FRAMES") ?? "5") ?? 5
+            if __frame_count == n:
+                save_png(screenshot(), path)
+                exit(0)

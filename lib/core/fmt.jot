@@ -43,6 +43,9 @@ fn __fmt(buf: mut [u8], x: int):
     else: __fmt_u64(buf, u64(x), false, 0, ' ')
 
 fn __fmt(buf: mut [u8], x: u64): __fmt_u64(buf, x, false, 0, ' ')
+fn __fmt(buf: mut [u8], x: u32): __fmt_u64(buf, u64(x), false, 0, ' ')
+fn __fmt(buf: mut [u8], x: u16): __fmt_u64(buf, u64(x), false, 0, ' ')
+fn __fmt(buf: mut [u8], x: u8): __fmt_u64(buf, u64(x), false, 0, ' ')
 
 fn __fmt_hex(buf: mut [u8], x: u64, minw: int, upper: bool):
     digits := "0123456789abcdef"

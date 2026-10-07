@@ -1,0 +1,357 @@
+# Portable OpenGL ES 3.0 / WebGL2 layer. Native builds load the system driver
+# (libGLESv2) at runtime; web builds call WebGL2 through the page's JavaScript.
+
+const GL_DEPTH_BUFFER_BIT = 0x100
+const GL_COLOR_BUFFER_BIT = 0x4000
+const GL_POINTS = 0
+const GL_LINES = 1
+const GL_LINE_STRIP = 3
+const GL_TRIANGLES = 4
+const GL_TRIANGLE_STRIP = 5
+const GL_TRIANGLE_FAN = 6
+const GL_BLEND = 0xBE2
+const GL_DEPTH_TEST = 0xB71
+const GL_CULL_FACE = 0xB44
+const GL_SCISSOR_TEST = 0xC11
+const GL_FRONT = 0x404
+const GL_BACK = 0x405
+const GL_CW = 0x900
+const GL_CCW = 0x901
+const GL_ZERO = 0
+const GL_ONE = 1
+const GL_SRC_ALPHA = 0x302
+const GL_ONE_MINUS_SRC_ALPHA = 0x303
+const GL_DST_COLOR = 0x306
+const GL_LESS = 0x201
+const GL_LEQUAL = 0x203
+const GL_ARRAY_BUFFER = 0x8892
+const GL_ELEMENT_ARRAY_BUFFER = 0x8893
+const GL_STATIC_DRAW = 0x88E4
+const GL_DYNAMIC_DRAW = 0x88E8
+const GL_STREAM_DRAW = 0x88E0
+const GL_BYTE = 0x1400
+const GL_UNSIGNED_BYTE = 0x1401
+const GL_UNSIGNED_SHORT = 0x1403
+const GL_UNSIGNED_INT = 0x1405
+const GL_FLOAT = 0x1406
+const GL_HALF_FLOAT = 0x140B
+const GL_FRAGMENT_SHADER = 0x8B30
+const GL_VERTEX_SHADER = 0x8B31
+const GL_TEXTURE_2D = 0xDE1
+const GL_TEXTURE0 = 0x84C0
+const GL_TEXTURE_MAG_FILTER = 0x2800
+const GL_TEXTURE_MIN_FILTER = 0x2801
+const GL_TEXTURE_WRAP_S = 0x2802
+const GL_TEXTURE_WRAP_T = 0x2803
+const GL_NEAREST = 0x2600
+const GL_LINEAR = 0x2601
+const GL_LINEAR_MIPMAP_LINEAR = 0x2703
+const GL_REPEAT = 0x2901
+const GL_CLAMP_TO_EDGE = 0x812F
+const GL_MIRRORED_REPEAT = 0x8370
+const GL_RGBA = 0x1908
+const GL_RGB = 0x1907
+const GL_RED = 0x1903
+const GL_RGBA8 = 0x8058
+const GL_R8 = 0x8229
+const GL_RGBA16F = 0x881A
+const GL_DEPTH_COMPONENT = 0x1902
+const GL_DEPTH_COMPONENT24 = 0x81A6
+const GL_FRAMEBUFFER = 0x8D40
+const GL_RENDERBUFFER = 0x8D41
+const GL_COLOR_ATTACHMENT0 = 0x8CE0
+const GL_DEPTH_ATTACHMENT = 0x8D00
+const GL_FRAMEBUFFER_COMPLETE = 0x8CD5
+const GL_UNPACK_ALIGNMENT = 0xCF5
+const GL_COMPILE_STATUS = 0x8B81
+const GL_LINK_STATUS = 0x8B82
+const GL_INFO_LOG_LENGTH = 0x8B84
+
+when TARGET == "wasm":
+    # implemented by lib/web/runtime.js on top of WebGL2
+    extern fn glClearColor(r: f32, g: f32, b: f32, a: f32)
+    extern fn glClear(mask: u32)
+    extern fn glViewport(x: i32, y: i32, w: i32, h: i32)
+    extern fn glScissor(x: i32, y: i32, w: i32, h: i32)
+    extern fn glEnable(cap: u32)
+    extern fn glDisable(cap: u32)
+    extern fn glBlendFunc(s: u32, d: u32)
+    extern fn glBlendFuncSeparate(s: u32, d: u32, sa: u32, da: u32)
+    extern fn glDepthFunc(f: u32)
+    extern fn glDepthMask(flag: u32)
+    extern fn glCullFace(mode: u32)
+    extern fn glFrontFace(mode: u32)
+    extern fn glColorMask(r: u32, g: u32, b: u32, a: u32)
+    extern fn glCreateBuffer() -> u32
+    extern fn glDeleteBuffer(b: u32)
+    extern fn glBindBuffer(target: u32, b: u32)
+    extern fn glBufferData(target: u32, size: i32, data: *u8, usage: u32)
+    extern fn glBufferSubData(target: u32, offset: i32, size: i32, data: *u8)
+    extern fn glCreateVertexArray() -> u32
+    extern fn glDeleteVertexArray(v: u32)
+    extern fn glBindVertexArray(v: u32)
+    extern fn glEnableVertexAttribArray(i: u32)
+    extern fn glVertexAttribPointer(i: u32, size: i32, ty: u32, normalized: u32, stride: i32, offset: i32)
+    extern fn glVertexAttribDivisor(i: u32, d: u32)
+    extern fn glDrawArrays(mode: u32, first: i32, count: i32)
+    extern fn glDrawElements(mode: u32, count: i32, ty: u32, offset: i32)
+    extern fn glDrawArraysInstanced(mode: u32, first: i32, count: i32, instances: i32)
+    extern fn glDrawElementsInstanced(mode: u32, count: i32, ty: u32, offset: i32, instances: i32)
+    extern fn glCreateProgramFrom(vs: *u8, vs_len: i32, fs: *u8, fs_len: i32) -> u32
+    extern fn glUseProgram(p: u32)
+    extern fn glDeleteProgram(p: u32)
+    extern fn glGetUniformLocationStr(p: u32, name: *u8, len: i32) -> i32
+    extern fn glUniform1i(loc: i32, v: i32)
+    extern fn glUniform1f(loc: i32, v: f32)
+    extern fn glUniform2f(loc: i32, x: f32, y: f32)
+    extern fn glUniform3f(loc: i32, x: f32, y: f32, z: f32)
+    extern fn glUniform4f(loc: i32, x: f32, y: f32, z: f32, w: f32)
+    extern fn glUniformMatrix4fv(loc: i32, count: i32, transpose: u32, v: *u8)
+    extern fn glUniform4fv(loc: i32, count: i32, v: *u8)
+    extern fn glCreateTexture() -> u32
+    extern fn glDeleteTexture(t: u32)
+    extern fn glBindTexture(target: u32, t: u32)
+    extern fn glActiveTexture(unit: u32)
+    extern fn glTexImage2D(target: u32, level: i32, internal: i32, w: i32, h: i32, border: i32, format: u32, ty: u32, data: *u8, size: i32)
+    extern fn glTexSubImage2D(target: u32, level: i32, x: i32, y: i32, w: i32, h: i32, format: u32, ty: u32, data: *u8, size: i32)
+    extern fn glTexParameteri(target: u32, pname: u32, v: i32)
+    extern fn glGenerateMipmap(target: u32)
+    extern fn glPixelStorei(pname: u32, v: i32)
+    extern fn glCreateFramebuffer() -> u32
+    extern fn glDeleteFramebuffer(f: u32)
+    extern fn glBindFramebuffer(target: u32, f: u32)
+    extern fn glFramebufferTexture2D(target: u32, attachment: u32, textarget: u32, tex: u32, level: i32)
+    extern fn glCreateRenderbuffer() -> u32
+    extern fn glDeleteRenderbuffer(r: u32)
+    extern fn glBindRenderbuffer(target: u32, r: u32)
+    extern fn glRenderbufferStorage(target: u32, format: u32, w: i32, h: i32)
+    extern fn glFramebufferRenderbuffer(target: u32, attachment: u32, rbtarget: u32, rb: u32)
+    extern fn glCheckFramebufferStatus(target: u32) -> u32
+    extern fn glReadPixels(x: i32, y: i32, w: i32, h: i32, format: u32, ty: u32, data: *u8, size: i32)
+
+    fn gl_create_buffer() -> int: int(glCreateBuffer())
+    fn gl_delete_buffer(b: int): glDeleteBuffer(u32(b))
+    fn gl_create_vertex_array() -> int: int(glCreateVertexArray())
+    fn gl_delete_vertex_array(v: int): glDeleteVertexArray(u32(v))
+    fn gl_create_texture() -> int: int(glCreateTexture())
+    fn gl_delete_texture(t: int): glDeleteTexture(u32(t))
+    fn gl_create_framebuffer() -> int: int(glCreateFramebuffer())
+    fn gl_delete_framebuffer(f: int): glDeleteFramebuffer(u32(f))
+    fn gl_create_renderbuffer() -> int: int(glCreateRenderbuffer())
+    fn gl_delete_renderbuffer(r: int): glDeleteRenderbuffer(u32(r))
+    fn gl_create_program(vs: str, fs: str) -> int: int(glCreateProgramFrom(data(vs), i32(len(vs)), data(fs), i32(len(fs))))
+    fn gl_uniform_location(p: int, name: str) -> int: int(glGetUniformLocationStr(u32(p), data(name), i32(len(name))))
+    fn gl_tex_image(w: int, h: int, internal: int, format: int, ty: int, pixels: *u8, size: int):
+        glTexImage2D(GL_TEXTURE_2D, 0, i32(internal), i32(w), i32(h), 0, u32(format), u32(ty), pixels, i32(size))
+    fn gl_tex_sub_image(x: int, y: int, w: int, h: int, format: int, ty: int, pixels: *u8, size: int):
+        glTexSubImage2D(GL_TEXTURE_2D, 0, i32(x), i32(y), i32(w), i32(h), u32(format), u32(ty), pixels, i32(size))
+    fn gl_read_pixels(x: int, y: int, w: int, h: int, out: *u8):
+        glReadPixels(i32(x), i32(y), i32(w), i32(h), GL_RGBA, GL_UNSIGNED_BYTE, out, i32(w * h * 4))
+else:
+    @lib("libGLESv2.so.2")
+    extern fn glClearColor(r: f32, g: f32, b: f32, a: f32)
+    @lib("libGLESv2.so.2")
+    extern fn glClear(mask: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glViewport(x: i32, y: i32, w: i32, h: i32)
+    @lib("libGLESv2.so.2")
+    extern fn glScissor(x: i32, y: i32, w: i32, h: i32)
+    @lib("libGLESv2.so.2")
+    extern fn glEnable(cap: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glDisable(cap: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glBlendFunc(s: u32, d: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glBlendFuncSeparate(s: u32, d: u32, sa: u32, da: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glDepthFunc(f: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glDepthMask(flag: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glCullFace(mode: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glFrontFace(mode: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glColorMask(r: u32, g: u32, b: u32, a: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glGenBuffers(n: i32, out: *u32)
+    @lib("libGLESv2.so.2")
+    extern fn glDeleteBuffers(n: i32, ids: *u32)
+    @lib("libGLESv2.so.2")
+    extern fn glBindBuffer(target: u32, b: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glBufferData(target: u32, size: int, data: *u8, usage: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glBufferSubData(target: u32, offset: int, size: int, data: *u8)
+    @lib("libGLESv2.so.2")
+    extern fn glGenVertexArrays(n: i32, out: *u32)
+    @lib("libGLESv2.so.2")
+    extern fn glDeleteVertexArrays(n: i32, ids: *u32)
+    @lib("libGLESv2.so.2")
+    extern fn glBindVertexArray(v: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glEnableVertexAttribArray(i: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glVertexAttribPointer(i: u32, size: i32, ty: u32, normalized: u8, stride: i32, offset: int)
+    @lib("libGLESv2.so.2")
+    extern fn glVertexAttribDivisor(i: u32, d: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glDrawArrays(mode: u32, first: i32, count: i32)
+    @lib("libGLESv2.so.2")
+    extern fn glDrawElements(mode: u32, count: i32, ty: u32, offset: int)
+    @lib("libGLESv2.so.2")
+    extern fn glDrawArraysInstanced(mode: u32, first: i32, count: i32, instances: i32)
+    @lib("libGLESv2.so.2")
+    extern fn glDrawElementsInstanced(mode: u32, count: i32, ty: u32, offset: int, instances: i32)
+    @lib("libGLESv2.so.2")
+    extern fn glCreateShader(kind: u32) -> u32
+    @lib("libGLESv2.so.2")
+    extern fn glShaderSource(s: u32, count: i32, strs: **u8, lens: *i32)
+    @lib("libGLESv2.so.2")
+    extern fn glCompileShader(s: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glGetShaderiv(s: u32, pname: u32, out: *i32)
+    @lib("libGLESv2.so.2")
+    extern fn glGetShaderInfoLog(s: u32, size: i32, len: *i32, buf: *u8)
+    @lib("libGLESv2.so.2")
+    extern fn glDeleteShader(s: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glCreateProgram() -> u32
+    @lib("libGLESv2.so.2")
+    extern fn glAttachShader(p: u32, s: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glLinkProgram(p: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glGetProgramiv(p: u32, pname: u32, out: *i32)
+    @lib("libGLESv2.so.2")
+    extern fn glGetProgramInfoLog(p: u32, size: i32, len: *i32, buf: *u8)
+    @lib("libGLESv2.so.2")
+    extern fn glUseProgram(p: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glDeleteProgram(p: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glGetUniformLocation(p: u32, name: *u8) -> i32
+    @lib("libGLESv2.so.2")
+    extern fn glUniform1i(loc: i32, v: i32)
+    @lib("libGLESv2.so.2")
+    extern fn glUniform1f(loc: i32, v: f32)
+    @lib("libGLESv2.so.2")
+    extern fn glUniform2f(loc: i32, x: f32, y: f32)
+    @lib("libGLESv2.so.2")
+    extern fn glUniform3f(loc: i32, x: f32, y: f32, z: f32)
+    @lib("libGLESv2.so.2")
+    extern fn glUniform4f(loc: i32, x: f32, y: f32, z: f32, w: f32)
+    @lib("libGLESv2.so.2")
+    extern fn glUniformMatrix4fv(loc: i32, count: i32, transpose: u8, v: *u8)
+    @lib("libGLESv2.so.2")
+    extern fn glUniform4fv(loc: i32, count: i32, v: *u8)
+    @lib("libGLESv2.so.2")
+    extern fn glGenTextures(n: i32, out: *u32)
+    @lib("libGLESv2.so.2")
+    extern fn glDeleteTextures(n: i32, ids: *u32)
+    @lib("libGLESv2.so.2")
+    extern fn glBindTexture(target: u32, t: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glActiveTexture(unit: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glTexImage2D(target: u32, level: i32, internal: i32, w: i32, h: i32, border: i32, format: u32, ty: u32, data: *u8)
+    @lib("libGLESv2.so.2")
+    extern fn glTexSubImage2D(target: u32, level: i32, x: i32, y: i32, w: i32, h: i32, format: u32, ty: u32, data: *u8)
+    @lib("libGLESv2.so.2")
+    extern fn glTexParameteri(target: u32, pname: u32, v: i32)
+    @lib("libGLESv2.so.2")
+    extern fn glGenerateMipmap(target: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glPixelStorei(pname: u32, v: i32)
+    @lib("libGLESv2.so.2")
+    extern fn glGenFramebuffers(n: i32, out: *u32)
+    @lib("libGLESv2.so.2")
+    extern fn glDeleteFramebuffers(n: i32, ids: *u32)
+    @lib("libGLESv2.so.2")
+    extern fn glBindFramebuffer(target: u32, f: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glFramebufferTexture2D(target: u32, attachment: u32, textarget: u32, tex: u32, level: i32)
+    @lib("libGLESv2.so.2")
+    extern fn glGenRenderbuffers(n: i32, out: *u32)
+    @lib("libGLESv2.so.2")
+    extern fn glDeleteRenderbuffers(n: i32, ids: *u32)
+    @lib("libGLESv2.so.2")
+    extern fn glBindRenderbuffer(target: u32, r: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glRenderbufferStorage(target: u32, format: u32, w: i32, h: i32)
+    @lib("libGLESv2.so.2")
+    extern fn glFramebufferRenderbuffer(target: u32, attachment: u32, rbtarget: u32, rb: u32)
+    @lib("libGLESv2.so.2")
+    extern fn glCheckFramebufferStatus(target: u32) -> u32
+    @lib("libGLESv2.so.2")
+    extern fn glReadPixels(x: i32, y: i32, w: i32, h: i32, format: u32, ty: u32, data: *u8)
+
+    fn __gl_gen(kind: int) -> int:
+        id: u32 = 0
+        if kind == 0: glGenBuffers(1, &id)
+        else if kind == 1: glGenVertexArrays(1, &id)
+        else if kind == 2: glGenTextures(1, &id)
+        else if kind == 3: glGenFramebuffers(1, &id)
+        else: glGenRenderbuffers(1, &id)
+        int(id)
+    fn __gl_del(kind: int, x: int):
+        id := u32(x)
+        if kind == 0: glDeleteBuffers(1, &id)
+        else if kind == 1: glDeleteVertexArrays(1, &id)
+        else if kind == 2: glDeleteTextures(1, &id)
+        else if kind == 3: glDeleteFramebuffers(1, &id)
+        else: glDeleteRenderbuffers(1, &id)
+    fn gl_create_buffer() -> int: __gl_gen(0)
+    fn gl_delete_buffer(b: int): __gl_del(0, b)
+    fn gl_create_vertex_array() -> int: __gl_gen(1)
+    fn gl_delete_vertex_array(v: int): __gl_del(1, v)
+    fn gl_create_texture() -> int: __gl_gen(2)
+    fn gl_delete_texture(t: int): __gl_del(2, t)
+    fn gl_create_framebuffer() -> int: __gl_gen(3)
+    fn gl_delete_framebuffer(f: int): __gl_del(3, f)
+    fn gl_create_renderbuffer() -> int: __gl_gen(4)
+    fn gl_delete_renderbuffer(r: int): __gl_del(4, r)
+
+    fn __gl_shader(kind: int, src: str) -> int:
+        s := glCreateShader(u32(kind))
+        p := data(src)
+        n := i32(len(src))
+        glShaderSource(s, 1, &p, &n)
+        glCompileShader(s)
+        ok: i32 = 0
+        glGetShaderiv(s, GL_COMPILE_STATUS, &ok)
+        if ok == 0:
+            buf := __alloc(4096)
+            ln: i32 = 0
+            glGetShaderInfoLog(s, 4095, &ln, buf)
+            eprint("shader compile error:\n{__cstr(buf)}\n--- source ---\n{src}")
+            panic("shader compilation failed")
+        int(s)
+
+    fn gl_create_program(vs: str, fs: str) -> int:
+        v := __gl_shader(GL_VERTEX_SHADER, vs)
+        f := __gl_shader(GL_FRAGMENT_SHADER, fs)
+        p := glCreateProgram()
+        glAttachShader(p, u32(v))
+        glAttachShader(p, u32(f))
+        glLinkProgram(p)
+        ok: i32 = 0
+        glGetProgramiv(p, GL_LINK_STATUS, &ok)
+        if ok == 0:
+            buf := __alloc(4096)
+            ln: i32 = 0
+            glGetProgramInfoLog(p, 4095, &ln, buf)
+            eprint("shader link error:\n{__cstr(buf)}")
+            panic("shader linking failed")
+        glDeleteShader(u32(v))
+        glDeleteShader(u32(f))
+        int(p)
+
+    fn gl_uniform_location(p: int, name: str) -> int: int(glGetUniformLocation(u32(p), data(__zstr(name))))
+    fn gl_tex_image(w: int, h: int, internal: int, format: int, ty: int, pixels: *u8, size: int):
+        glTexImage2D(GL_TEXTURE_2D, 0, i32(internal), i32(w), i32(h), 0, u32(format), u32(ty), pixels)
+    fn gl_tex_sub_image(x: int, y: int, w: int, h: int, format: int, ty: int, pixels: *u8, size: int):
+        glTexSubImage2D(GL_TEXTURE_2D, 0, i32(x), i32(y), i32(w), i32(h), u32(format), u32(ty), pixels)
+    fn gl_read_pixels(x: int, y: int, w: int, h: int, out: *u8):
+        glReadPixels(i32(x), i32(y), i32(w), i32(h), GL_RGBA, GL_UNSIGNED_BYTE, out)
