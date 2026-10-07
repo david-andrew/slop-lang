@@ -1227,6 +1227,7 @@ fn emit_ins(pos: int, ins: Ins):
             patch_here(j2)
             sts(d, 0, ty)
         f2i:
+            # saturating, like wasm's trunc_sat: NaN -> 0, too large -> max, too small -> min
             ty := int(ins.ty)
             xa := xreg_of(a, 0, ty)
             r := dreg(d, RAX)
@@ -1235,6 +1236,26 @@ fn emit_ins(pos: int, ins: Ins):
             b(0x0F)
             b(0x2C)
             modrr(r, xa)
+            # cvttsd2si gives INT64_MIN when out of range; `cmp r, 1` overflows only for that value
+            rex(true, 0, 0, r, false)
+            b(0x83)
+            modrr(7, r)
+            b(1)
+            done := jcc32(1)                       # jno
+            if ty == VS: sse_rr(0, 0x2E, xa, xa)   # ucomiss
+            else: sse_rr(0x66, 0x2E, xa, xa)       # ucomisd
+            nan := jcc32(CC_P)
+            sse_rr(0, 0x57, XMM + 15, XMM + 15)    # xorps xmm15, xmm15
+            if ty == VS: sse_rr(0, 0x2E, xa, XMM + 15)
+            else: sse_rr(0x66, 0x2E, xa, XMM + 15)
+            neg := jcc32(CC_BE)
+            mov_imm(r, 0x7FFFFFFFFFFFFFFF)
+            done2 := jmp32()
+            patch_here(nan)
+            op_rr(0x31, false, r, r)               # xor r32, r32
+            patch_here(done)
+            patch_here(neg)
+            patch_here(done2)
             st(d, r)
         f2f:
             # ins.ty is the destination type

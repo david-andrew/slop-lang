@@ -271,6 +271,7 @@ fn update(dt: float):
     if key_down(.q): yaw -= 1.8 * dt
     if key_down(.e): yaw += 1.8 * dt
     if mouse_down(.right): yaw += float(mouse_delta().x) * 0.006
+    yaw += float(right_stick().x) * 2.2 * dt
     # movement relative to the camera
     inp := input_axis()
     fwd := vec3(f32(-sin(yaw)), 0, f32(-cos(yaw)))
@@ -284,11 +285,13 @@ fn update(dt: float):
     vel.x = f32(approach(float(vel.x), float(target.x), 6.0, dt))
     vel.z = f32(approach(float(vel.z), float(target.z), 6.0, dt))
     gy := ground(float(pos.x), float(pos.z))
-    if key_pressed(.space) and grounded:
+    jump_pressed := key_pressed(.space) or gamepad_pressed(.a)
+    jump_held := key_down(.space) or gamepad_down(.a)
+    if jump_pressed and grounded:
         vel.y = 7.0
         grounded = false
         play(sfx_whoosh(), 0.3)
-    gliding := key_down(.space) and not grounded and vel.y < 0.0 and energy > 0.0
+    gliding := jump_held and not grounded and vel.y < 0.0 and energy > 0.0
     g := 18.0
     if gliding:
         g = 3.0

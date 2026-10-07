@@ -150,7 +150,7 @@ fn move_player(dt: float):
     player.vel.x = f32(approach(float(player.vel.x), float(target), accel, dt))
     if input.x != 0.0: player.facing = sign(input.x)
     player.coyote -= f32(dt)
-    if key_pressed(.space) or key_pressed(.up) or key_pressed(.w):
+    if key_pressed(.space) or key_pressed(.up) or key_pressed(.w) or gamepad_pressed(.a):
         if player.on_ground or player.coyote > 0.0:
             player.vel.y = f32(-JUMP)
             player.jumps = 1
@@ -163,7 +163,7 @@ fn move_player(dt: float):
             play(snd_jump, 0.4, pitch = 1.3)
             emit(sparks, player.pos, 16, 220.0, rgba(0.6, 0.9, 1, 0.9), 0.6, 5.0)
     # variable jump height
-    if player.vel.y < 0.0 and not (key_down(.space) or key_down(.up) or key_down(.w)): player.vel.y += f32(GRAVITY * dt)
+    if player.vel.y < 0.0 and not (key_down(.space) or key_down(.up) or key_down(.w) or gamepad_down(.a)): player.vel.y += f32(GRAVITY * dt)
     player.vel.y = min(player.vel.y + f32(GRAVITY * dt), 1400.0)
     # horizontal then vertical collision
     was_ground := player.on_ground
@@ -218,7 +218,7 @@ fn collect_seeds():
 
 fn update(dt: float):
     if state == .title:
-        if key_pressed(.space) or key_pressed(.enter):
+        if key_pressed(.space) or key_pressed(.enter) or gamepad_pressed(.a) or gamepad_pressed(.start):
             reset()
             color_t = 0.0
             state = .play

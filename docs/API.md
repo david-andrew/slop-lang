@@ -397,6 +397,28 @@ fn cone_mesh(radius: float = 0.5, height: float = 1.0, segments: int = 24) -> Me
 fn custom_mesh(vertices: [Vertex3D], indices: [u32] = []) -> Mesh    # custom mesh from vertex/index arrays
 ```
 
+### gamepad.jot
+
+Gamepads: the first connected controller, with a standard layout (Xbox-style names).  
+  
+if gamepad_pressed(.a): jump()  
+move := left_stick()               # vec2 in -1..1, y down, with a dead zone  
+  
+input_axis() also follows the left stick and the d-pad, so keyboard games work with a pad.  
+Native builds read the Linux joystick device (/dev/input/js0); web builds use the browser's  
+Gamepad API.  
+
+```
+enum PadButton: a, b, x, y, lb, rb, back, start, home, lstick, rstick, up, down, left, right
+fn gamepad_connected() -> bool
+fn gamepad_axis(i: int) -> float    # axis value in -1..1 (triggers 0..1): 0 left x, 1 left y, 2 right x, 3 right y, 4 left trigger, 5 right trigger
+fn gamepad_down(b: PadButton) -> bool
+fn gamepad_pressed(b: PadButton) -> bool
+fn gamepad_released(b: PadButton) -> bool
+fn left_stick() -> vec2
+fn right_stick() -> vec2
+```
+
 ### gameutil.jot
 
 Common game helpers: noise, collision shapes, easing, timers and 2D particles.  
@@ -649,7 +671,7 @@ fn mouse_down(b: Mouse) -> bool
 fn mouse_pressed(b: Mouse) -> bool
 fn mouse_released(b: Mouse) -> bool
 fn text_input() -> str    # characters typed this frame
-fn input_axis() -> vec2    # arrows/WASD as a direction vector (y down)
+fn input_axis() -> vec2    # arrows/WASD (or a gamepad's left stick and d-pad) as a direction vector (y down)
 fn screen_width() -> int
 fn screen_height() -> int
 fn screen_size() -> vec2

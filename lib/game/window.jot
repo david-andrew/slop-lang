@@ -99,13 +99,15 @@ fn mouse_released(b: Mouse) -> bool:
 # characters typed this frame
 fn text_input() -> str: __text_input
 
-# arrows/WASD as a direction vector (y down)
+# arrows/WASD (or a gamepad's left stick and d-pad) as a direction vector (y down)
 fn input_axis() -> vec2:
     v := vec2(0, 0)
-    if key_down(.left) or key_down(.a): v.x -= 1
-    if key_down(.right) or key_down(.d): v.x += 1
-    if key_down(.up) or key_down(.w): v.y -= 1
-    if key_down(.down) or key_down(.s): v.y += 1
+    if key_down(.left) or key_down(.a) or gamepad_down(.left): v.x -= 1
+    if key_down(.right) or key_down(.d) or gamepad_down(.right): v.x += 1
+    if key_down(.up) or key_down(.w) or gamepad_down(.up): v.y -= 1
+    if key_down(.down) or key_down(.s) or gamepad_down(.down): v.y += 1
+    s := left_stick()
+    if length(s) > length(v): v = s
     v
 
 fn screen_width() -> int: __win_w
@@ -394,6 +396,7 @@ fn __scripted_input():
 
 fn __run_frame(dt: float, update: fn(float), draw: fn()):
     __scripted_input()
+    __pad_frame()
     __dt = dt
     __fps_acc += dt
     __fps_n += 1
