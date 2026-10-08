@@ -153,13 +153,13 @@ def nav(here_page, prefix):
     items = [("Docs", "docs/start.html"), ("Language", "docs/language.html"), ("Library", "docs/api.html"),
              ("Playground", "playground/"), ("Report", "docs/report.html")]
     links = "".join(f'<a class="{"on" if p == here_page else ""}" href="{prefix}{p}">{n}</a>' for n, p in items)
-    return (f'<nav class="top"><a class="brand" href="{prefix}index.html"><img src="{prefix}icon.svg" alt="">Jot</a>'
+    return (f'<nav class="top"><a class="brand" href="{prefix}index.html"><img src="{prefix}icon-64.png" alt="">Jot</a>'
             f'<div class="links">{links}</div><div class="spacer"></div><a href="{REPO}">GitHub</a></nav>')
 
 def page(title, body, here_page, prefix, extra_head=""):
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{html.escape(title)}</title><link rel="icon" href="{prefix}icon.svg"><link rel="stylesheet" href="{prefix}style.css">{extra_head}
+<title>{html.escape(title)}</title><link rel="icon" href="{prefix}icon-32.png"><link rel="stylesheet" href="{prefix}style.css">{extra_head}
 </head><body>{nav(here_page, prefix)}
 {body}
 <footer>Jot &middot; <a href="{REPO}">source on GitHub</a></footer>
@@ -188,9 +188,11 @@ HOME = """
     <h1>Jot: <span>scripts</span> that compile to games.</h1>
     <p class="lead">A small, statically typed language that feels like Python and runs like C. One command
     compiles and runs your program in milliseconds, as a native Linux executable or as a single web page.</p>
+    <pre class="install"><code>curl -fsSL https://david-andrew.github.io/slop-lang/install | bash</code></pre>
     <div class="buttons"><a class="btn primary" href="playground/">Try it in your browser</a>
     <a class="btn" href="docs/start.html">Get started</a><a class="btn" href="docs/language.html">The language</a></div>
   </div>
+  <div class="art"><img class="logo" src="logo-512.png" alt="a white clover blossom">
   <pre><code class="jot">pos = vec2(400, 300)
 
 update = (dt: f64):
@@ -199,7 +201,7 @@ update = (dt: f64):
 draw = ():
     clear(rgb(0.08, 0.08, 0.12))
     circle(pos, 24, rgb(1.0, 0.6, 0.2))
-    text("arrow keys", vec2(20, 20), 24, WHITE)</code></pre>
+    text("arrow keys", vec2(20, 20), 24, WHITE)</code></pre></div>
 </section>
 <section class="features">
   <div class="feature"><h3>Instant compiles</h3><p>About 250,000 lines a second. Hello world compiles and runs in about 10 ms; there is no build system, options live in the source.</p></div>
@@ -227,7 +229,8 @@ print(nums .* 2.5 .+ 1, sqrt.([4.0 9.0]), [1 2; 3 4] * [1 0; 0 1])</code></pre>
 def main():
     if os.path.exists(out): shutil.rmtree(out)
     os.makedirs(out)
-    for f in ["style.css", "icon.svg"]: shutil.copy(os.path.join(here, f), out)
+    shutil.copy(os.path.join(here, "style.css"), out)
+    for f in ["icon-32.png", "icon-64.png", "logo-512.png"]: shutil.copy(os.path.join(root, "assets", f), out)
     shutil.copy(os.path.join(root, "tools", "playground", "highlight.js"), out)
     open(os.path.join(out, "index.html"), "w").write(page("Jot — a small, fast language for games", HOME, "index.html", ""))
     build_docs()
@@ -236,8 +239,10 @@ def main():
     # (the playground's title leads back to the site)
     pg = os.path.join(out, "playground", "index.html")
     t = open(pg).read().replace('<h1><span>Jot</span> playground</h1>', '<h1><a href="../" style="color:inherit"><span>Jot</span></a> playground</h1>', 1)
-    t = t.replace('<title>Jot playground</title>', '<title>Jot playground</title><link rel="icon" href="../icon.svg">', 1)
+    t = t.replace('<title>Jot playground</title>', '<title>Jot playground</title><link rel="icon" href="../icon-32.png">', 1)
     open(pg, "w").write(t)
+    # curl -fsSL .../install | bash
+    shutil.copy(os.path.join(root, "tools", "install.sh"), os.path.join(out, "install"))
     open(os.path.join(out, ".nojekyll"), "w").close()
     print(out)
 

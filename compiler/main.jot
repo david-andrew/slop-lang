@@ -23,8 +23,12 @@ use 'ide.jot'
 use 'lsp.jot'
 use 'repl.jot'
 
+# (a release is tagged v<JOT_VERSION>: .github/workflows/release.yml checks)
+const JOT_VERSION = "0.1.0"
+const JOT_INSTALL_URL = "https://david-andrew.github.io/slop-lang/install"
+
 usage = ():
-    eprint("usage: jot                                          (an interactive prompt)\n       jot [--web] [--release] file.jot [args...]   (--web: build for the browser and open it there)\n       jot test file.jot\n       jot check file.jot\n       jot lsp   (a language server for editors, on standard input and output)\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
+    eprint("usage: jot                                          (an interactive prompt)\n       jot [--web] [--release] file.jot [args...]   (--web: build for the browser and open it there)\n       jot test file.jot\n       jot check file.jot\n       jot lsp   (a language server for editors, on standard input and output)\n       jot --version\n       jot upgrade   (install the latest release)\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
     exit(2)
 
 find_lib_dir = () -> str:
@@ -224,6 +228,17 @@ compile = (path: str, out0: str) -> str:
 
 main = ():
     a = args()
+    if a.len() >= 2 and (a[1] == "--version" or a[1] == "version"):
+        print("jot {JOT_VERSION}")
+        return
+    if a.len() >= 2 and (a[1] == "--help" or a[1] == "help" or a[1] == "-h"): usage()
+    if a.len() >= 2 and a[1] == "upgrade":
+        # the install script, as it is given to new users (it replaces this installation)
+        cmd = "curl -fsSL {JOT_INSTALL_URL} | bash"
+        if a.len() >= 3: cmd = "curl -fsSL {JOT_INSTALL_URL} | bash -s {a[2]}"
+        exec("/bin/sh", ["sh", "-c", cmd])
+        eprint("jot: could not run /bin/sh")
+        exit(1)
     lib_dir = find_lib_dir()
     # no file: the interactive prompt
     if a.len() < 2 or a[1] == "repl":

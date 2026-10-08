@@ -9,7 +9,7 @@ export JOT_LIB="$PWD/lib"
 /tmp/jot1 build compiler/main.jot -o /tmp/jot2
 /tmp/jot2 build compiler/main.jot -o /tmp/jot3
 if cmp -s /tmp/jot2 /tmp/jot3; then
-    cp /tmp/jot2 bin/jot
+    rm -f bin/jot && cp /tmp/jot2 bin/jot      # (rm: an editor may be running the old one)
     echo "bootstrap ok: bin/jot ($(stat -c %s bin/jot) bytes), self-compile is a fixed point"
 else
     echo "bootstrap FAILED: jot2 and jot3 differ"

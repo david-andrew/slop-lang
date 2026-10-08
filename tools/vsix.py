@@ -35,6 +35,7 @@ manifest = f"""<?xml version="1.0" encoding="utf-8"?>
       <Property Id="Microsoft.VisualStudio.Code.LocalizedLanguages" Value="" />
       <Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true" />
     </Properties>
+    <Icon>extension/images/icon.png</Icon>
   </Metadata>
   <Installation>
     <InstallationTarget Id="Microsoft.VisualStudio.Code"/>
@@ -43,11 +44,12 @@ manifest = f"""<?xml version="1.0" encoding="utf-8"?>
   <Assets>
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
+    <Asset Type="Microsoft.VisualStudio.Services.Icons.Default" Path="extension/images/icon.png" Addressable="true" />
   </Assets>
 </PackageManifest>
 """
 types = """<?xml version="1.0" encoding="utf-8"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension=".json" ContentType="application/json"/><Default Extension=".js" ContentType="application/javascript"/><Default Extension=".md" ContentType="text/markdown"/><Default Extension=".vsixmanifest" ContentType="text/xml"/></Types>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension=".json" ContentType="application/json"/><Default Extension=".js" ContentType="application/javascript"/><Default Extension=".md" ContentType="text/markdown"/><Default Extension=".png" ContentType="image/png"/><Default Extension=".vsixmanifest" ContentType="text/xml"/></Types>
 """
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
     z.writestr("extension.vsixmanifest", manifest)

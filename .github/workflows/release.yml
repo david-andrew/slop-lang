@@ -1,0 +1,35 @@
+# A release: push a tag vX.Y.Z (the compiler's JOT_VERSION) and this builds, tests and publishes
+# jot-linux-x86_64.tar.gz (what tools/install.sh installs), its checksum and the editor extension.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the compiler (C bootstrap -> Jot, which compiles itself)
+        run: tools/bootstrap.sh
+      - name: Test
+        run: |
+          python3 tools/runtests.py
+          python3 tools/runtests.py --compiler jot
+          python3 tools/runtests.py --compiler jot --release
+          python3 tools/runtests.py --compiler jot --target wasm
+          python3 tools/lsptest.py
+          python3 tools/rendertest.py --no-gpu
+      - name: Package
+        run: python3 tools/release.py --tag "$GITHUB_REF_NAME"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "Jot ${GITHUB_REF_NAME#v}" --generate-notes \
+            --notes "Install or upgrade: \`curl -fsSL https://david-andrew.github.io/slop-lang/install | bash\`" \
+            build/release/*

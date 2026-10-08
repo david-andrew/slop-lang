@@ -119,15 +119,128 @@ function onNotification(method, params) {
 
 // ---- which jot ----
 
-function jotCommand() {
+const os = require('os');
+const https = require('https');
+const zlib = require('zlib');
+const crypto = require('crypto');
+
+const RELEASES = 'https://github.com/david-andrew/slop-lang/releases/latest/download/';
+const installDir = () => process.env.JOT_INSTALL || path.join(os.homedir(), '.jot');
+
+const isExe = (p) => { try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch (e) { return false; } };
+
+// the jot compiler to use, or null: the setting, the Jot repository's own (working on Jot), the
+// PATH, or where the install script (and this extension) put it
+function findJot() {
     const configured = vscode.workspace.getConfiguration('jot').get('path');
     if (configured) return configured;
-    // working on Jot itself: its own compiler
     for (const folder of vscode.workspace.workspaceFolders || []) {
         const p = path.join(folder.uri.fsPath, 'bin', 'jot');
-        if (fs.existsSync(p) && fs.existsSync(path.join(folder.uri.fsPath, 'lib', 'core', 'rt.jot'))) return p;
+        if (isExe(p) && fs.existsSync(path.join(folder.uri.fsPath, 'lib', 'core', 'rt.jot'))) return p;
     }
-    return 'jot';
+    for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+        if (dir && isExe(path.join(dir, 'jot'))) return path.join(dir, 'jot');
+    }
+    const installed = path.join(installDir(), 'bin', 'jot');
+    return isExe(installed) ? installed : null;
+}
+
+function jotCommand() { return findJot() || 'jot'; }
+
+// ---- installing jot (as tools/install.sh does: the latest release, into ~/.jot) ----
+
+function download(url, redirects = 5) {
+    return new Promise((resolve, reject) => {
+        https.get(url, { headers: { 'User-Agent': 'jot-vscode' } }, (res) => {
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
+                res.resume();
+                resolve(download(new URL(res.headers.location, url).toString(), redirects - 1));
+                return;
+            }
+            if (res.statusCode !== 200) { res.resume(); reject(new Error(`${url}: HTTP ${res.statusCode}`)); return; }
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => resolve(Buffer.concat(chunks)));
+            res.on('error', reject);
+        }).on('error', reject);
+    });
+}
+
+// the files of a .tar (name -> {data, mode}); ustar, with pax headers for long names
+function untar(buf) {
+    const files = [];
+    let off = 0, paxPath = null;
+    const str = (a, b) => buf.toString('utf8', a, b).replace(/\0.*$/s, '');
+    while (off + 512 <= buf.length) {
+        if (buf[off] === 0) break;
+        let name = str(off, off + 100);
+        const mode = parseInt(str(off + 100, off + 108).trim() || '644', 8);
+        const size = parseInt(str(off + 124, off + 136).trim() || '0', 8);
+        const type = String.fromCharCode(buf[off + 156] || 48);
+        const prefix = str(off + 345, off + 500);
+        if (prefix) name = prefix + '/' + name;
+        const data = buf.subarray(off + 512, off + 512 + size);
+        off += 512 + Math.ceil(size / 512) * 512;
+        if (type === 'x') {
+            const m = /\d+ path=([^\n]*)\n/.exec(data.toString('utf8'));
+            paxPath = m ? m[1] : null;
+            continue;
+        }
+        if (type === 'g') continue;
+        if (paxPath) { name = paxPath; paxPath = null; }
+        if (type === '0' || type === '\0') files.push({ name, mode, data });
+    }
+    return files;
+}
+
+async function installJot() {
+    if (process.platform !== 'linux' || process.arch !== 'x64') {
+        vscode.window.showErrorMessage('Jot runs on Linux x86-64. (Its programs run in any browser: try the playground.)');
+        return false;
+    }
+    try {
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Installing Jot' }, async (progress) => {
+            progress.report({ message: 'downloading the latest release\u2026' });
+            const tgz = await download(RELEASES + 'jot-linux-x86_64.tar.gz');
+            const sum = (await download(RELEASES + 'jot-linux-x86_64.tar.gz.sha256')).toString().split(/\s+/)[0];
+            if (crypto.createHash('sha256').update(tgz).digest('hex') !== sum) throw new Error('the download is damaged (checksum)');
+            progress.report({ message: 'unpacking\u2026' });
+            const files = untar(zlib.gunzipSync(tgz));
+            const dest = installDir();
+            const tmp = dest + '.new';
+            fs.rmSync(tmp, { recursive: true, force: true });
+            for (const f of files) {
+                const rel = f.name.split('/').slice(1).join('/');          // (without jot-<version>/)
+                if (!rel || rel.split('/').includes('..')) continue;
+                const p = path.join(tmp, rel);
+                fs.mkdirSync(path.dirname(p), { recursive: true });
+                fs.writeFileSync(p, f.data, { mode: f.mode & 0o777 });
+            }
+            if (!isExe(path.join(tmp, 'bin', 'jot'))) throw new Error('the release does not hold bin/jot');
+            fs.rmSync(dest + '.old', { recursive: true, force: true });
+            if (fs.existsSync(dest)) fs.renameSync(dest, dest + '.old');
+            fs.renameSync(tmp, dest);
+            fs.rmSync(dest + '.old', { recursive: true, force: true });
+        });
+    } catch (e) {
+        vscode.window.showErrorMessage(`Could not install Jot: ${e.message}`);
+        return false;
+    }
+    const bin = path.join(installDir(), 'bin');
+    vscode.window.showInformationMessage(`Jot was installed to ${bin.replace(os.homedir(), '~')}. For terminals, add it to your PATH (or run the install script, which does): curl -fsSL https://david-andrew.github.io/slop-lang/install | bash`);
+    return true;
+}
+
+// no jot: offer to install it
+async function offerInstall() {
+    const choice = await vscode.window.showInformationMessage(
+        'Jot is not installed: the language server and the run commands need the jot compiler.',
+        'Install Jot', 'Set jot.path', 'Not now');
+    if (choice === 'Install Jot') {
+        if (await installJot()) vscode.commands.executeCommand('jot.restartServer');
+    } else if (choice === 'Set jot.path') {
+        vscode.commands.executeCommand('workbench.action.openSettings', 'jot.path');
+    }
 }
 
 // ---- starting, stopping ----
@@ -135,6 +248,10 @@ function jotCommand() {
 function isJot(doc) { return doc.languageId === 'jot' && doc.uri.scheme === 'file'; }
 
 function start() {
+    if (!findJot()) {
+        offerInstall();
+        return;
+    }
     const conn = new Connection(jotCommand(), onNotification, (code, signal) => {
         if (client !== conn) return;
         client = null;
@@ -178,6 +295,10 @@ function runInTerminal(args) {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'jot') return;
     const doc = editor.document;
+    if (!findJot()) {
+        offerInstall();
+        return;
+    }
     doc.save().then(() => {
         let term = vscode.window.terminals.find((t) => t.name === 'Jot');
         if (!term) term = vscode.window.createTerminal('Jot');
@@ -302,6 +423,9 @@ function activate(context) {
         vscode.commands.registerCommand('jot.run', () => runInTerminal([])),
         vscode.commands.registerCommand('jot.runWeb', () => runInTerminal(['--web'])),
         vscode.commands.registerCommand('jot.test', () => runInTerminal(['test'])),
+        vscode.commands.registerCommand('jot.install', async () => {
+            if (await installJot()) vscode.commands.executeCommand('jot.restartServer');
+        }),
         vscode.commands.registerCommand('jot.restartServer', () => {
             restarts = 0;
             const old = client;

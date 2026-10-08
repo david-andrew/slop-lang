@@ -2,9 +2,8 @@
   "name": "jot",
   "displayName": "Jot",
   "description": "The Jot language: highlighting, errors as you type, hover, go to definition, references, rename, completion, signature help, inlay type hints, outline; run files in a terminal or the browser",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "jot-lang",
-  "license": "MIT",
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -26,7 +25,11 @@
         "extensions": [
           ".jot"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/file.png",
+          "dark": "./images/file.png"
+        }
       }
     ],
     "grammars": [
@@ -60,6 +63,10 @@
       {
         "command": "jot.restartServer",
         "title": "Jot: Restart the Language Server"
+      },
+      {
+        "command": "jot.install",
+        "title": "Jot: Install or Upgrade the Jot Compiler"
       }
     ],
     "menus": {
@@ -112,5 +119,10 @@
         }
       }
     }
+  },
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/david-andrew/slop-lang"
   }
 }

@@ -1,3 +1,5 @@
+<img src="assets/logo-256.png" alt="Jot: a white clover blossom" width="160" align="right">
+
 # Jot
 
 Jot is a small, compiled, statically typed language that feels like a scripting language,
@@ -69,6 +71,16 @@ draw = ():
   C compiler in `stage0/` bootstraps it.
 
 ## Getting started
+
+Install (Linux x86-64; into `~/.jot`, added to your PATH; run again, or `jot upgrade`, to upgrade):
+
+```
+curl -fsSL https://david-andrew.github.io/slop-lang/install | bash
+```
+
+Or try it in the browser: [the playground](https://david-andrew.github.io/slop-lang/playground/).
+
+From source:
 
 Requirements: Linux x86-64; a C compiler is needed once, to build the bootstrap compiler.
 
