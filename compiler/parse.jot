@@ -1565,6 +1565,7 @@ desugar_loopx = (lx: int) -> int:
             iv = mk(.ident, pos)
             nodes[iv].name = i32(ixname)
             set_list(f, [iv, kid(seq, 0)])
+            nodes[f].ival = 1         # (index, element): not unpacking
             nodes[f].a = nodes[seq].a
             stmts = pre
             loop i in [0..nkids(body)): stmts.push(kid(body, i))

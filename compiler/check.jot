@@ -998,6 +998,7 @@ soa_loop = (s: int):
     ik = nodes[it].kind
     if ik != .ident and ik != .field: fatal(pos, "a loop over a soa array needs the array in a variable")
     nv = nkids(s)
+    if nv == 2 and nodes[s].ival != 1: fatal(pos, "`loop a, b in` unpacks pairs; to count the elements write `loop i in 0.. and p in ps`")
     pv = kid(s, nv - 1)
     ixn = "__sl{bc_count}"
     bc_count += 1
@@ -1015,8 +1016,32 @@ soa_loop = (s: int):
     set_list(s, [bc_ident(ixn, pos)])
     nodes[s].a = i32(r)
 
+# loop a, b in xs (an array of pairs): loop t in xs: let a, b = t
+unpack_loop = (s: int):
+    if nkids(s) != 2 or nodes[s].ival == 1: return
+    it = int(nodes[s].a)
+    if nodes[it].kind == .range: fatal(nodes[s].pos, "`loop a, b in` unpacks pairs; a range has single numbers")
+    t = prune(check_expr(it, 0))
+    nodes[s].a = i32(last_checked)
+    if types[t].kind != .array: return
+    pos = nodes[s].pos
+    et = prune(int(types[t].elem))
+    if types[et].kind != .tuple or int(types[et].nargs) != 2: fatal(pos, "`loop a, b in xs` unpacks pairs, but the elements are {type_str(et)}; to count them write `loop i in 0.. and x in xs`")
+    if has_flag(s, NF_MUT): fatal(pos, "`loop mut` cannot unpack pairs")
+    tn = "__lt{bc_count}"
+    bc_count += 1
+    d = mk(.vardecl, pos)
+    set_list(d, kids(s))
+    nodes[d].b = i32(bc_ident(tn, pos))
+    body = int(nodes[s].b)
+    stmts = [d]
+    loop x in kids(body): stmts.push(x)
+    set_list(body, stmts)
+    set_list(s, [bc_ident(tn, pos)])
+
 check_for = (s: int):
     soa_loop(s)
+    unpack_loop(s)
     mark = scope_mark()
     enter_loop()
     it = int(nodes[s].a)

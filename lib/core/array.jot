@@ -94,7 +94,7 @@ range = (a: int, b: int) -> int[]:
 
 enumerate[T] = (xs: T[]) -> (int, T)[]:
     out: (int, T)[]
-    loop i, x in xs: out.push((i, x))
+    loop i in 0.. and x in xs: out.push((i, x))
     out
 
 zip[A, B] = (xs: A[], ys: B[]) -> (A, B)[]:
@@ -196,7 +196,7 @@ sorted[T] = (xs: T[]) -> T[]:
 
 __fmt_join[T] = (xs: T[], sep: str) -> str:
     buf: u8[]
-    loop i, x in xs:
+    loop i in 0.. and x in xs:
         if i > 0: __buf_append_str(buf, sep)
         __fmt(buf, x)
     str_from_bytes(buf)

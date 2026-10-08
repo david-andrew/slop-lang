@@ -1078,7 +1078,7 @@ resolve_by_types = (name: int, ts: int[], pos: int, required: bool) -> int:
     best = -1
     bestcost = 1 << 30
     bestb: int[]
-    loop k, d in decls:
+    loop k in 0.. and d in decls:
         sig = fn_sig(d)
         if nkids(d) != ts.len(): continue
         binds = fill(0, int(sig.ntp))
@@ -1231,7 +1231,7 @@ check_intrinsic = (n: int, id: IN, args: int[], expected: int) -> int:
         s = mk(.str_lit, nodes[n].pos)
         nodes[s].aux = 1
         parts: int[]
-        loop i, a in args:
+        loop i in 0.. and a in args:
             if nodes[a].kind == .namedarg: fatal(nodes[a].pos, "print() does not take named arguments")
             if i > 0:
                 sp = mk(.str_lit, nodes[n].pos)
