@@ -1,0 +1,13 @@
+<input>:1:7: error: operator + is not defined for int and str
+    y = x + "no"
+          ^
+5
+panic: <input>:1: index 10 out of bounds (length 3)
+[1, 2, 3]
+crashed (signal 11); the session is as it was before this input
+"after a crash"
+<input>:1:1: error: unknown name 'undefined_name'
+    undefined_name
+    ^
+3
+[exit 3]

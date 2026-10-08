@@ -90,5 +90,20 @@ if compiler != "jot0" and target == "native":
         else:
             print(f"FAIL {name}: expected an error containing {want!r}\n{r.stderr}")
             failed += 1
+    # the interactive prompt: tests/repl/*.in typed at `jot` (stdout and stderr) against .out
+    for t in sorted(glob.glob(os.path.join(root, "tests", "repl", "*.in"))):
+        name = "repl/" + os.path.basename(t)[:-3]
+        if pattern not in name: continue
+        exp_path = t[:-3] + ".out"
+        r = subprocess.run([jot], stdin=open(t), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                           env=dict(os.environ, JOT_LIB=os.path.join(root, "lib")), timeout=60, cwd=os.path.dirname(t))
+        out = r.stdout + (f"[exit {r.returncode}]\n" if r.returncode != 0 else "")
+        if not os.path.exists(exp_path):
+            print(f"NEW  {name}:\n{out}")
+            failed += 1
+        elif out != open(exp_path).read():
+            print(f"FAIL {name}:\n{out}")
+            failed += 1
+        else: passed += 1
 print(f"{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

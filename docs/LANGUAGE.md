@@ -38,6 +38,31 @@ print(squares, inc(41))
 print(nums .* 2, sqrt.([4.0 9.0]))     # elementwise
 ```
 
+### The interactive prompt
+
+`jot` with no file starts an interactive prompt. Type declarations and statements; they run
+as you enter them, and the value of an expression at the end of an input is shown:
+
+```
+>>> xs = [3 1 2]
+>>> xs.sort()
+>>> xs .* 10
+[10, 20, 30]
+>>> f = (n: int):
+...     n * n
+...
+>>> f(12)
+144
+```
+
+A line ending with `:` starts a block and an empty line ends it. Names stay declared, and
+declaring one again replaces it (code entered before keeps the old one). Each input is compiled
+to machine code that runs in a session process, so it runs as fast as a program does. If an
+input has errors, or panics, or crashes, or is stopped with ctrl-c, the session is exactly as it
+was before it. `:type expr` shows an expression's type, tab completes names (including fields
+after a `.`), up and down recall earlier lines, and ctrl-d or `exit` leaves. Input can also be
+piped in (`jot < script.txt`).
+
 ## 2. Lexical structure
 
 * Comments start with `#` and run to end of line.

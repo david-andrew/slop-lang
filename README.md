@@ -74,6 +74,7 @@ Requirements: Linux x86-64; a C compiler is needed once, to build the bootstrap 
 
 ```
 tools/bootstrap.sh            # stage0 (C) -> jot1 -> jot2 -> jot3, checks jot2 == jot3, installs bin/jot
+bin/jot                       # an interactive prompt
 bin/jot examples/shapes.jot   # compile and run
 bin/jot examples/lumen/lumen.jot          # the 2D demo game
 bin/jot examples/dunes/dunes.jot          # the 3D demo game
@@ -138,6 +139,7 @@ compiler/      the Jot compiler, in Jot
   wasm                   IR -> WebAssembly, packaged into one HTML file
   glsl                   shader functions written in Jot -> GLSL ES 3.00
   ide, lsp               the language server (jot lsp): what the checker learns, for editors
+  repl                   the interactive prompt: compiles each input against a live session
 stage0/        bootstrap compiler in C (compiles compiler/ once)
 lib/core/      runtime, strings, arrays, maps, math, files, formatting
 lib/std/       thread pool and parallel helpers, numeric arrays (nd.jot)

@@ -1,0 +1,35 @@
+# values persist; an expression at the end of an input is shown
+x = 5
+x * 2
+s = "hi"
+s + "!"
+xs = [1, 2, 3]
+xs.push(4)
+xs
+f = (n: int): n * n + x
+f(7)
+# a block ends with an empty line
+g = (n: int) -> int:
+    t = 0
+    loop i in [0..n]:
+        t += i
+    t
+
+g(10)
+struct P:
+    a: int
+    b: f64
+
+p = P(1, 2.5)
+p
+p.b * 2.0
+m = {"a": 1, "b": 2}
+m["b"]
+inc = (a: int, b: int): a + b
+inc(1, _)(41)
+# declaring again replaces
+f = (n: int): n * 100
+f(3)
+squares = parallel_map([0..8), (i: int) -> int: i * i)
+squares
+parallel_map([0..4), (i: int) -> int: i + 1)

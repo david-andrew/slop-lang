@@ -21,9 +21,10 @@ use 'elf.jot'
 use 'wasm.jot'
 use 'ide.jot'
 use 'lsp.jot'
+use 'repl.jot'
 
 usage = ():
-    eprint("usage: jot [--web] [--release] file.jot [args...]   (--web: build for the browser and open it there)\n       jot test file.jot\n       jot check file.jot\n       jot lsp   (a language server for editors, on standard input and output)\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
+    eprint("usage: jot                                          (an interactive prompt)\n       jot [--web] [--release] file.jot [args...]   (--web: build for the browser and open it there)\n       jot test file.jot\n       jot check file.jot\n       jot lsp   (a language server for editors, on standard input and output)\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
     exit(2)
 
 find_lib_dir = () -> str:
@@ -86,6 +87,13 @@ scan_build_block = (path: str):
             opt_release = val == "release"
 
 lower_only = false      # (the language server: what lowering finds wrong, without code)
+# the interactive prompt (repl.jot): the program's main is the session's server, and there is
+# room after its globals for those later inputs declare
+repl_image = false
+bss_reserve = 0
+img_text_addr = 0
+img_ro_addr = 0
+img_data_addr = 0
 
 emit_function = ():
     if lower_only: return
@@ -125,6 +133,7 @@ compile = (path: str, out0: str) -> str:
     check_program(path)
     # (functions left unchecked after errors in them cannot be lowered)
     if lower_only and ide_skip.len() > 0: return ""
+    if repl_image: repl_set_main()
     t1 = time()
     roots: int[]
     loop f in init_fns: roots.push(lf_of_inst(f))
@@ -201,8 +210,11 @@ compile = (path: str, out0: str) -> str:
         x64_stubs()
         entry = x64_entry(roots, main_lf)
         text_off, ro_off, data_off = elf_layout(code.len(), rodata.len())
-        x64_resolve(ELF_BASE + text_off, ELF_BASE + ro_off, ELF_BASE + data_off)
-        ok = write_elf(out, code, entry, rodata, data_size + 8)
+        img_text_addr = ELF_BASE + text_off
+        img_ro_addr = ELF_BASE + ro_off
+        img_data_addr = ELF_BASE + data_off
+        x64_resolve(img_text_addr, img_ro_addr, img_data_addr)
+        ok = write_elf(out, code, entry, rodata, data_size + 8 + bss_reserve)
         size = code.len()
     t3 = time()
     if timing:
@@ -212,8 +224,11 @@ compile = (path: str, out0: str) -> str:
 
 main = ():
     a = args()
-    if a.len() < 2: usage()
     lib_dir = find_lib_dir()
+    # no file: the interactive prompt
+    if a.len() < 2 or a[1] == "repl":
+        repl_main()
+        return
     if a[1] == "build":
         if a.len() < 3: usage()
         path = ""
