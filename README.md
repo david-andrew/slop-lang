@@ -1,6 +1,18 @@
-<img src="assets/logo-256.png" alt="Jot: a white clover blossom" width="160" align="right">
+<p align="center">
+  <img src="assets/logo-256.png" alt="Jot: a white clover blossom" width="200">
+</p>
 
-# Jot
+<h1 align="center">jot</h1>
+
+<p align="center"><b>a simple game dev language</b></p>
+
+<p align="center">
+  <a href="https://github.com/david-andrew/slop-lang/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/david-andrew/slop-lang?label=release&color=2f6a7a"></a>
+  <a href="https://github.com/david-andrew/slop-lang/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/david-andrew/slop-lang/test.yml?label=tests"></a>
+  <a href="https://david-andrew.github.io/slop-lang/"><img alt="Website" src="https://img.shields.io/github/actions/workflow/status/david-andrew/slop-lang/site.yml?label=website"></a>
+  <a href="https://david-andrew.github.io/slop-lang/playground/"><img alt="Try it in the browser" src="https://img.shields.io/badge/playground-try%20it%20in%20the%20browser-2f6a7a"></a>
+  <img alt="Platform: Linux x86-64 and the web" src="https://img.shields.io/badge/platform-linux%20x86--64%20%7C%20web-555">
+</p>
 
 Jot is a small, compiled, statically typed language that feels like a scripting language,
 built for making games. `jot game.jot` compiles the whole program and runs it in a blink;

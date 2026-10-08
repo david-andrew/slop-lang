@@ -945,6 +945,7 @@ screen_width = () -> int    # The screen's size in 2D drawing units: the size gi
 screen_height = () -> int
 screen_size = () -> vec2
 pixel_size = () -> vec2
+aspect_ratio = () -> f64    # width / height of the picture 3D draws into (for a projection: perspective(fov, aspect_ratio(), ...)): the window's, or the design area's when the screen fit shows just that (screen.jot)
 visible_rect = () -> vec4    # the part of the 2D plane the screen shows, as (x, y, width, height): with screen_fit(.expand) (the default) the design area centered in a window of any shape and what is around it (draw backgrounds over this to fill the window); with bars, just the design area
 frame_time = () -> f64
 fps = () -> f64

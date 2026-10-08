@@ -137,6 +137,12 @@ screen_size = () -> vec2:
     __screen_layout()
     vec2(f32(__units_w), f32(__units_h))
 pixel_size = () -> vec2: vec2(f32(__win_w), f32(__win_h))
+# width / height of the picture 3D draws into (for a projection: perspective(fov, aspect_ratio(),
+# ...)): the window's, or the design area's when the screen fit shows just that (screen.jot)
+aspect_ratio = () -> f64:
+    __screen_layout()
+    if __canvas_on and __canvas_whole: return (__units_w * __map_sx) / max(__units_h * __map_sy, 1.0)
+    f64(__win_w) / f64(max(__win_h, 1))
 # the part of the 2D plane the screen shows, as (x, y, width, height): with screen_fit(.expand)
 # (the default) the design area centered in a window of any shape and what is around it (draw
 # backgrounds over this to fill the window); with bars, just the design area

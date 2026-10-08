@@ -109,6 +109,15 @@ def markdown(src):
             out.append(f'<h{n} id="{s}"><a class="anchor" href="#{s}">{text}</a></h{n}>')
             i += 1
             continue
+        if re.match(r"^<(p|h[1-6]|div|img|a|table|details|picture)\b", l):
+            # raw HTML: as it is (until an empty line), images relative to the site's root
+            flush()
+            block = []
+            while i < len(lines) and lines[i].strip():
+                block.append(lines[i])
+                i += 1
+            out.append(re.sub(r'src="assets/', 'src="../assets/', "\n".join(block)))
+            continue
         if l.startswith("|"):
             flush()
             rows = []
@@ -180,12 +189,12 @@ def build_docs():
         tocs = "".join(f'<a class="h{n}" href="#{s}">{t}</a>' for n, s, t in toc)
         main = f'<div class="doc"><aside><div class="pages">{pages}</div><div class="toc">{tocs}</div></aside><main>{body}</main></div>'
         here_page = "docs/start.html" if name == "start.html" else "docs/" + name
-        open(os.path.join(out, "docs", name), "w").write(page(f"{title} — Jot", main, here_page, "../"))
+        open(os.path.join(out, "docs", name), "w").write(page(f"{title} | Jot", main, here_page, "../"))
 
 HOME = """
 <section class="hero">
   <div>
-    <h1>Jot: <span>scripts</span> that compile to games.</h1>
+    <h1><span>jot</span>: a simple game dev language</h1>
     <p class="lead">A small, statically typed language that feels like Python and runs like C. One command
     compiles and runs your program in milliseconds, as a native Linux executable or as a single web page.</p>
     <pre class="install"><code>curl -fsSL https://david-andrew.github.io/slop-lang/install | bash</code></pre>
@@ -231,8 +240,9 @@ def main():
     os.makedirs(out)
     shutil.copy(os.path.join(here, "style.css"), out)
     for f in ["icon-32.png", "icon-64.png", "logo-512.png"]: shutil.copy(os.path.join(root, "assets", f), out)
+    shutil.copytree(os.path.join(root, "assets"), os.path.join(out, "assets"))
     shutil.copy(os.path.join(root, "tools", "playground", "highlight.js"), out)
-    open(os.path.join(out, "index.html"), "w").write(page("Jot — a small, fast language for games", HOME, "index.html", ""))
+    open(os.path.join(out, "index.html"), "w").write(page("Jot programming language", HOME, "index.html", ""))
     build_docs()
     os.makedirs(os.path.join(out, "playground"))
     subprocess.run([sys.executable, os.path.join(root, "tools", "playground.py"), os.path.join(out, "playground", "index.html")], check=True)
