@@ -3,7 +3,7 @@ bin/
 *.o
 /tmp/
 tools/prof
-bench/
+bench/big.*
 tools/icount
 build/
 __pycache__/

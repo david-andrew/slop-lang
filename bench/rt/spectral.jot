@@ -1,0 +1,33 @@
+a = (i: int, j: int) -> f64: 1.0 / f64((i + j) * (i + j + 1) / 2 + i + 1)
+
+mul_av = (v: f64[], out: mut f64[]):
+    let n = v.len()
+    loop i in [0..n):
+        s = 0.0
+        loop j in [0..n): s += a(i, j) * v[j]
+        out[i] = s
+
+mul_atv = (v: f64[], out: mut f64[]):
+    let n = v.len()
+    loop i in [0..n):
+        s = 0.0
+        loop j in [0..n): s += a(j, i) * v[j]
+        out[i] = s
+
+mul_atav = (v: f64[], out: mut f64[], tmp: mut f64[]):
+    mul_av(v, tmp)
+    mul_atv(tmp, out)
+
+n = 1500
+u = fill(1.0, n)
+v = fill(0.0, n)
+tmp = fill(0.0, n)
+loop _ in [0..10):
+    mul_atav(u, v, tmp)
+    mul_atav(v, u, tmp)
+vbv = 0.0
+vv = 0.0
+loop i in [0..n):
+    vbv += u[i] * v[i]
+    vv += v[i] * v[i]
+print("{sqrt(vbv / vv):.9}")

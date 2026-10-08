@@ -1,0 +1,16 @@
+size = 1600
+total = 0
+loop y in [0..size):
+    ci = 2.0 * f64(y) / f64(size) - 1.0
+    loop x in [0..size):
+        cr = 2.0 * f64(x) / f64(size) - 1.5
+        zr = 0.0
+        zi = 0.0
+        k = 0
+        loop k < 50 and zr * zr + zi * zi <= 4.0:
+            t = zr * zr - zi * zi + cr
+            zi = 2.0 * zr * zi + ci
+            zr = t
+            k += 1
+        if k == 50: total += 1
+print(total)

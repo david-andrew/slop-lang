@@ -1,0 +1,74 @@
+# Hot loops of a game, timed per element (release build), next to bench/loops/loops.c:
+# particles as an array of structs and as struct-of-arrays, arrays held in a struct, plain
+# arrays, a dotted expression, sin and cos. Lines: "<name> <ns per element>".
+build:
+    opt = release
+
+struct P:
+    x: f64
+    y: f64
+    vx: f64
+    vy: f64
+    life: f64
+    tag: int
+
+struct World:
+    xs: f64[]
+    vs: f64[]
+
+const N = 1_000_000
+const R = 20
+
+aos = (ps: mut P[]):
+    loop mut p in ps:
+        p.x += p.vx * 0.016
+        p.y += p.vy * 0.016
+
+soa = (ps: mut soa P[]):
+    loop mut p in ps:
+        p.x += p.vx * 0.016
+        p.y += p.vy * 0.016
+
+fields = (w: mut World):
+    loop i in [0..w.xs.len()): w.xs[i] += w.vs[i] * 0.016
+
+arrays = (xs: mut f64[], vs: f64[]):
+    loop i in [0..xs.len()): xs[i] += vs[i] * 0.016
+
+trig = (n: int, c: bool) -> f64:
+    s = 0.0
+    loop i in [0..n):
+        if c: s += cos(f64(i) * 0.001)
+        else: s += sin(f64(i) * 0.001)
+    s
+
+main = ():
+    ps: P[]
+    loop i in [0..N): ps.push(P(f64(i), 0.0, 1.0, 2.0, 5.0, i))
+    ss: soa P[] = ps
+    w = World(fill(0.0, N), fill(1.5, N))
+    xs = fill(0.0, N)
+    vs = fill(1.5, N)
+    ns = (t: f64, n: int) -> str: "{t * 1e9 / f64(n):.2}"
+    t = time()
+    loop _ in [0..R): aos(ps)
+    print("aos_update {ns(time() - t, R * N)}")
+    t = time()
+    loop _ in [0..R): soa(ss)
+    print("soa_update {ns(time() - t, R * N)}")
+    t = time()
+    loop _ in [0..R): fields(w)
+    print("struct_field_arrays {ns(time() - t, R * N)}")
+    t = time()
+    loop _ in [0..R): arrays(xs, vs)
+    print("plain_arrays {ns(time() - t, R * N)}")
+    t = time()
+    loop _ in [0..R): xs = xs .+ vs .* 0.016
+    print("dotted_new_array {ns(time() - t, R * N)}")
+    t = time()
+    s = trig(10_000_000, false)
+    print("sin {ns(time() - t, 10_000_000)}")
+    t = time()
+    c = trig(10_000_000, true)
+    print("cos {ns(time() - t, 10_000_000)}")
+    print("check {s + c + ps[5].x + ss[5].x + w.xs[3] + xs[2]:.1}")

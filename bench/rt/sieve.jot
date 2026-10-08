@@ -1,0 +1,12 @@
+main = ():
+    n = 20000000
+    comp = fill(false, n + 1)
+    count = 0
+    loop i in [2..n + 1):
+        if not comp[i]:
+            count += 1
+            j = i * i
+            loop j <= n:
+                comp[j] = true
+                j += i
+    print(count)

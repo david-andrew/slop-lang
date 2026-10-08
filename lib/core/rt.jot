@@ -25,8 +25,11 @@ __tid = () -> int:
     ((sp - __tstack_base) >> __TSTACK_SHIFT) + 1
 
 # ---------------- low level memory ----------------
-# per-thread allocator state: [heap_cur, heap_end, live count, free list heads (64 size classes)]
+# per-thread allocator state: [heap_cur, heap_end, live count, free list heads (64 size classes),
+# large blocks freed for reuse (a list), the bytes in that list]
 const __TS_WORDS = 72
+const __TS_BIG = 67
+const __BIG_KEEP = 64 << 20            # (native: at most this much is kept; a web page keeps all)
 __tstate: *int = null
 
 __ts = () -> *int:
@@ -73,6 +76,10 @@ __alloc = (size: int) -> *u8:
     n = size + 16
     if n > 262144:
         total = (n + 65535) & ~65535
+        h = __big_take(t, total)
+        if h != null:
+            mem_set((h as *u8) + 16, 0, h[0] - 16)
+            return (h as *u8) + 16
         h = __os_pages(total) as *int
         h[0] = total
         h[1] = -1
@@ -102,12 +109,42 @@ __free = (p: *u8):
     t[2] -= 1
     h = (p - 16) as *int
     if h[1] == -1:
-        __os_free_pages(h as *u8, h[0])
+        # (kept for the next large allocation: no fresh pages to fault in, and wasm memory is
+        # never given back anyway)
+        when TARGET == "wasm": __big_keep(t, h)
+        else:
+            if t[__TS_BIG + 1] + h[0] <= __BIG_KEEP: __big_keep(t, h)
+            else: __os_free_pages(h as *u8, h[0])
         return
     c = h[0]
     lists = (t + 3) as **u8
     (h as **u8)[0] = lists[c]
     lists[c] = h as *u8
+
+__big_keep = (t: *int, h: *int):
+    h[2] = t[__TS_BIG]
+    t[__TS_BIG] = h as int
+    t[__TS_BIG + 1] += h[0]
+
+# the smallest kept large block of at least `total` bytes (native: at most twice that), or null
+__big_take = (t: *int, total: int) -> *int:
+    best: *int = null
+    prev: *int = null
+    best_prev: *int = null
+    h = t[__TS_BIG] as *int
+    loop h != null:
+        ok = h[0] >= total
+        when TARGET != "wasm": ok = ok and h[0] <= 2 * total
+        if ok and (best == null or h[0] < best[0]):
+            best = h
+            best_prev = prev
+        prev = h
+        h = h[2] as *int
+    if best == null: return null
+    if best_prev == null: t[__TS_BIG] = best[2]
+    else: best_prev[2] = best[2]
+    t[__TS_BIG + 1] -= best[0]
+    best
 
 # Grow an allocation to at least `size` bytes, keeping the first `used` bytes. Large blocks are
 # remapped in place (no copy); small ones stay put if their size class has room.
