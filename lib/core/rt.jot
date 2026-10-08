@@ -203,6 +203,7 @@ fn __panic(msg: str):
     __exit(101)
 
 fn __panic_bounds(i: int, n: int, loc: str):
+    if i < 0: __panic("{loc}: index {i} out of bounds (length {n}); indexes count from 0 (for the last element use xs.last() or xs[xs.len() - 1])")
     __panic("{loc}: index {i} out of bounds (length {n})")
 
 fn __panic_unwrap(loc: str):
