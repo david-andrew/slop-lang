@@ -10,33 +10,33 @@ without imports. Functions can be called as `f(x, y)` or `x.f(y)`.
 Generic array utilities. Arrays are values with copy-on-write storage.  
 
 ```
-fn is_empty[T](xs: [T]) -> bool
-fn first[T](xs: [T]) -> T
-fn last[T](xs: [T]) -> T
-fn contains[T](xs: [T], x: T) -> bool
-fn index_of[T](xs: [T], x: T) -> int
-fn map[T, U](xs: [T], f: fn(T) -> U) -> [U]
-fn filter[T](xs: [T], f: fn(T) -> bool) -> [T]
-fn each[T](xs: [T], f: fn(T))
-fn reduce[T, A](xs: [T], init: A, f: fn(A, T) -> A) -> A
-fn any[T](xs: [T], f: fn(T) -> bool) -> bool
-fn all[T](xs: [T], f: fn(T) -> bool) -> bool
-fn find[T](xs: [T], f: fn(T) -> bool) -> T?
-fn count[T](xs: [T], f: fn(T) -> bool) -> int
-fn sum[T](xs: [T]) -> T
-fn min[T](xs: [T]) -> T
-fn max[T](xs: [T]) -> T
-fn reverse[T](xs: mut [T])
-fn reversed[T](xs: [T]) -> [T]
-fn range(a: int, b: int) -> [int]
-fn enumerate[T](xs: [T]) -> [(int, T)]
-fn zip[A, B](xs: [A], ys: [B]) -> [(A, B)]
-fn flatten[T](xss: [[T]]) -> [T]
-fn swap[T](xs: mut [T], i: int, j: int)
-fn sort[T](xs: mut [T])    # sort in place (ascending, using <)
-fn sort_with[T](xs: mut [T], less: fn(T, T) -> bool)    # sort in place with a custom "less than" function
-fn sort_by[T, K](xs: mut [T], key: fn(T) -> K)    # sort in place by a key
-fn sorted[T](xs: [T]) -> [T]
+is_empty[T] = (xs: T[]) -> bool
+first[T] = (xs: T[]) -> T
+last[T] = (xs: T[]) -> T
+contains[T] = (xs: T[], x: T) -> bool
+index_of[T] = (xs: T[], x: T) -> int
+map[T, U] = (xs: T[], f: (T) -> U) -> U[]
+filter[T] = (xs: T[], f: (T) -> bool) -> T[]
+each[T] = (xs: T[], f: (T) -> void)
+reduce[T, A] = (xs: T[], init: A, f: (A, T) -> A) -> A
+any[T] = (xs: T[], f: (T) -> bool) -> bool
+all[T] = (xs: T[], f: (T) -> bool) -> bool
+find[T] = (xs: T[], f: (T) -> bool) -> T?
+count[T] = (xs: T[], f: (T) -> bool) -> int
+sum[T] = (xs: T[]) -> T
+min[T] = (xs: T[]) -> T
+max[T] = (xs: T[]) -> T
+reverse[T] = (xs: mut T[])
+reversed[T] = (xs: T[]) -> T[]
+range = (a: int, b: int) -> int[]
+enumerate[T] = (xs: T[]) -> (int, T)[]
+zip[A, B] = (xs: A[], ys: B[]) -> (A, B)[]
+flatten[T] = (xss: T[][]) -> T[]
+swap[T] = (xs: mut T[], i: int, j: int)
+sort[T] = (xs: mut T[])    # sort in place (ascending, using <)
+sort_with[T] = (xs: mut T[], less: (T, T) -> bool)    # sort in place with a custom "less than" function
+sort_by[T, K] = (xs: mut T[], key: (T) -> K)    # sort in place by a key
+sorted[T] = (xs: T[]) -> T[]
 ```
 
 ### map.jot
@@ -46,22 +46,22 @@ The first two fields must stay `keys` and `vals` (the compiler iterates them in 
 
 ```
 struct Map[K, V]
-fn hash(x: int) -> u64    # full 64-bit avalanche (murmur3 finalizer): every key bit affects the low bits used for slots, so keys like multiples of 4096 or float bit patterns spread out
-fn hash(x: u64) -> u64
-fn hash(x: bool) -> u64
-fn hash(x)
-fn []=[K, V](m: mut Map[K, V], k: K, v: V)
-fn [][K, V](m: Map[K, V], k: K) -> V
-fn get[K, V](m: Map[K, V], k: K) -> V?
-fn get[K, V](m: Map[K, V], k: K, default: V) -> V
-fn contains[K, V](m: Map[K, V], k: K) -> bool
-fn has[K, V](m: Map[K, V], k: K) -> bool
-fn len[K, V](m: Map[K, V]) -> int
-fn is_empty[K, V](m: Map[K, V]) -> bool
-fn keys[K, V](m: Map[K, V]) -> [K]
-fn values[K, V](m: Map[K, V]) -> [V]
-fn clear[K, V](m: mut Map[K, V])
-fn remove[K, V](m: mut Map[K, V], k: K) -> bool    # remove a key; returns true if it was present. The last entry moves into the hole.
+hash = (x: int) -> u64    # full 64-bit avalanche (murmur3 finalizer): every key bit affects the low bits used for slots, so keys like multiples of 4096 or float bit patterns spread out
+hash = (x: u64) -> u64
+hash = (x: bool) -> u64
+hash = (x)
+([]=)[K, V] = (m: mut Map[K, V], k: K, v: V)
+([])[K, V] = (m: Map[K, V], k: K) -> V
+get[K, V] = (m: Map[K, V], k: K) -> V?
+get[K, V] = (m: Map[K, V], k: K, default: V) -> V
+contains[K, V] = (m: Map[K, V], k: K) -> bool
+has[K, V] = (m: Map[K, V], k: K) -> bool
+len[K, V] = (m: Map[K, V]) -> int
+is_empty[K, V] = (m: Map[K, V]) -> bool
+keys[K, V] = (m: Map[K, V]) -> K[]
+values[K, V] = (m: Map[K, V]) -> V[]
+clear[K, V] = (m: mut Map[K, V])
+remove[K, V] = (m: mut Map[K, V], k: K) -> bool    # remove a key; returns true if it was present. The last entry moves into the hole.
 ```
 
 ### math.jot
@@ -75,58 +75,58 @@ const E = 2.718281828459045
 const INF = 1e308 * 10.0
 const MAX_INT = 9223372036854775807
 const MIN_INT = -9223372036854775807 - 1
-fn abs(x: int) -> int
-fn abs(x: float) -> float
-fn abs(x: f32) -> f32
-fn min(a: int, b: int) -> int
-fn max(a: int, b: int) -> int
-fn min(a: float, b: float) -> float
-fn max(a: float, b: float) -> float
-fn min(a: f32, b: f32) -> f32
-fn max(a: f32, b: f32) -> f32
-fn clamp(x: int, lo: int, hi: int) -> int
-fn clamp(x: float, lo: float, hi: float) -> float
-fn clamp(x: f32, lo: f32, hi: f32) -> f32
-fn sign(x: float) -> float
-fn sign(x: int) -> int
-fn floor(x: float) -> float
-fn ceil(x: float) -> float
-fn round(x: float) -> float
-fn trunc(x: float) -> float
-fn fract(x: float) -> float
-fn mod(x: float, y: float) -> float
-fn mod(x: int, y: int) -> int
-fn is_nan(x: float) -> bool
-fn lerp(a: float, b: float, t: float) -> float
-fn smoothstep(e0: float, e1: float, x: float) -> float
-fn sin(x: float) -> float
-fn cos(x: float) -> float
-fn tan(x: float) -> float
-fn atan(x0: float) -> float
-fn atan2(y: float, x: float) -> float
-fn asin(x: float) -> float
-fn acos(x: float) -> float
-fn exp(x: float) -> float
-fn log(x: float) -> float
-fn log2(x: float) -> float
-fn log10(x: float) -> float
-fn pow(x: float, y: float) -> float
-fn exp(x: f32) -> f32    # f32 versions (shader code, games): computed in double with shorter polynomials, so they are within an ulp of the f32 result at a fraction of the cost of the full-precision ones
-fn log(x: f32) -> f32
-fn pow(x: f32, y: f32) -> f32
-fn pow(x: int, n: int) -> int
-fn hypot(x: float, y: float) -> float
-fn radians(deg: float) -> float
-fn degrees(rad: float) -> float
+abs = (x: int) -> int
+abs = (x: f64) -> f64
+abs = (x: f32) -> f32
+min = (a: int, b: int) -> int
+max = (a: int, b: int) -> int
+min = (a: f64, b: f64) -> f64
+max = (a: f64, b: f64) -> f64
+min = (a: f32, b: f32) -> f32
+max = (a: f32, b: f32) -> f32
+clamp = (x: int, lo: int, hi: int) -> int
+clamp = (x: f64, lo: f64, hi: f64) -> f64
+clamp = (x: f32, lo: f32, hi: f32) -> f32
+sign = (x: f64) -> f64
+sign = (x: int) -> int
+floor = (x: f64) -> f64
+ceil = (x: f64) -> f64
+round = (x: f64) -> f64
+trunc = (x: f64) -> f64
+fract = (x: f64) -> f64
+mod = (x: f64, y: f64) -> f64
+mod = (x: int, y: int) -> int
+is_nan = (x: f64) -> bool
+lerp = (a: f64, b: f64, t: f64) -> f64
+smoothstep = (e0: f64, e1: f64, x: f64) -> f64
+sin = (x: f64) -> f64
+cos = (x: f64) -> f64
+tan = (x: f64) -> f64
+atan = (x0: f64) -> f64
+atan2 = (y: f64, x: f64) -> f64
+asin = (x: f64) -> f64
+acos = (x: f64) -> f64
+exp = (x: f64) -> f64
+log = (x: f64) -> f64
+log2 = (x: f64) -> f64
+log10 = (x: f64) -> f64
+pow = (x: f64, y: f64) -> f64
+exp = (x: f32) -> f32    # f32 versions (shader code, games): computed in double with shorter polynomials, so they are within an ulp of the f32 result at a fraction of the cost of the full-precision ones
+log = (x: f32) -> f32
+pow = (x: f32, y: f32) -> f32
+pow = (x: int, n: int) -> int
+hypot = (x: f64, y: f64) -> f64
+radians = (deg: f64) -> f64
+degrees = (rad: f64) -> f64
 struct Rng
-fn rng(seed: int) -> Rng
-fn next_u64(r: mut Rng) -> u64
-fn next_float(r: mut Rng) -> float    # uniform float in [0, 1)
-fn next_int(r: mut Rng, lo: int, hi: int) -> int    # uniform int in [lo, hi)
-fn seed_random(seed: int)
-fn random() -> float    # random float in [0, 1)
-fn random(lo: float, hi: float) -> float    # random float in [lo, hi)
-fn random_int(lo: int, hi: int) -> int    # random int in [lo, hi)
+rng = (seed: int) -> Rng
+next_u64 = (r: mut Rng) -> u64
+next_float = (r: mut Rng) -> f64    # uniform f64 in [0, 1)
+next_int = (r: mut Rng, lo: int, hi: int) -> int    # uniform int in [lo, hi)
+seed_random = (seed: int)
+random = () -> f64    # random f64 in [0, 1)
+random = (lo: f64, hi: f64) -> f64    # random f64 in [lo, hi)
+random_int = (lo: int, hi: int) -> int    # random int in [lo, hi)
 ```
 
 ### os.jot
@@ -134,26 +134,26 @@ fn random_int(lo: int, hi: int) -> int    # random int in [lo, hi)
 Operating system access: files, arguments, environment, time.  
 
 ```
-fn exit(code: int)
-fn args() -> [str]    # command line arguments (args()[0] is the program path)
-fn env(name: str) -> str?
-fn read_file(path: str) -> str?    # read a whole file; none if it cannot be read
-fn read_bytes(path: str) -> [u8]?
-fn write_file(path: str, contents: str) -> bool
-fn write_bytes(path: str, b: [u8]) -> bool
-fn file_exists(path: str) -> bool
-fn make_executable(path: str) -> bool
-fn delete_file(path: str) -> bool
-fn time() -> float    # seconds since an arbitrary point (monotonic clock)
-fn time_ns() -> int    # nanoseconds since an arbitrary point (monotonic clock)
-fn sleep(seconds: float)
-fn write(s: str)    # print without a trailing newline
-fn eprint(s: str)
-fn list_dir(path: str) -> [str]    # names of the entries in a directory (excluding . and ..)
-fn exe_path() -> str    # absolute path of the running executable
-fn exec(path: str, argv: [str]) -> bool    # replace the current process with another program (returns only on failure)
-fn chmod(path: str, mode: int) -> bool
-fn mkdir(path: str) -> bool
+exit = (code: int)
+args = () -> str[]    # command line arguments (args()[0] is the program path)
+env = (name: str) -> str?
+read_file = (path: str) -> str?    # read a whole file; none if it cannot be read
+read_bytes = (path: str) -> u8[]?
+write_file = (path: str, contents: str) -> bool
+write_bytes = (path: str, b: u8[]) -> bool
+file_exists = (path: str) -> bool
+make_executable = (path: str) -> bool
+delete_file = (path: str) -> bool
+time = () -> f64    # seconds since an arbitrary point (monotonic clock)
+time_ns = () -> int    # nanoseconds since an arbitrary point (monotonic clock)
+sleep = (seconds: f64)
+write = (s: str)    # print without a trailing newline
+eprint = (s: str)
+list_dir = (path: str) -> str[]    # names of the entries in a directory (excluding . and ..)
+exe_path = () -> str    # absolute path of the running executable
+exec = (path: str, argv: str[]) -> bool    # replace the current process with another program (returns only on failure)
+chmod = (path: str, mode: int) -> bool
+mkdir = (path: str) -> bool
 ```
 
 ### rt.jot
@@ -163,7 +163,7 @@ Everything here is called by compiler-generated code. Heap objects (arrays, stri
 share one layout: [rc: int][len: int][cap: int][data...]. rc < 0 means immortal.  
 
 ```
-fn alloc_count() -> int    # number of live heap allocations (useful for leak tests)
+alloc_count = () -> int    # number of live heap allocations (useful for leak tests)
 ```
 
 ### str.jot
@@ -171,60 +171,111 @@ fn alloc_count() -> int    # number of live heap allocations (useful for leak te
 String utilities. Strings are immutable UTF-8 byte sequences; indexing gives bytes.  
 
 ```
-fn is_digit(c: u8) -> bool
-fn is_alpha(c: u8) -> bool
-fn is_alnum(c: u8) -> bool
-fn is_space(c: u8) -> bool
-fn is_upper(c: u8) -> bool
-fn is_lower(c: u8) -> bool
-fn chr(c: int) -> str    # string made of a single byte
-fn find(s: str, sub: str, start: int = 0) -> int
-fn rfind(s: str, sub: str) -> int
-fn find_byte(s: str, c: u8, start: int = 0) -> int
-fn contains(s: str, sub: str) -> bool
-fn starts_with(s: str, prefix: str) -> bool
-fn ends_with(s: str, suffix: str) -> bool
-fn trim(s: str) -> str
-fn trim(s: str, chars: str) -> str    # remove any of the characters in `chars` from both ends
-fn trim_start(s: str) -> str
-fn trim_end(s: str) -> str
-fn split(s: str, sep: str) -> [str]
-fn words(s: str) -> [str]    # split on runs of whitespace
-fn lines(s: str) -> [str]
-fn join(parts: [str], sep: str = "") -> str
-fn join(sep: str, parts: [str]) -> str    # sep.join(parts), as in Python
-fn replace(s: str, old: str, new: str) -> str
-fn repeat(s: str, n: int) -> str
-fn *(s: str, n: int) -> str
-fn upper(s: str) -> str
-fn lower(s: str) -> str
-fn to_int(s: str) -> int?
-fn to_float(s: str) -> float?    # Parse a decimal number. The result is the double nearest to the exact decimal value (ties to even), like C's strtod: an estimate, then exact big-integer comparisons.
-fn reverse(s: str) -> str
-fn char_count(s: str) -> int    # number of unicode code points
-fn chars(s: str) -> [int]    # unicode code points of s
-fn hash(s: str) -> u64
+is_digit = (c: u8) -> bool
+is_alpha = (c: u8) -> bool
+is_alnum = (c: u8) -> bool
+is_space = (c: u8) -> bool
+is_upper = (c: u8) -> bool
+is_lower = (c: u8) -> bool
+chr = (c: int) -> str    # string made of a single byte
+find = (s: str, sub: str, start: int = 0) -> int
+rfind = (s: str, sub: str) -> int
+find_byte = (s: str, c: u8, start: int = 0) -> int
+contains = (s: str, sub: str) -> bool
+starts_with = (s: str, prefix: str) -> bool
+ends_with = (s: str, suffix: str) -> bool
+trim = (s: str) -> str
+trim = (s: str, chars: str) -> str    # remove any of the characters in `chars` from both ends
+trim_start = (s: str) -> str
+trim_end = (s: str) -> str
+split = (s: str, sep: str) -> str[]
+words = (s: str) -> str[]    # split on runs of whitespace
+lines = (s: str) -> str[]
+join = (parts: str[], sep: str = "") -> str
+join = (sep: str, parts: str[]) -> str    # sep.join(parts), as in Python
+replace = (s: str, old: str, new: str) -> str
+repeat = (s: str, n: int) -> str
+(*) = (s: str, n: int) -> str
+upper = (s: str) -> str
+lower = (s: str) -> str
+to_int = (s: str) -> int?
+to_float = (s: str) -> f64?    # Parse a decimal number. The result is the double nearest to the exact decimal value (ties to even), like C's strtod: an estimate, then exact big-integer comparisons.
+reverse = (s: str) -> str
+char_count = (s: str) -> int    # number of unicode code points
+chars = (s: str) -> int[]    # unicode code points of s
+hash = (s: str) -> u64
 ```
 
-## Parallelism
+## Parallelism and numeric arrays
+
+### nd.jot
+
+Arrays for numeric work, in the spirit of numpy and MATLAB.  
+  
+T[,] is a 2-D array (Array2[T]): its elements in row-major order, and its shape. Write one as  
+[1 2; 3 4] (rows separated by ';' or line breaks), or make one with zeros(r, c), ones, eye,  
+rand, reshape. m[i, j] reads and writes an element.  
+  
+The dotted operators work element by element on arrays of any shape, and broadcast like numpy  
+(a dimension of length 1, or a missing one, stretches to fit): a .* b, m .+ 1.0, v .^ 2,  
+xs .< 0.5, and f.(xs) applies f to each element. A whole dotted expression runs as one loop.  
+On 2-D arrays the plain operators follow linear algebra: a * b is the matrix product.  
+
+```
+type Array[T] = T[]    # another spelling of T[]
+struct Array2[T]
+([])[T] = (m: Array2[T], i: int, j: int) -> T
+([]=)[T] = (m: mut Array2[T], i: int, j: int, v: T)
+shape[T] = (m: Array2[T]) -> (int, int)
+size[T] = (m: Array2[T]) -> int
+flatten[T] = (m: Array2[T]) -> T[]
+row[T] = (m: Array2[T], i: int) -> T[]
+col[T] = (m: Array2[T], j: int) -> T[]
+reshape[T] = (xs: T[], rows: int, cols: int) -> Array2[T]
+reshape[T] = (m: Array2[T], rows: int, cols: int) -> Array2[T]
+transpose[T] = (m: Array2[T]) -> Array2[T]
+zeros = (n: int) -> f64[]
+zeros = (rows: int, cols: int) -> f64[,]
+ones = (n: int) -> f64[]
+ones = (rows: int, cols: int) -> f64[,]
+eye = (n: int) -> f64[,]    # the identity matrix
+rand = (n: int) -> f64[]    # uniformly random in [0, 1)
+rand = (rows: int, cols: int) -> f64[,]
+randn = () -> f64    # normally distributed (mean 0, standard deviation 1)
+randn = (n: int) -> f64[]
+randn = (rows: int, cols: int) -> f64[,]
+linspace = (a: f64, b: f64, n: int) -> f64[]    # n evenly spaced values from a to b (both included)
+sum[T] = (m: Array2[T]) -> T
+mean = (xs: f64[]) -> f64
+mean = (m: f64[,]) -> f64
+dot = (a: f64[], b: f64[]) -> f64
+norm = (a: f64[]) -> f64
+(*)[T] = (a: T[,], b: T[,]) -> T[,]    # matrix product
+(*)[T] = (a: T[,], v: T[]) -> T[]    # matrix times column vector
+(*)[T] = (k: T, m: T[,]) -> T[,]
+(*)[T] = (m: T[,], k: T) -> T[,]
+(/)[T] = (m: T[,], k: T) -> T[,]
+(+)[T] = (a: T[,], b: T[,]) -> T[,]
+(-)[T] = (a: T[,], b: T[,]) -> T[,]
+```
 
 ### thread.jot
 
 Data parallelism on a pool of worker threads (fork-join).  
   
-squares := parallel_map(nums, fn(x): x * x)  
-parallel_update(particles, fn(p): step(p, dt))      # xs[i] = f(xs[i]), in place  
-rows := parallel_range(height, fn(y): render_row(y))  
+squares = parallel_map(nums, (x): x * x)  
+parallel_update(particles, (p): step(p, dt))      # xs[i] = f(xs[i]), in place  
+rows = parallel_range(height, (y): render_row(y))  
   
-The function runs on several threads at once. Because values are copied, it can only read  
-what it captured and return a result, so there are no data races (assigning to globals from  
-inside it is not allowed). On the web target everything runs on the calling thread.  
+The function runs on several threads at once: it may read anything, but it must not change  
+globals or the variables it captured (that would be a data race); return results instead.  
+On the web target everything runs on the calling thread.  
 
 ```
-fn cpu_count() -> int    # number of hardware threads available to this process
-fn parallel_map[T, U](xs: [T], f: fn(T) -> U) -> [U]    # [f(x) for x in xs], computed in parallel
-fn parallel_update[T](xs: mut [T], f: fn(T) -> T)    # xs[i] = f(xs[i]) for every element, in parallel
-fn parallel_range[U](n: int, f: fn(int) -> U) -> [U]    # [f(i) for i in 0..n], computed in parallel
+cpu_count = () -> int    # number of hardware threads available to this process
+parallel_map[T, U] = (xs: T[], f: (T) -> U) -> U[]    # [loop x in xs: f(x)], computed in parallel
+parallel_update[T] = (xs: mut T[], f: (T) -> T)    # xs[i] = f(xs[i]) for every element, in parallel
+parallel_range[U] = (n: int, f: (int) -> U) -> U[]    # [loop i in [0..n): f(i)], computed in parallel
 ```
 
 ## Games: windows, input, 2D/3D drawing, GPU programs, audio
@@ -241,30 +292,30 @@ struct Sound
 struct Voice
 enum Wave: sine, square, triangle, saw, noise
 const MIX_RATE = 48000
-fn frames(s: Sound) -> int
-fn duration(s: Sound) -> float
-fn play(s: Sound, volume: float = 1.0, pan: float = 0.0, pitch: float = 1.0, looping: bool = false) -> int    # play a sound; returns a voice id for stop()/set_volume()
-fn stop(id: int)
-fn stop_all()
-fn is_playing(id: int) -> bool
-fn set_volume(id: int, volume: float)
-fn set_pitch(id: int, pitch: float)
-fn master_volume(v: float)
-fn tanh(x: float) -> float
-fn tone(freq: float, seconds: float, wave: Wave = .sine, volume: float = 0.5, attack: float = 0.005, release: float = 0.1, slide: float = 1.0, vibrato: float = 0.0) -> Sound    # a single synthesized note: frequency slides from freq to freq * slide over the duration
-fn mix(sounds: [Sound]) -> Sound    # mix several sounds into one (useful for chords and layered effects)
-fn sfx_jump() -> Sound    # sound effect presets
-fn sfx_coin() -> Sound
-fn sfx_hit() -> Sound
-fn sfx_explosion() -> Sound
-fn sfx_laser() -> Sound
-fn sfx_powerup() -> Sound
-fn sfx_click() -> Sound
-fn sfx_whoosh() -> Sound
-fn sfx_chime() -> Sound
-fn note_freq(name: str) -> float    # note name ("C4", "F#3", "Bb5") to frequency in Hz
-fn melody(notes: str, bpm: float = 120.0, wave: Wave = .triangle, volume: float = 0.3, step: float = 0.5) -> Sound    # render a melody: notes separated by spaces, "-" holds the previous note, "." is a rest
-fn load_wav(file: [u8]) -> Sound
+frames = (s: Sound) -> int
+duration = (s: Sound) -> f64
+play = (s: Sound, volume: f64 = 1.0, pan: f64 = 0.0, pitch: f64 = 1.0, looping: bool = false) -> int    # play a sound; returns a voice id for stop()/set_volume()
+stop = (id: int)
+stop_all = ()
+is_playing = (id: int) -> bool
+set_volume = (id: int, volume: f64)
+set_pitch = (id: int, pitch: f64)
+master_volume = (v: f64)
+tanh = (x: f64) -> f64
+tone = (freq: f64, seconds: f64, wave: Wave = .sine, volume: f64 = 0.5, attack: f64 = 0.005, release: f64 = 0.1, slide: f64 = 1.0, vibrato: f64 = 0.0) -> Sound    # a single synthesized note: frequency slides from freq to freq * slide over the duration
+mix = (sounds: Sound[]) -> Sound    # mix several sounds into one (useful for chords and layered effects)
+sfx_jump = () -> Sound    # sound effect presets
+sfx_coin = () -> Sound
+sfx_hit = () -> Sound
+sfx_explosion = () -> Sound
+sfx_laser = () -> Sound
+sfx_powerup = () -> Sound
+sfx_click = () -> Sound
+sfx_whoosh = () -> Sound
+sfx_chime = () -> Sound
+note_freq = (name: str) -> f64    # note name ("C4", "F#3", "Bb5") to frequency in Hz
+melody = (notes: str, bpm: f64 = 120.0, wave: Wave = .triangle, volume: f64 = 0.3, step: f64 = 0.5) -> Sound    # render a melody: notes separated by spaces, "-" holds the previous note, "." is a rest
+load_wav = (file: u8[]) -> Sound
 ```
 
 ### dl.jot
@@ -280,11 +331,11 @@ If anything is missing (no ld.so, unusual system) dl_init() returns false and th
 caller falls back to software rendering.  
 
 ```
-fn dl_init() -> bool
-fn dl_open(name: str) -> *u8    # open a shared library (RTLD_NOW | RTLD_GLOBAL); null if unavailable
-fn dl_sym(lib: *u8, name: str) -> *u8
-fn dl_error() -> str
-fn lib_available(lib: str) -> bool    # true if the library can be loaded on this system
+dl_init = () -> bool
+dl_open = (name: str) -> *u8    # open a shared library (RTLD_NOW | RTLD_GLOBAL); null if unavailable
+dl_sym = (lib: *u8, name: str) -> *u8
+dl_error = () -> str
+lib_available = (lib: str) -> bool    # true if the library can be loaded on this system
 ```
 
 ### draw2d.jot
@@ -296,43 +347,43 @@ render targets. Coordinates are in pixels with (0, 0) at the top-left.
 struct Texture
 struct RenderTarget
 enum Blend: alpha, add, multiply, premultiplied
-fn texture(img: Image, smooth: bool = true) -> Texture    # upload an image to the GPU
-fn set_repeat(t: Texture, on: bool)
-fn update_texture(t: Texture, img: Image)
-fn load_texture(file: [u8], smooth: bool = true) -> Texture
-fn render_target(w: int, h: int, smooth: bool = true) -> RenderTarget
-fn draw_to(rt: RenderTarget)    # draw into a render target until draw_to_screen() is called
-fn draw_to_screen()
-fn clear(c: vec4 = vec4(0, 0, 0, 1))
-fn blend(b: Blend)
-fn push_transform()
-fn pop_transform()
-fn translate(x: float, y: float)
-fn rotate(angle: float)
-fn scale(sx: float, sy: float)
-fn reset_transform()
-fn camera2d(target: vec2, zoom: float = 1.0, angle: float = 0.0)    # 2D camera: `target` appears at the screen center, scaled by zoom
-fn screen_to_world(p: vec2) -> vec2    # convert a screen position to world coordinates under the current transform
-fn flush()
-fn rect(x: float, y: float, w: float, h: float, c: vec4)
-fn rect(pos: vec2, size: vec2, c: vec4)
-fn rect_gradient(x: float, y: float, w: float, h: float, top: vec4, bottom: vec4)    # rectangle with a vertical color gradient
-fn rect_outline(x: float, y: float, w: float, h: float, thickness: float, c: vec4)
-fn triangle(a: vec2, b: vec2, c: vec2, col: vec4)
-fn triangle_gradient(a: vec2, b: vec2, c: vec2, ca: vec4, cb: vec4, cc: vec4)    # triangle with a color per corner (colors blend across it)
-fn quad_gradient(a: vec2, b: vec2, c: vec2, d: vec2, ca: vec4, cb: vec4, cc: vec4, cd: vec4)    # quad (a, b, c, d in order around it) with a color per corner
-fn circle(center: vec2, radius: float, c: vec4, segments: int = 0)
-fn circle_gradient(center: vec2, radius: float, inner: vec4, outer: vec4, segments: int = 48)    # circle that fades from `inner` color at the center to `outer` at the edge (glows, soft lights)
-fn ring(center: vec2, radius: float, thickness: float, c: vec4, segments: int = 48)
-fn line(a: vec2, b: vec2, thickness: float, c: vec4)
-fn polyline(points: [vec2], thickness: float, c: vec4, closed: bool = false)
-fn polygon(points: [vec2], c: vec4)    # convex polygon (triangle fan)
-fn sprite(t: Texture, pos: vec2, size: vec2 = vec2(0, 0), tint: vec4 = vec4(1, 1, 1, 1), angle: float = 0.0)    # draw a texture at `pos` (top-left), optionally scaled, rotated around its center and tinted
-fn sprite_region(t: Texture, src: vec4, center: vec2, size: vec2, tint: vec4 = vec4(1, 1, 1, 1), angle: float = 0.0)    # draw part of a texture (src = x, y, w, h in pixels) centered at `center`
-fn draw_target(rt: RenderTarget, pos: vec2 = vec2(0, 0), size: vec2 = vec2(0, 0), tint: vec4 = vec4(1, 1, 1, 1))    # draw a render target's texture (flipped: render targets are stored bottom-up)
-fn text_width(s: str, size: float = 20.0) -> float
-fn text(s: str, pos: vec2, size: float = 20.0, color: vec4 = vec4(1, 1, 1, 1))    # draw text with its top-left corner at `pos`
-fn text_centered(s: str, center: vec2, size: float = 20.0, color: vec4 = vec4(1, 1, 1, 1))    # text centered horizontally at `center`
+texture = (img: Image, smooth: bool = true) -> Texture    # upload an image to the GPU
+set_repeat = (t: Texture, on: bool)
+update_texture = (t: Texture, img: Image)
+load_texture = (file: u8[], smooth: bool = true) -> Texture
+render_target = (w: int, h: int, smooth: bool = true) -> RenderTarget
+draw_to = (rt: RenderTarget)    # draw into a render target until draw_to_screen() is called
+draw_to_screen = ()
+clear = (c: vec4 = vec4(0, 0, 0, 1))
+blend = (b: Blend)
+push_transform = ()
+pop_transform = ()
+translate = (x: f64, y: f64)
+rotate = (angle: f64)
+scale = (sx: f64, sy: f64)
+reset_transform = ()
+camera2d = (target: vec2, zoom: f64 = 1.0, angle: f64 = 0.0)    # 2D camera: `target` appears at the screen center, scaled by zoom
+screen_to_world = (p: vec2) -> vec2    # convert a screen position to world coordinates under the current transform
+flush = ()
+rect = (x: f64, y: f64, w: f64, h: f64, c: vec4)
+rect = (pos: vec2, size: vec2, c: vec4)
+rect_gradient = (x: f64, y: f64, w: f64, h: f64, top: vec4, bottom: vec4)    # rectangle with a vertical color gradient
+rect_outline = (x: f64, y: f64, w: f64, h: f64, thickness: f64, c: vec4)
+triangle = (a: vec2, b: vec2, c: vec2, col: vec4)
+triangle_gradient = (a: vec2, b: vec2, c: vec2, ca: vec4, cb: vec4, cc: vec4)    # triangle with a color per corner (colors blend across it)
+quad_gradient = (a: vec2, b: vec2, c: vec2, d: vec2, ca: vec4, cb: vec4, cc: vec4, cd: vec4)    # quad (a, b, c, d in order around it) with a color per corner
+circle = (center: vec2, radius: f64, c: vec4, segments: int = 0)
+circle_gradient = (center: vec2, radius: f64, inner: vec4, outer: vec4, segments: int = 48)    # circle that fades from `inner` color at the center to `outer` at the edge (glows, soft lights)
+ring = (center: vec2, radius: f64, thickness: f64, c: vec4, segments: int = 48)
+line = (a: vec2, b: vec2, thickness: f64, c: vec4)
+polyline = (points: vec2[], thickness: f64, c: vec4, closed: bool = false)
+polygon = (points: vec2[], c: vec4)    # convex polygon (triangle fan)
+sprite = (t: Texture, pos: vec2, size: vec2 = vec2(0, 0), tint: vec4 = vec4(1, 1, 1, 1), angle: f64 = 0.0)    # draw a texture at `pos` (top-left), optionally scaled, rotated around its center and tinted
+sprite_region = (t: Texture, src: vec4, center: vec2, size: vec2, tint: vec4 = vec4(1, 1, 1, 1), angle: f64 = 0.0)    # draw part of a texture (src = x, y, w, h in pixels) centered at `center`
+draw_target = (rt: RenderTarget, pos: vec2 = vec2(0, 0), size: vec2 = vec2(0, 0), tint: vec4 = vec4(1, 1, 1, 1))    # draw a render target's texture (flipped: render targets are stored bottom-up)
+text_width = (s: str, size: f64 = 20.0) -> f64
+text = (s: str, pos: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1))    # draw text with its top-left corner at `pos`
+text_centered = (s: str, center: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1))    # text centered horizontally at `center`
 ```
 
 ### draw3d.jot
@@ -346,60 +397,60 @@ struct Vertex3D
 struct Instance3D
 struct LitParams
 struct LitOut
-fn lit_vs(v: Vertex3D, u: LitParams) -> LitOut
-fn lit_vs_inst(v: Vertex3D, inst: Instance3D, u: LitParams) -> LitOut
-fn shadow_factor(u: LitParams, sp: vec4, ndl: f32) -> f32
-fn aces(c: vec3) -> vec3
-fn lit_fs(i: LitOut, u: LitParams) -> vec4
+lit_vs = (v: Vertex3D, u: LitParams) -> LitOut
+lit_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> LitOut
+shadow_factor = (u: LitParams, sp: vec4, ndl: f32) -> f32
+aces = (c: vec3) -> vec3
+lit_fs = (i: LitOut, u: LitParams) -> vec4
 struct ShadowOut
-fn shadow_vs(v: Vertex3D, u: LitParams) -> ShadowOut
-fn shadow_vs_inst(v: Vertex3D, inst: Instance3D, u: LitParams) -> ShadowOut
-fn shadow_fs(i: ShadowOut, u: LitParams) -> vec4
+shadow_vs = (v: Vertex3D, u: LitParams) -> ShadowOut
+shadow_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> ShadowOut
+shadow_fs = (i: ShadowOut, u: LitParams) -> vec4
 struct SkyVertex
 struct SkyParams
 struct SkyOut
-fn sky_vs(v: SkyVertex, u: SkyParams) -> SkyOut
-fn hash21(p: vec2) -> f32
-fn sky_fs(i: SkyOut, u: SkyParams) -> vec4
+sky_vs = (v: SkyVertex, u: SkyParams) -> SkyOut
+hash21 = (p: vec2) -> f32
+sky_fs = (i: SkyOut, u: SkyParams) -> vec4
 struct PostParams
 struct PostOut
-fn post_vs(v: SkyVertex, u: PostParams) -> PostOut
-fn bright_fs(i: PostOut, u: PostParams) -> vec4
-fn blur_fs(i: PostOut, u: PostParams) -> vec4
-fn composite_fs(i: PostOut, u: PostParams) -> vec4
+post_vs = (v: SkyVertex, u: PostParams) -> PostOut
+bright_fs = (i: PostOut, u: PostParams) -> vec4
+blur_fs = (i: PostOut, u: PostParams) -> vec4
+composite_fs = (i: PostOut, u: PostParams) -> vec4
 struct Draw3D
-fn camera3d(pos: vec3, target: vec3, fov_degrees: float = 60.0, near: float = 0.1, far: float = 500.0)    # place the camera; call once per frame before drawing 3D objects
-fn sun(direction: vec3, color: vec3 = vec3(1, 0.95, 0.85))
-fn sky(top: vec3, horizon: vec3, ground: vec3 = vec3(0.3, 0.27, 0.24))
-fn hide_sky()
-fn night_stars(amount: float)
-fn fog(color: vec3, density: float = 0.01, height_falloff: float = 0.05)
-fn shadows(on: bool, strength: float = 0.8, area: float = 30.0)
-fn post_effects(bloom: float = 0.6, threshold: float = 0.7, vignette: float = 0.35, saturation: float = 1.0, tint: vec3 = vec3(1, 1, 1))    # bloom + color grading for the whole frame (2D and 3D)
-fn no_post_effects()
-fn draw_mesh(m: Mesh, transform: mat4 = mat4(), color: vec4 = vec4(1, 1, 1, 1), texture: Texture = Texture(0, 0, 0), emissive: float = 0.0, specular: float = 0.3, cast_shadow: bool = true)
-fn draw_mesh_instanced(m: Mesh, instances: [Instance3D], color: vec4 = vec4(1, 1, 1, 1), emissive: float = 0.0, specular: float = 0.2, cast_shadow: bool = true, wind: float = 0.0)    # many copies of a mesh in one draw call (crowds, forests, particles...)
-fn draw_custom(render: fn(), transparent: bool = false, additive: bool = false)    # draw with your own shader inside the 3D pass; `render` runs with depth testing on. Use scene_view_proj(), scene_camera(), scene_sun(), scene_shadow_vp(), scene_shadow_map()... transparent = true: run after the sky with alpha blending on and depth writes off; additive = true: like transparent, but colors add up (glows, beams, light shafts)
-fn scene_view_proj() -> mat4
-fn scene_camera() -> vec3
-fn scene_sun() -> vec3
-fn scene_sun_color() -> vec3
-fn scene_sky_color() -> vec3
-fn scene_ground_color() -> vec3
-fn scene_fog_color() -> vec3
-fn scene_fog() -> vec2
-fn scene_shadow_vp() -> mat4
-fn scene_shadow_map() -> Texture
-fn scene_shadow_strength() -> f32
-fn instance(transform: mat4, color: vec4 = vec4(1, 1, 1, 1)) -> Instance3D
-fn transform(pos: vec3, rot_y: float = 0.0, scale: float = 1.0) -> mat4    # transform helpers
-fn cube_mesh(size: float = 1.0) -> Mesh
-fn sphere_mesh(radius: float = 0.5, segments: int = 32, rings: int = 16) -> Mesh
-fn terrain_mesh(size: float, divisions: int, height: fn(float, float) -> float, color: fn(float, float, float) -> vec4) -> Mesh    # a flat grid in the XZ plane; `height` gives the terrain elevation at (x, z)
-fn plane_mesh(size: float = 10.0) -> Mesh
-fn cylinder_mesh(radius: float = 0.5, height: float = 1.0, segments: int = 24, top_radius: float = -1.0) -> Mesh
-fn cone_mesh(radius: float = 0.5, height: float = 1.0, segments: int = 24) -> Mesh
-fn custom_mesh(vertices: [Vertex3D], indices: [u32] = []) -> Mesh    # custom mesh from vertex/index arrays
+camera3d = (pos: vec3, target: vec3, fov_degrees: f64 = 60.0, near: f64 = 0.1, far: f64 = 500.0)    # place the camera; call once per frame before drawing 3D objects
+sun = (direction: vec3, color: vec3 = vec3(1, 0.95, 0.85))
+sky = (top: vec3, horizon: vec3, ground: vec3 = vec3(0.3, 0.27, 0.24))
+hide_sky = ()
+night_stars = (amount: f64)
+fog = (color: vec3, density: f64 = 0.01, height_falloff: f64 = 0.05)
+shadows = (on: bool, strength: f64 = 0.8, area: f64 = 30.0)
+post_effects = (bloom: f64 = 0.6, threshold: f64 = 0.7, vignette: f64 = 0.35, saturation: f64 = 1.0, tint: vec3 = vec3(1, 1, 1))    # bloom + color grading for the whole frame (2D and 3D)
+no_post_effects = ()
+draw_mesh = (m: Mesh, transform: mat4 = mat4(), color: vec4 = vec4(1, 1, 1, 1), texture: Texture = Texture(0, 0, 0), emissive: f64 = 0.0, specular: f64 = 0.3, cast_shadow: bool = true)
+draw_mesh_instanced = (m: Mesh, instances: Instance3D[], color: vec4 = vec4(1, 1, 1, 1), emissive: f64 = 0.0, specular: f64 = 0.2, cast_shadow: bool = true, wind: f64 = 0.0)    # many copies of a mesh in one draw call (crowds, forests, particles...)
+draw_custom = (render: () -> void, transparent: bool = false, additive: bool = false)    # draw with your own shader inside the 3D pass; `render` runs with depth testing on. Use scene_view_proj(), scene_camera(), scene_sun(), scene_shadow_vp(), scene_shadow_map()... transparent = true: run after the sky with alpha blending on and depth writes off; additive = true: like transparent, but colors add up (glows, beams, light shafts)
+scene_view_proj = () -> mat4
+scene_camera = () -> vec3
+scene_sun = () -> vec3
+scene_sun_color = () -> vec3
+scene_sky_color = () -> vec3
+scene_ground_color = () -> vec3
+scene_fog_color = () -> vec3
+scene_fog = () -> vec2
+scene_shadow_vp = () -> mat4
+scene_shadow_map = () -> Texture
+scene_shadow_strength = () -> f32
+instance = (transform: mat4, color: vec4 = vec4(1, 1, 1, 1)) -> Instance3D
+transform = (pos: vec3, rot_y: f64 = 0.0, scale: f64 = 1.0) -> mat4    # transform helpers
+cube_mesh = (size: f64 = 1.0) -> Mesh
+sphere_mesh = (radius: f64 = 0.5, segments: int = 32, rings: int = 16) -> Mesh
+terrain_mesh = (size: f64, divisions: int, height: (f64, f64) -> f64, color: (f64, f64, f64) -> vec4) -> Mesh    # a flat grid in the XZ plane; `height` gives the terrain elevation at (x, z)
+plane_mesh = (size: f64 = 10.0) -> Mesh
+cylinder_mesh = (radius: f64 = 0.5, height: f64 = 1.0, segments: int = 24, top_radius: f64 = -1.0) -> Mesh
+cone_mesh = (radius: f64 = 0.5, height: f64 = 1.0, segments: int = 24) -> Mesh
+custom_mesh = (vertices: Vertex3D[], indices: u32[] = []) -> Mesh    # custom mesh from vertex/index arrays
 ```
 
 ### gamepad.jot
@@ -407,7 +458,7 @@ fn custom_mesh(vertices: [Vertex3D], indices: [u32] = []) -> Mesh    # custom me
 Gamepads: the first connected controller, with a standard layout (Xbox-style names).  
   
 if gamepad_pressed(.a): jump()  
-move := left_stick()               # vec2 in -1..1, y down, with a dead zone  
+move = left_stick()                # vec2 in -1..1, y down, with a dead zone  
   
 input_axis() also follows the left stick and the d-pad, so keyboard games work with a pad.  
 Native builds read the Linux joystick device (/dev/input/js0); web builds use the browser's  
@@ -415,13 +466,13 @@ Gamepad API.
 
 ```
 enum PadButton: a, b, x, y, lb, rb, back, start, home, lstick, rstick, up, down, left, right
-fn gamepad_connected() -> bool
-fn gamepad_axis(i: int) -> float    # axis value in -1..1 (triggers 0..1): 0 left x, 1 left y, 2 right x, 3 right y, 4 left trigger, 5 right trigger
-fn gamepad_down(b: PadButton) -> bool
-fn gamepad_pressed(b: PadButton) -> bool
-fn gamepad_released(b: PadButton) -> bool
-fn left_stick() -> vec2
-fn right_stick() -> vec2
+gamepad_connected = () -> bool
+gamepad_axis = (i: int) -> f64    # axis value in -1..1 (triggers 0..1): 0 left x, 1 left y, 2 right x, 3 right y, 4 left trigger, 5 right trigger
+gamepad_down = (b: PadButton) -> bool
+gamepad_pressed = (b: PadButton) -> bool
+gamepad_released = (b: PadButton) -> bool
+left_stick = () -> vec2
+right_stick = () -> vec2
 ```
 
 ### gameutil.jot
@@ -429,26 +480,26 @@ fn right_stick() -> vec2
 Common game helpers: noise, collision shapes, easing, timers and 2D particles.  
 
 ```
-fn noise(x: float, y: float) -> float    # smooth value noise in [0, 1]
-fn fbm(x: float, y: float, octaves: int = 4) -> float    # fractal noise (several octaves) in roughly [0, 1]
-fn ease_in_out(t: float) -> float
-fn ease_out(t: float) -> float
-fn ease_out_back(t: float) -> float
-fn approach(current: float, target: float, speed: float, dt: float) -> float    # frame-rate independent smoothing toward a target (higher speed = snappier)
-fn approach(current: vec2, target: vec2, speed: float, dt: float) -> vec2
-fn approach(current: vec3, target: vec3, speed: float, dt: float) -> vec3
+noise = (x: f64, y: f64) -> f64    # smooth value noise in [0, 1]
+fbm = (x: f64, y: f64, octaves: int = 4) -> f64    # fractal noise (several octaves) in roughly [0, 1]
+ease_in_out = (t: f64) -> f64
+ease_out = (t: f64) -> f64
+ease_out_back = (t: f64) -> f64
+approach = (current: f64, target: f64, speed: f64, dt: f64) -> f64    # frame-rate independent smoothing toward a target (higher speed = snappier)
+approach = (current: vec2, target: vec2, speed: f64, dt: f64) -> vec2
+approach = (current: vec3, target: vec3, speed: f64, dt: f64) -> vec3
 struct Rect
-fn overlaps(a: Rect, b: Rect) -> bool
-fn contains(r: Rect, p: vec2) -> bool
-fn center(r: Rect) -> vec2
-fn circles_overlap(a: vec2, ra: float, b: vec2, rb: float) -> bool
-fn circle_rect(c: vec2, r: float, rect: Rect) -> bool
+overlaps = (a: Rect, b: Rect) -> bool
+contains = (r: Rect, p: vec2) -> bool
+center = (r: Rect) -> vec2
+circles_overlap = (a: vec2, ra: f64, b: vec2, rb: f64) -> bool
+circle_rect = (c: vec2, r: f64, rect: Rect) -> bool
 struct Particle
 struct Particles
-fn emit(ps: mut Particles, pos: vec2, count: int, speed: float, color: vec4, life: float = 1.0, size: float = 4.0, spread: float = TAU, direction: float = 0.0)
-fn update(ps: mut Particles, dt: float)
-fn draw(ps: Particles, glow: bool = true)    # draw particles as soft glowing dots (additive blending)
-fn every(id: int, period: float) -> bool
+emit = (ps: mut Particles, pos: vec2, count: int, speed: f64, color: vec4, life: f64 = 1.0, size: f64 = 4.0, spread: f64 = TAU, direction: f64 = 0.0)
+update = (ps: mut Particles, dt: f64)
+draw = (ps: Particles, glow: bool = true)    # draw particles as soft glowing dots (additive blending)
+every = (id: int, period: f64) -> bool
 ```
 
 ### gl.jot
@@ -531,10 +582,10 @@ GPU programs written in Jot: meshes, shaders and uniform binding.
 struct Vertex: pos: vec3; color: vec4          -> vertex attributes  
 struct Params: mvp: mat4                        -> uniforms  
 struct Out:    pos: vec4; color: vec4           -> first field is the clip position  
-fn vs(v: Vertex, u: Params) -> Out: Out(u.mvp * vec4(v.pos, 1), v.color)  
-fn fs(i: Out, u: Params) -> vec4: i.color  
-prog := make_shader(shader(vs, fs))  
-m := mesh(vertices)  
+vs = (v: Vertex, u: Params) -> Out: Out(u.mvp * vec4(v.pos, 1), v.color)  
+fs = (i: Out, u: Params) -> vec4: i.color  
+prog = make_shader(shader(vs, fs))  
+m = mesh(vertices)  
 draw(prog, m, Params(mvp))  
 
 ```
@@ -543,14 +594,14 @@ struct ShaderAttrib
 struct ShaderUniform
 struct Shader
 struct Mesh
-fn make_shader(src: ShaderSource) -> Shader
-fn mesh[V](vertices: [V], indices: [u32] = [], mode: int = GL_TRIANGLES) -> Mesh    # upload vertices (any struct type matching the shader's vertex input) and optional indices
-fn update_mesh[V](m: mut Mesh, vertices: [V])
-fn draw[U](sh: Shader, m: Mesh, params: U)    # draw a mesh with a shader; `params` is the uniforms struct the shader functions take
-fn draw_instanced[U, I](sh: Shader, m: mut Mesh, instances: [I], params: U)    # draw many copies of a mesh in one call; `instances` holds the per-instance shader input
-fn sample(t: Texture, uv: vec2) -> vec4    # texture lookup inside shader functions (maps to GLSL texture()); outside the software renderer, calling it on the CPU returns white
-fn fract(v: vec2) -> vec2
-fn step(edge: f32, x: f32) -> f32
+make_shader = (src: ShaderSource) -> Shader
+mesh[V] = (vertices: V[], indices: u32[] = [], mode: int = GL_TRIANGLES) -> Mesh    # upload vertices (any struct type matching the shader's vertex input) and optional indices
+update_mesh[V] = (m: mut Mesh, vertices: V[])
+draw[U] = (sh: Shader, m: Mesh, params: U)    # draw a mesh with a shader; `params` is the uniforms struct the shader functions take
+draw_instanced[U, I] = (sh: Shader, m: mut Mesh, instances: I[], params: U)    # draw many copies of a mesh in one call; `instances` holds the per-instance shader input
+sample = (t: Texture, uv: vec2) -> vec4    # texture lookup inside shader functions (maps to GLSL texture()); outside the software renderer, calling it on the CPU returns white
+fract = (v: vec2) -> vec2
+step = (edge: f32, x: f32) -> f32
 ```
 
 ### image.jot
@@ -559,17 +610,17 @@ Images: RGBA8 pixel buffers, PNG decoding (with a built-in inflate), procedural 
 
 ```
 struct Image
-fn image(w: int, h: int, fill: vec4 = vec4(0, 0, 0, 0)) -> Image
-fn set(img: mut Image, x: int, y: int, c: vec4)
-fn get(img: Image, x: int, y: int) -> vec4
+image = (w: int, h: int, fill: vec4 = vec4(0, 0, 0, 0)) -> Image
+set = (img: mut Image, x: int, y: int, c: vec4)
+get = (img: Image, x: int, y: int) -> vec4
 struct Inflate
 struct Huff
-fn inflate(src: [u8], start: int = 0) -> [u8]?
-fn load_png(file: [u8]) -> Image?    # decode a PNG file; none if the data is not a supported PNG
-fn load_image(file: [u8]) -> Image    # load an image from an embedded file: load_image(embed("hero.png"))
-fn encode_png(img: Image) -> [u8]
-fn save_png(img: Image, path: str) -> bool
-fn screenshot() -> Image    # read the current framebuffer into an image
+inflate = (src: u8[], start: int = 0) -> u8[]?
+load_png = (file: u8[]) -> Image?    # decode a PNG file; none if the data is not a supported PNG
+load_image = (file: u8[]) -> Image    # load an image from an embedded file: load_image(embed("hero.png"))
+encode_png = (img: Image) -> u8[]
+save_png = (img: Image, path: str) -> bool
+screenshot = () -> Image    # read the current framebuffer into an image
 ```
 
 ### softgl.jot
@@ -580,36 +631,36 @@ the compiled Jot functions they are; triangles are rasterized in horizontal band
 cores. Frames are rendered at a reduced internal resolution and scaled up on screen.  
 
 ```
-fn soft_rendering() -> bool
-fn sgl_clear_color(r: f32, g: f32, b: f32, a: f32)
-fn sgl_clear(mask: u32)
-fn sgl_viewport(x: i32, y: i32, w: i32, h: i32)
-fn sgl_scissor(x: i32, y: i32, w: i32, h: i32)
-fn sgl_enable(cap: u32, on: bool)
-fn sgl_blend_func(s: u32, d: u32, sa: u32, da: u32)
-fn sgl_depth_func(f: u32)
-fn sgl_depth_mask(on: u32)
-fn sgl_color_mask(r: u32, g: u32, b: u32, a: u32)
-fn sgl_cull_face(mode: u32)
-fn sgl_create_buffer() -> int
-fn sgl_bind_buffer(target: u32, b: u32)
-fn sgl_buffer_data(target: u32, size: int, p: *u8)
-fn sgl_buffer_sub_data(target: u32, off: int, size: int, p: *u8)
-fn sgl_create_texture() -> int
-fn sgl_active_texture(unit: u32)
-fn sgl_bind_texture(t: u32)
-fn sgl_tex_image(w: int, h: int, format: int, ty: int, pixels: *u8)
-fn sgl_tex_sub_image(x: int, y: int, w: int, h: int, format: int, ty: int, pixels: *u8)
-fn sgl_tex_parameter(pname: u32, v: i32)
-fn sgl_create_framebuffer() -> int
-fn sgl_bind_framebuffer(f: u32)
-fn sgl_framebuffer_texture(attachment: u32, tex: u32)
-fn sgl_create_renderbuffer() -> int
-fn sgl_bind_renderbuffer(r: u32)
-fn sgl_renderbuffer_storage(w: i32, h: i32)
-fn sgl_framebuffer_renderbuffer(attachment: u32, r: u32)
-fn sgl_create_program() -> int
-fn sgl_read_pixels(x: int, y: int, w: int, h: int, out: *u8)    # read the window (or bound target) as RGBA bytes, bottom row first, scaled to w x h
+soft_rendering = () -> bool
+sgl_clear_color = (r: f32, g: f32, b: f32, a: f32)
+sgl_clear = (mask: u32)
+sgl_viewport = (x: i32, y: i32, w: i32, h: i32)
+sgl_scissor = (x: i32, y: i32, w: i32, h: i32)
+sgl_enable = (cap: u32, on: bool)
+sgl_blend_func = (s: u32, d: u32, sa: u32, da: u32)
+sgl_depth_func = (f: u32)
+sgl_depth_mask = (on: u32)
+sgl_color_mask = (r: u32, g: u32, b: u32, a: u32)
+sgl_cull_face = (mode: u32)
+sgl_create_buffer = () -> int
+sgl_bind_buffer = (target: u32, b: u32)
+sgl_buffer_data = (target: u32, size: int, p: *u8)
+sgl_buffer_sub_data = (target: u32, off: int, size: int, p: *u8)
+sgl_create_texture = () -> int
+sgl_active_texture = (unit: u32)
+sgl_bind_texture = (t: u32)
+sgl_tex_image = (w: int, h: int, format: int, ty: int, pixels: *u8)
+sgl_tex_sub_image = (x: int, y: int, w: int, h: int, format: int, ty: int, pixels: *u8)
+sgl_tex_parameter = (pname: u32, v: i32)
+sgl_create_framebuffer = () -> int
+sgl_bind_framebuffer = (f: u32)
+sgl_framebuffer_texture = (attachment: u32, tex: u32)
+sgl_create_renderbuffer = () -> int
+sgl_bind_renderbuffer = (r: u32)
+sgl_renderbuffer_storage = (w: i32, h: i32)
+sgl_framebuffer_renderbuffer = (attachment: u32, r: u32)
+sgl_create_program = () -> int
+sgl_read_pixels = (x: int, y: int, w: int, h: int, out: *u8)    # read the window (or bound target) as RGBA bytes, bottom row first, scaled to w x h
 ```
 
 ### vmath.jot
@@ -618,53 +669,53 @@ Vector and matrix math for the built-in vec2/vec3/vec4/mat4 types (f32 component
 mat4 is column-major: m[i] is column i.  
 
 ```
-fn dot(a: vec2, b: vec2) -> f32
-fn dot(a: vec3, b: vec3) -> f32
-fn dot(a: vec4, b: vec4) -> f32
-fn cross(a: vec3, b: vec3) -> vec3
-fn cross(a: vec2, b: vec2) -> f32
-fn length(v: vec2) -> f32
-fn length(v: vec3) -> f32
-fn length(v: vec4) -> f32
-fn length_sq(v: vec2) -> f32
-fn length_sq(v: vec3) -> f32
-fn distance(a: vec2, b: vec2) -> f32
-fn distance(a: vec3, b: vec3) -> f32
-fn normalize(v: vec2) -> vec2
-fn normalize(v: vec3) -> vec3
-fn normalize(v: vec4) -> vec4
-fn lerp(a: f32, b: f32, t: f32) -> f32
-fn lerp(a: vec2, b: vec2, t: f32) -> vec2
-fn lerp(a: vec3, b: vec3, t: f32) -> vec3
-fn lerp(a: vec4, b: vec4, t: f32) -> vec4
-fn mix(a: vec3, b: vec3, t: f32) -> vec3
-fn mix(a: vec4, b: vec4, t: f32) -> vec4
-fn abs(v: vec2) -> vec2
-fn abs(v: vec3) -> vec3
-fn min(a: vec2, b: vec2) -> vec2
-fn max(a: vec2, b: vec2) -> vec2
-fn min(a: vec3, b: vec3) -> vec3
-fn max(a: vec3, b: vec3) -> vec3
-fn clamp(v: vec2, lo: vec2, hi: vec2) -> vec2
-fn clamp(v: vec3, lo: f32, hi: f32) -> vec3
-fn floor(v: vec2) -> vec2
-fn reflect(d: vec3, n: vec3) -> vec3
-fn reflect(d: vec2, n: vec2) -> vec2
-fn perp(v: vec2) -> vec2
-fn angle(v: vec2) -> float
-fn from_angle(a: float) -> vec2
-fn rotate(v: vec2, a: float) -> vec2
-fn move_toward(a: vec2, b: vec2, step: f32) -> vec2
-fn sinf(x: f32) -> f32
-fn cosf(x: f32) -> f32
-fn rgb(r: f32, g: f32, b: f32) -> vec4
-fn rgba(r: f32, g: f32, b: f32, a: f32) -> vec4
-fn gray(v: f32) -> vec4
-fn hex(c: int) -> vec4
-fn hsv(h: float, s: float, v: float) -> vec4
-fn with_alpha(c: vec4, a: f32) -> vec4
-fn lighten(c: vec4, k: f32) -> vec4
-fn darken(c: vec4, k: f32) -> vec4
+dot = (a: vec2, b: vec2) -> f32
+dot = (a: vec3, b: vec3) -> f32
+dot = (a: vec4, b: vec4) -> f32
+cross = (a: vec3, b: vec3) -> vec3
+cross = (a: vec2, b: vec2) -> f32
+length = (v: vec2) -> f32
+length = (v: vec3) -> f32
+length = (v: vec4) -> f32
+length_sq = (v: vec2) -> f32
+length_sq = (v: vec3) -> f32
+distance = (a: vec2, b: vec2) -> f32
+distance = (a: vec3, b: vec3) -> f32
+normalize = (v: vec2) -> vec2
+normalize = (v: vec3) -> vec3
+normalize = (v: vec4) -> vec4
+lerp = (a: f32, b: f32, t: f32) -> f32
+lerp = (a: vec2, b: vec2, t: f32) -> vec2
+lerp = (a: vec3, b: vec3, t: f32) -> vec3
+lerp = (a: vec4, b: vec4, t: f32) -> vec4
+mix = (a: vec3, b: vec3, t: f32) -> vec3
+mix = (a: vec4, b: vec4, t: f32) -> vec4
+abs = (v: vec2) -> vec2
+abs = (v: vec3) -> vec3
+min = (a: vec2, b: vec2) -> vec2
+max = (a: vec2, b: vec2) -> vec2
+min = (a: vec3, b: vec3) -> vec3
+max = (a: vec3, b: vec3) -> vec3
+clamp = (v: vec2, lo: vec2, hi: vec2) -> vec2
+clamp = (v: vec3, lo: f32, hi: f32) -> vec3
+floor = (v: vec2) -> vec2
+reflect = (d: vec3, n: vec3) -> vec3
+reflect = (d: vec2, n: vec2) -> vec2
+perp = (v: vec2) -> vec2
+angle = (v: vec2) -> f64
+from_angle = (a: f64) -> vec2
+rotate = (v: vec2, a: f64) -> vec2
+move_toward = (a: vec2, b: vec2, step: f32) -> vec2
+sinf = (x: f32) -> f32
+cosf = (x: f32) -> f32
+rgb = (r: f32, g: f32, b: f32) -> vec4
+rgba = (r: f32, g: f32, b: f32, a: f32) -> vec4
+gray = (v: f32) -> vec4
+hex = (c: int) -> vec4
+hsv = (h: f64, s: f64, v: f64) -> vec4
+with_alpha = (c: vec4, a: f32) -> vec4
+lighten = (c: vec4, k: f32) -> vec4
+darken = (c: vec4, k: f32) -> vec4
 const WHITE = vec4(1, 1, 1, 1)
 const BLACK = vec4(0, 0, 0, 1)
 const RED = vec4(0.9, 0.2, 0.2, 1)
@@ -677,25 +728,54 @@ const CYAN = vec4(0.2, 0.85, 0.9, 1)
 const MAGENTA = vec4(0.9, 0.25, 0.75, 1)
 const GRAY = vec4(0.5, 0.5, 0.5, 1)
 const TRANSPARENT = vec4(0, 0, 0, 0)
-fn mat4_identity() -> mat4
-fn translation(t: vec3) -> mat4
-fn scaling(s: vec3) -> mat4
-fn rotation(axis0: vec3, a: float) -> mat4
-fn rotation_x(a: float) -> mat4
-fn rotation_y(a: float) -> mat4
-fn rotation_z(a: float) -> mat4
-fn perspective(fov_y: float, aspect: float, near: float, far: float) -> mat4
-fn orthographic(left: float, right: float, bottom: float, top: float, near: float, far: float) -> mat4
-fn look_at(eye: vec3, target: vec3, up: vec3) -> mat4
-fn transpose(m: mat4) -> mat4
-fn transform_point(m: mat4, p: vec3) -> vec3
-fn transform_dir(m: mat4, d: vec3) -> vec3
-fn inverse(m: mat4) -> mat4
-fn quat_axis_angle(axis: vec3, a: float) -> vec4
-fn quat_mul(a: vec4, b: vec4) -> vec4
-fn quat_rotate(q: vec4, v: vec3) -> vec3
-fn quat_to_mat4(q: vec4) -> mat4
-fn slerp(a: vec4, b0: vec4, t: f32) -> vec4
+mat4_identity = () -> mat4
+translation = (t: vec3) -> mat4
+scaling = (s: vec3) -> mat4
+rotation = (axis0: vec3, a: f64) -> mat4
+rotation_x = (a: f64) -> mat4
+rotation_y = (a: f64) -> mat4
+rotation_z = (a: f64) -> mat4
+perspective = (fov_y: f64, aspect: f64, near: f64, far: f64) -> mat4
+orthographic = (left: f64, right: f64, bottom: f64, top: f64, near: f64, far: f64) -> mat4
+look_at = (eye: vec3, target: vec3, up: vec3) -> mat4
+transpose = (m: mat4) -> mat4
+transform_point = (m: mat4, p: vec3) -> vec3
+transform_dir = (m: mat4, d: vec3) -> vec3
+inverse = (m: mat4) -> mat4
+quat_axis_angle = (axis: vec3, a: f64) -> vec4
+quat_mul = (a: vec4, b: vec4) -> vec4
+quat_rotate = (q: vec4, v: vec3) -> vec3
+quat_to_mat4 = (q: vec4) -> mat4
+slerp = (a: vec4, b0: vec4, t: f32) -> vec4
+```
+
+### wayland.jot
+
+A Wayland client speaking the wire protocol directly (no libwayland): a window from  
+xdg-shell, frames presented through shared memory (wl_shm), keyboard and pointer input from  
+wl_seat, and server-side decorations where the compositor offers them (a small title bar  
+drawn here otherwise).  
+
+```
+const WLK_NONE = 0
+const WLK_DISPLAY = 1
+const WLK_REGISTRY = 2
+const WLK_CALLBACK = 3
+const WLK_COMPOSITOR = 4
+const WLK_SHM = 5
+const WLK_POOL = 6
+const WLK_BUFFER = 7
+const WLK_SURFACE = 8
+const WLK_WM_BASE = 9
+const WLK_XDG_SURFACE = 10
+const WLK_TOPLEVEL = 11
+const WLK_SEAT = 12
+const WLK_POINTER = 13
+const WLK_KEYBOARD = 14
+const WLK_DECO_MANAGER = 15
+const WLK_DECORATION = 16
+const WLK_FRAME = 17           # a frame callback
+const WL_BAR = 30
 ```
 
 ### window.jot
@@ -706,25 +786,25 @@ system at runtime. Web: a <canvas> with WebGL2 driven by requestAnimationFrame.
 ```
 enum Key:
 enum Mouse: left, middle, right
-fn key_down(k: Key) -> bool    # true while the key is held
-fn key_pressed(k: Key) -> bool    # true only in the frame the key was pressed
-fn key_released(k: Key) -> bool
-fn mouse_pos() -> vec2
-fn mouse_delta() -> vec2
-fn mouse_wheel() -> float
-fn mouse_down(b: Mouse) -> bool
-fn mouse_pressed(b: Mouse) -> bool
-fn mouse_released(b: Mouse) -> bool
-fn text_input() -> str    # characters typed this frame
-fn input_axis() -> vec2    # arrows/WASD (or a gamepad's left stick and d-pad) as a direction vector (y down)
-fn screen_width() -> int
-fn screen_height() -> int
-fn screen_size() -> vec2
-fn frame_time() -> float
-fn fps() -> float
-fn elapsed() -> float
-fn frame_number() -> int
-fn quit()
-fn window(title: str = "jot", width: int = 1280, height: int = 720)    # Open the game window (called automatically when the program defines update/draw).
+key_down = (k: Key) -> bool    # true while the key is held
+key_pressed = (k: Key) -> bool    # true only in the frame the key was pressed
+key_released = (k: Key) -> bool
+mouse_pos = () -> vec2
+mouse_delta = () -> vec2
+mouse_wheel = () -> f64
+mouse_down = (b: Mouse) -> bool
+mouse_pressed = (b: Mouse) -> bool
+mouse_released = (b: Mouse) -> bool
+text_input = () -> str    # characters typed this frame
+input_axis = () -> vec2    # arrows/WASD (or a gamepad's left stick and d-pad) as a direction vector (y down)
+screen_width = () -> int
+screen_height = () -> int
+screen_size = () -> vec2
+frame_time = () -> f64
+fps = () -> f64
+elapsed = () -> f64
+frame_number = () -> int
+quit = ()
+window = (title: str = "jot", width: int = 1280, height: int = 720)    # Open the game window (called automatically when the program defines update/draw).
 ```
 

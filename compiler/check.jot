@@ -408,7 +408,11 @@ register_decls = (m: int, decls: int[]):
                 if len(modules[m].dir) == 0: path = rel
                 if not file_exists(path): fatal(nodes[d].pos, "cannot find '{rel}' (looked for {path})")
             else:
+                # a standard-library module by name: lib/NAME.jot or lib/{std,game,core}/NAME.jot
                 if not file_exists(path): path = "{lib_dir}/{rel}.jot"
+                if not file_exists(path): path = "{lib_dir}/std/{rel}.jot"
+                if not file_exists(path): path = "{lib_dir}/game/{rel}.jot"
+                if not file_exists(path): path = "{lib_dir}/core/{rel}.jot"
                 if not file_exists(path): fatal(nodes[d].pos, "cannot find module '{rel}'")
             im = load_module(path, false, nodes[d].pos)
             if nodes[d].aux == 1: modules[m].uses.push(im)

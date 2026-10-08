@@ -1,7 +1,7 @@
 # Gamepads: the first connected controller, with a standard layout (Xbox-style names).
 #
 #   if gamepad_pressed(.a): jump()
-#   move := left_stick()               # vec2 in -1..1, y down, with a dead zone
+#   move = left_stick()                # vec2 in -1..1, y down, with a dead zone
 #
 # input_axis() also follows the left stick and the d-pad, so keyboard games work with a pad.
 # Native builds read the Linux joystick device (/dev/input/js0); web builds use the browser's

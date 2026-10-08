@@ -137,37 +137,38 @@ norm = (a: f64[]) -> f64: sqrt(dot(a, a))
 
 # ---------------- linear algebra ----------------
 # matrix product
-(*) = (a: f64[,], b: f64[,]) -> f64[,]:
+(*)[T] = (a: T[,], b: T[,]) -> T[,]:
     if a.cols != b.rows: panic("matrix product of {a.rows}x{a.cols} and {b.rows}x{b.cols}: inner sizes differ")
-    out = fill(0.0, a.rows * b.cols)
+    zero = T(0)
+    out = fill(zero, a.rows * b.cols)
     loop i in [0..a.rows):
         loop k in [0..a.cols):
             x = a.data[i * a.cols + k]
-            if x == 0.0: continue
+            if x == zero: continue
             ro = i * b.cols
             bo = k * b.cols
             loop j in [0..b.cols): out[ro + j] += x * b.data[bo + j]
     Array2(out, a.rows, b.cols)
 
 # matrix times column vector
-(*) = (a: f64[,], v: f64[]) -> f64[]:
+(*)[T] = (a: T[,], v: T[]) -> T[]:
     if a.cols != v.len(): panic("matrix {a.rows}x{a.cols} times a vector of length {v.len()}")
-    out: f64[]
+    out: T[]
     out.reserve(a.rows)
     loop i in [0..a.rows):
-        s = 0.0
+        s = T(0)
         o = i * a.cols
         loop k in [0..a.cols): s += a.data[o + k] * v[k]
         out.push(s)
     out
 
-(*) = (k: f64, m: f64[,]) -> f64[,]: m .* k
-(*) = (m: f64[,], k: f64) -> f64[,]: m .* k
-(/) = (m: f64[,], k: f64) -> f64[,]: m ./ k
-(+) = (a: f64[,], b: f64[,]) -> f64[,]:
+(*)[T] = (k: T, m: T[,]) -> T[,]: m .* k
+(*)[T] = (m: T[,], k: T) -> T[,]: m .* k
+(/)[T] = (m: T[,], k: T) -> T[,]: m ./ k
+(+)[T] = (a: T[,], b: T[,]) -> T[,]:
     if a.rows != b.rows or a.cols != b.cols: panic("adding a {a.rows}x{a.cols} and a {b.rows}x{b.cols} matrix")
     a .+ b
-(-) = (a: f64[,], b: f64[,]) -> f64[,]:
+(-)[T] = (a: T[,], b: T[,]) -> T[,]:
     if a.rows != b.rows or a.cols != b.cols: panic("subtracting a {b.rows}x{b.cols} from a {a.rows}x{a.cols} matrix")
     a .- b
 

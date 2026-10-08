@@ -9,31 +9,32 @@ single self-contained `.html` file that runs in a browser straight from disk.
 # hello.jot
 print("hello, world")
 
-fn fib(n: int) -> int:
+fib = (n: int) -> int:
     if n < 2: return n
     fib(n - 1) + fib(n - 2)
 
-nums := [5, 3, 9, 1]
+nums = [5 3 9 1]
 nums.sort()
-squares := nums.map(fn(x): x * x)
-inc := fn(a: int, b: int): a + b
-print(squares, inc(1, _)(41), fib(30))
+squares = nums.map((x): x * x)
+add = (a: int, b: int): a + b
+print(squares, add(1, _)(41), fib(30))
+print(nums .* 2.5 .+ 1, sqrt.([4.0 9.0]), [1 2; 3 4] * [1 0; 0 1])
 ```
 
 A complete (tiny) game:
 
 ```jot
-pos := vec2(400, 300)
+pos = vec2(400, 300)
 
-fn update(dt: float):
-    dir := vec2(0, 0)
+update = (dt: f64):
+    dir = vec2(0, 0)
     if key_down(.left): dir.x -= 1
     if key_down(.right): dir.x += 1
     if key_down(.up): dir.y -= 1
     if key_down(.down): dir.y += 1
     pos += dir * f32(300 * dt)
 
-fn draw():
+draw = ():
     clear(rgb(0.08, 0.08, 0.12))
     circle(pos, 24, rgb(1.0, 0.6, 0.2))
     text("arrow keys", vec2(20, 20), 24, rgb(1, 1, 1))
@@ -47,9 +48,14 @@ fn draw():
 - **Fast programs.** Release builds (`opt = release`) are within ~1.5x of `gcc -O2` on the
   benchmark set (geometric mean), with bounds checks kept on. `parallel_map` and friends use
   every core.
-- **Easy.** Type inference everywhere, Python-like indentation syntax, first-class functions,
-  closures, partial application (`f(1, _)`), generics without ceremony (untyped parameters),
-  uniform call syntax (`x.f(y)` is `f(x, y)`), optionals, tagged unions with `match`.
+- **Easy.** Type inference everywhere, Python-like indentation syntax, first-class functions
+  (`f = (x: int): x * 2`), closures, partial application (`f(1, _)`), generics without
+  ceremony (untyped parameters), uniform call syntax (`x.f(y)` is `f(x, y)`), one `loop` for
+  every kind of loop, type unions (`int | ParseError`) with `is`, optionals, unit literals
+  (`120ms`, `1.2(m/s)`).
+- **Numeric arrays.** numpy-style elementwise operators that broadcast (`a .* b .+ 1`,
+  `f.(xs)`) and compile to one fused loop, 2-D arrays (`[1 2; 3 4]`, matrix products),
+  `zeros`/`linspace`/`rand`..., and struct-of-arrays storage (`soa Particle[]`).
 - **Predictable.** Plain value semantics: arrays, strings and maps are reference counted with
   copy-on-write, so there is no garbage collector, no reference cycles and no hidden aliasing.
 - **Batteries for games.** Windows and input, 2D drawing with SDF text, a 3D renderer with
@@ -58,7 +64,7 @@ fn draw():
 - **Programs keep working.** Native executables are static (they talk to the kernel directly);
   the GPU driver is loaded at run time when present, and without one games still run on a
   multithreaded software renderer. Web builds are one HTML file with the WebAssembly embedded. The compiler needs no assembler, linker or C toolchain.
-- **Self-hosted.** The compiler is written in Jot (~13k lines) and compiles itself; a small
+- **Self-hosted.** The compiler is written in Jot (~15k lines) and compiles itself; a small
   C compiler in `stage0/` bootstraps it.
 
 ## Getting started
@@ -80,6 +86,7 @@ bin/jot check file.jot        # type check only
 ## Documentation
 
 - [docs/LANGUAGE.md](docs/LANGUAGE.md) — the language
+- [docs/MIGRATING.md](docs/MIGRATING.md) — moving code from the first version of the syntax
 - [docs/API.md](docs/API.md) — the standard library (generated from `lib/`)
 - [docs/REPORT.md](docs/REPORT.md) — measured results for the design goals (`tools/report.py`)
 
@@ -96,8 +103,8 @@ compiler/      the Jot compiler, in Jot
   glsl                   shader functions written in Jot -> GLSL ES 3.00
 stage0/        bootstrap compiler in C (compiles compiler/ once)
 lib/core/      runtime, strings, arrays, maps, math, files, formatting
-lib/std/       thread pool and parallel helpers
-lib/game/      windows, input, OpenGL ES / WebGL, 2D, 3D, images, audio
+lib/std/       thread pool and parallel helpers, numeric arrays (nd.jot)
+lib/game/      windows (Wayland, X11), input, OpenGL ES / WebGL, 2D, 3D, images, audio
 lib/web/       JavaScript glue embedded into web builds
 examples/      demos: lumen (2D), dunes (3D), shapes, cube, scene3d
 tests/         test programs with expected output (tools/runtests.py), render references
@@ -123,7 +130,9 @@ bounds-check and copy-on-write-check elimination, inlining of small functions, a
 array indexing into x86 addressing modes.
 
 Native programs are static executables that make Linux system calls directly. Programs that
-open a window load the system's X11, EGL and OpenGL ES libraries at run time with a tiny
+open a window speak the Wayland protocol directly over its socket when a Wayland session is
+running (rendering with EGL into an offscreen buffer that is shared with the compositor);
+otherwise they load the system's X11, EGL and OpenGL ES libraries at run time with a tiny
 in-process loader (the static binary maps the system dynamic linker and asks it for the
 libraries), so nothing is loaded at all by programs that do not use graphics, and a missing
 library is a run-time decision instead of a load-time failure: without an OpenGL ES driver

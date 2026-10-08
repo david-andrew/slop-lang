@@ -368,7 +368,7 @@ next_u64 = (r: mut Rng) -> u64:
     r.s3 = __rotl(r.s3, 45)
     result
 
-# uniform float in [0, 1)
+# uniform f64 in [0, 1)
 next_float = (r: mut Rng) -> f64: f64(next_u64(r) >> 11) * (1.0 / 9007199254740992.0)
 
 # uniform int in [lo, hi)
@@ -379,9 +379,9 @@ next_int = (r: mut Rng, lo: int, hi: int) -> int:
 __global_rng = rng(12345)
 
 seed_random = (seed: int): __global_rng = rng(seed)
-# random float in [0, 1)
+# random f64 in [0, 1)
 random = () -> f64: next_float(__global_rng)
-# random float in [lo, hi)
+# random f64 in [lo, hi)
 random = (lo: f64, hi: f64) -> f64: lo + (hi - lo) * next_float(__global_rng)
 # random int in [lo, hi)
 random_int = (lo: int, hi: int) -> int: next_int(__global_rng, lo, hi)

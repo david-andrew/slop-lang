@@ -3,10 +3,10 @@
 #   struct Vertex: pos: vec3; color: vec4          -> vertex attributes
 #   struct Params: mvp: mat4                        -> uniforms
 #   struct Out:    pos: vec4; color: vec4           -> first field is the clip position
-#   fn vs(v: Vertex, u: Params) -> Out: Out(u.mvp * vec4(v.pos, 1), v.color)
-#   fn fs(i: Out, u: Params) -> vec4: i.color
-#   prog := make_shader(shader(vs, fs))
-#   m := mesh(vertices)
+#   vs = (v: Vertex, u: Params) -> Out: Out(u.mvp * vec4(v.pos, 1), v.color)
+#   fs = (i: Out, u: Params) -> vec4: i.color
+#   prog = make_shader(shader(vs, fs))
+#   m = mesh(vertices)
 #   draw(prog, m, Params(mvp))
 
 # produced by the compiler from shader(vs, fs)

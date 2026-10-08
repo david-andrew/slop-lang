@@ -196,22 +196,21 @@ say()
 par = os.path.join(BUILD, "par.jot")
 open(par, "w").write('''build:
     opt = release
-fn collatz(n0: int) -> int:
-    n := n0
-    s := 0
-    while n != 1:
+collatz = (n0: int) -> int:
+    n = n0
+    s = 0
+    loop n != 1:
         if n % 2 == 0: n /= 2
         else: n = 3 * n + 1
         s += 1
     s
-fn main():
-    xs: [int]
-    for i in 1..1000001: xs.push(i)
-    t0 := time()
-    a := xs.map(fn(x): collatz(x))
-    t1 := time()
-    b := parallel_map(xs, fn(x): collatz(x))
-    t2 := time()
+main = ():
+    xs = [1..1000000]
+    t0 = time()
+    a = xs.map((x): collatz(x))
+    t1 = time()
+    b = parallel_map(xs, (x): collatz(x))
+    t2 = time()
     print(a == b, cpu_count(), (t1 - t0) / (t2 - t1))
 ''')
 r = run([JOT, par])

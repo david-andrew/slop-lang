@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert Jot source from syntax revision 1 to revision 2 (docs/SYNTAX2.md).
+"""Convert Jot source from syntax revision 1 to revision 2 (docs/MIGRATING.md).
 
 usage: convert.py --info migrate_info.txt --globals lib_dir file.jot...   (rewrites in place)
 

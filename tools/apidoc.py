@@ -6,7 +6,7 @@ import os, re, glob
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECTIONS = [
     ("core", "Core (always available)"),
-    ("std", "Parallelism"),
+    ("std", "Parallelism and numeric arrays"),
     ("game", "Games: windows, input, 2D/3D drawing, GPU programs, audio"),
 ]
 def signature(line):
@@ -41,15 +41,17 @@ for sub, title in SECTIONS:
                 c = s.lstrip("# ").rstrip()
                 if not re.fullmatch(r"-+.*-+", c): comment.append(c)
                 continue
-            m = re.match(r"(?:@\w+(?:\([^)]*\))?\s*)?(fn|struct|enum|const)\s+([A-Za-z_][\w]*|[-+*/%<>=!\[\]]+)(.*)", s)
-            if m and not s.startswith(" ") and not m.group(2).startswith("__"):
-                kind, name, rest = m.groups()
-                sig = s
-                if kind == "fn":
-                    sig = signature(s)
-                elif kind in ("struct", "enum"):
-                    sig = s.split(":")[0] if kind == "struct" else s
-                entries.append((sig.strip(), " ".join(c for c in comment if c)))
+            m = re.match(r"(struct|enum|const|type)\s+([A-Za-z_]\w*)(.*)", s)
+            f = re.match(r"(?:extern\s+)?(\([^)\s]+\)|[A-Za-z_]\w*)(\[[^\]]*\])?\s*=\s*\(", s)
+            if not s.startswith(" ") and (m or f):
+                name = m.group(2) if m else f.group(1)
+                if not name.startswith("__"):
+                    sig = s
+                    if f and not m:
+                        sig = signature(s)
+                    elif m.group(1) == "struct":
+                        sig = s.split(":")[0]
+                    entries.append((sig.strip(), " ".join(c for c in comment if c)))
             if not s.startswith("#"):
                 comment = []
         if not entries: continue

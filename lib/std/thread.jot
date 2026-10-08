@@ -1,12 +1,12 @@
 # Data parallelism on a pool of worker threads (fork-join).
 #
-#   squares := parallel_map(nums, fn(x): x * x)
-#   parallel_update(particles, fn(p): step(p, dt))      # xs[i] = f(xs[i]), in place
-#   rows := parallel_range(height, fn(y): render_row(y))
+#   squares = parallel_map(nums, (x): x * x)
+#   parallel_update(particles, (p): step(p, dt))      # xs[i] = f(xs[i]), in place
+#   rows = parallel_range(height, (y): render_row(y))
 #
-# The function runs on several threads at once. Because values are copied, it can only read
-# what it captured and return a result, so there are no data races (assigning to globals from
-# inside it is not allowed). On the web target everything runs on the calling thread.
+# The function runs on several threads at once: it may read anything, but it must not change
+# globals or the variables it captured (that would be a data race); return results instead.
+# On the web target everything runs on the calling thread.
 
 # job control block (shared between threads, accessed atomically)
 const __C_GEN = 0          # bumped to start a job (futex word for sleeping workers)
@@ -122,7 +122,7 @@ __parallel_run = (total: int, f: (int, int) -> void):
         __mt_active = false
         __job = __job_idle_c
 
-# [f(x) for x in xs], computed in parallel
+# [loop x in xs: f(x)], computed in parallel
 parallel_map[T, U] = (xs: T[], f: (T) -> U) -> U[]:
     out: U[]
     n = xs.len()
@@ -145,7 +145,7 @@ parallel_update[T] = (xs: mut T[], f: (T) -> T):
         loop i in [lo..hi): p[i] = f(p[i])
     )
 
-# [f(i) for i in 0..n], computed in parallel
+# [loop i in [0..n): f(i)], computed in parallel
 parallel_range[U] = (n: int, f: (int) -> U) -> U[]:
     out: U[]
     if n <= 0: return out
