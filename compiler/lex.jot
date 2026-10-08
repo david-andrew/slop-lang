@@ -148,8 +148,9 @@ lx_n = 0
 lx_i = 0
 lx_toks: Token[]
 lx_indents: int[]
-lx_ctx_block: bool[]
-lx_ctx_base: int[]
+# contexts: one entry per open bracket or indented block inside brackets, packed as
+# (source position << 24) | (indent stack base << 1) | (1 if it is a block)
+lx_ctx: int[]
 lx_line_indent = 0
 
 # source offset of the text being lexed (non-zero for expressions inside string literals)
@@ -157,13 +158,10 @@ lx_base = 0
 
 lx_err = (off: int, msg: str): fatal(mkpos(lx_file, lx_base + off), msg)
 
-lx_pending = 0           # TF_SPACE / TF_NL for the next token
-
 lx_emit = (kind: Tok, start: int, n: int):
-    lx_toks.push(Token(kind, i32(lx_pending), (lx_file << 40) | (lx_base + start), i32(start), i32(n), 0, 0.0))
-    lx_pending = 0
+    lx_toks.push(Token(kind, 0, (lx_file << 40) | (lx_base + start), i32(start), i32(n), 0, 0.0))
 
-lx_open: int[]          # positions of open brackets (for error messages)
+
 lx_open_tok: int[]      # token indexes of open brackets (each gets its partner's index)
 
 # keyword kinds by interned name id (Tok.ident for other names)
@@ -183,7 +181,8 @@ lx_emit_newline = ():
     k = lx_last_kind()
     if k != .newline and k != .indent and k != .dedent: lx_emit(.newline, lx_i, 0)
 
-lx_top_block = () -> bool: lx_ctx_block[lx_ctx_block.len() - 1]
+lx_top_block = () -> bool: lx_ctx[lx_ctx.len() - 1] & 1 != 0
+lx_top_base = () -> int: (lx_ctx[lx_ctx.len() - 1] >> 1) & 0x7FFFFF
 
 # handle the start of a line (indentation)
 lx_line_start = ():
@@ -210,7 +209,7 @@ lx_line_start = ():
         lx_i = q
         lx_line_indent = ind
         if not lx_top_block(): return
-        base = lx_ctx_base[lx_ctx_base.len() - 1]
+        base = lx_top_base()
         top = lx_indents[lx_indents.len() - 1]
         if ind > top:
             lx_indents.push(ind)
@@ -219,24 +218,22 @@ lx_line_start = ():
             loop lx_indents.len() > base and ind < lx_indents[lx_indents.len() - 1]:
                 lx_indents.pop()
                 lx_emit(.dedent, q, 0)
-            if lx_indents.len() == base and lx_ctx_block.len() > 1:
+            if lx_indents.len() == base and lx_ctx.len() > 1:
                 lx_indents.pop()
-                lx_ctx_block.pop()
-                lx_ctx_base.pop()
+                lx_ctx.pop()
                 return
             if ind != lx_indents[lx_indents.len() - 1]: lx_err(q, "inconsistent indentation")
         return
 
 lx_close_block_ctx = (at: int):
-    loop lx_ctx_block.len() > 1 and lx_top_block():
-        base = lx_ctx_base[lx_ctx_base.len() - 1]
+    loop lx_ctx.len() > 1 and lx_top_block():
+        base = lx_top_base()
         lx_emit_newline()
         loop lx_indents.len() > base:
             lx_indents.pop()
             lx_emit(.dedent, at, 0)
         lx_indents.pop()
-        lx_ctx_block.pop()
-        lx_ctx_base.pop()
+        lx_ctx.pop()
 
 # `+` or `+=` style operators
 op_or_assign = (c1: u8, plain: Tok, with_eq: Tok) -> Tok:
@@ -302,13 +299,13 @@ lx_number = ():
             loop p[i] >= '0' and p[i] <= '9': i += 1
         lx_i = i
         if is_float:
-            if is_ident_start(p[i]):
+            if lx_cls[p[i]] & 1 != 0:
                 lx_unit(s, lx_float(s, i))
                 return
             lx_emit(.float_lit, s, i - s)
             lx_toks[lx_toks.len() - 1].fval = lx_float(s, i)
             return
-    if is_ident_start(p[lx_i]):
+    if lx_cls[p[lx_i]] & 1 != 0:
         lx_unit(s, f64(v))
         return
     if is_ident_char(p[lx_i]): lx_err(lx_i, "invalid character in number literal")
@@ -433,8 +430,7 @@ lx_string = (raw: bool):
                     if p[i] == '\\': i += 1
                     i += 1
             i += 1
-    t = Token(Tok.str_lit, i32(lx_pending), mkpos(lx_file, lx_base + s), i32(start), i32(i - start), 0, 0.0)
-    lx_pending = 0
+    t = Token(Tok.str_lit, 0, mkpos(lx_file, lx_base + s), i32(start), i32(i - start), 0, 0.0)
     f = int(t.flags)
     if raw: f |= STRF_RAW
     if triple: f |= STRF_TRIPLE
@@ -495,11 +491,7 @@ lex = (file: int, src: str) -> Token[]:
     lx_i = 0
     lx_toks = []
     lx_indents = [0]
-    lx_ctx_block = [true]
-    lx_open = []
-    lx_open_tok = []
-    lx_ctx_base = [1]
-    lx_pending = 0
+    lx_ctx = [(1 << 1) | 1]
     if kw_tok.len() == 0: init_keywords()
     if lx_cls == null: lx_init_classes()
     lx_line_start()
@@ -508,11 +500,9 @@ lex = (file: int, src: str) -> Token[]:
         c = p[lx_i]
         if c == ' ' or c == '\t' or c == '\r':
             lx_i += 1
-            lx_pending |= TF_SPACE
             continue
         if c == '\\' and p[lx_i + 1] == '\n':
             lx_i += 2
-            lx_pending |= TF_SPACE
             continue
         if c == '#':
             loop lx_i < lx_n and p[lx_i] != '\n': lx_i += 1
@@ -521,7 +511,6 @@ lex = (file: int, src: str) -> Token[]:
             lx_i += 1
             if lx_top_block(): lx_emit_newline()
             lx_line_start()
-            lx_pending |= TF_SPACE | TF_NL
             continue
         cls = lx_cls
         if cls[c] & 1 != 0:
@@ -536,8 +525,7 @@ lex = (file: int, src: str) -> Token[]:
             id = intern_sub(src, s, i - s)
             kind = Tok.ident
             if id < kw_tok.len(): kind = kw_tok[id]
-            lx_toks.push(Token(kind, i32(lx_pending), (lx_file << 40) | (lx_base + s), i32(s), i32(i - s), id, 0.0))
-            lx_pending = 0
+            lx_toks.push(Token(kind, 0, (lx_file << 40) | (lx_base + s), i32(s), i32(i - s), id, 0.0))
             continue
         if c >= '0' and c <= '9':
             lx_number()
@@ -634,26 +622,15 @@ lex = (file: int, src: str) -> Token[]:
                     n = 2
             _: lx_err(lx_i, "unexpected character '{chr(int(c))}'")
         if k == .pluseq or k == .stareq or k == .slasheq or k == .percenteq or k == .ampeq or k == .pipeeq or k == .careteq or k == .eq or k == .ne: n = 2
-        partner = -1
         if k == .rparen or k == .rbrack or k == .rbrace:
             lx_close_block_ctx(lx_i)
-            if lx_ctx_block.len() <= 1: lx_err(lx_i, "unmatched '{chr(int(c))}'")
-            lx_ctx_block.pop()
-            lx_ctx_base.pop()
-            if lx_open.len() > 0: lx_open.pop()
-            if lx_open_tok.len() > 0: partner = lx_open_tok.pop()
+            if lx_ctx.len() <= 1: lx_err(lx_i, "unmatched '{chr(int(c))}'")
+            lx_ctx.pop()
         lx_emit(k, lx_i, n)
         if k == .dotop: lx_toks[lx_toks.len() - 1].ival = int(c1)
-        if partner >= 0:
-            # an opening bracket knows where it closes (its ival), and the closing one where it opened
-            lx_toks[partner].ival = lx_toks.len() - 1
-            lx_toks[lx_toks.len() - 1].ival = partner
         lx_i += n
         if k == .lparen or k == .lbrack or k == .lbrace:
-            lx_ctx_block.push(false)
-            lx_ctx_base.push(0)
-            lx_open.push(lx_i - n)
-            lx_open_tok.push(lx_toks.len() - 1)
+            lx_ctx.push((lx_i - n) << 24)
         if k == .colon and not lx_top_block():
             q = lx_i
             loop p[q] == ' ' or p[q] == '\t' or p[q] == '\r': q += 1
@@ -661,13 +638,10 @@ lex = (file: int, src: str) -> Token[]:
                 loop q < lx_n and p[q] != '\n': q += 1
             if p[q] == '\n':
                 lx_indents.push(lx_line_indent)
-                lx_ctx_block.push(true)
-                lx_ctx_base.push(lx_indents.len())
+                lx_ctx.push((lx_i << 24) | (lx_indents.len() << 1) | 1)
     lx_close_block_ctx(lx_i)
-    if lx_ctx_block.len() > 1:
-        at = lx_i
-        if lx_open.len() > 0: at = lx_open[lx_open.len() - 1]
-        lx_err(at, "this bracket is never closed")
+    if lx_ctx.len() > 1:
+        lx_err(lx_ctx[lx_ctx.len() - 1] >> 24, "this bracket is never closed")
     lx_emit_newline()
     loop lx_indents.len() > 1:
         lx_indents.pop()

@@ -1438,7 +1438,7 @@ check_binary = (n: int, expected: int) -> int:
         else: nodes[n].op = i32(int(Tok.caret))
         return check_expr(n, expected)
     # 'a' == c: the literal is a character code when the other side is an integer
-    if charlike(int(nodes[n].a)) and not charlike(int(nodes[n].b)) and op != .plus:
+    if nodes[int(nodes[n].a)].kind == .str_lit and charlike(int(nodes[n].a)) and not charlike(int(nodes[n].b)) and op != .plus:
         tb = prune(check_expr(int(nodes[n].b), 0))
         nodes[n].b = i32(last_checked)
         add_flag(int(nodes[n].b), NF_CHECKED)

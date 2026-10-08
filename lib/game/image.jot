@@ -319,7 +319,7 @@ __crc32 = (b: u8[], start: int, end: int) -> u32:
                 else: c = c >> 1
             __crc_table.push(c)
     c = u32(0xFFFFFFFF)
-    loop i in [start..end): c = (__crc_table[int((c ^ u32(b[i])) & 255)] xor (c >> 8))
+    loop i in [start..end): c = (__crc_table[int((c xor u32(b[i])) & 255)] xor (c >> 8))
     (c xor u32(0xFFFFFFFF))
 
 __put_be32 = (b: mut u8[], v: int):

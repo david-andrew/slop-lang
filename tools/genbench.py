@@ -7,32 +7,32 @@ random.seed(1)
 jot, c = [], []
 c.append("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <math.h>")
 c.append("typedef struct { double x, y; long id; } Item;")
-jot.append("struct Item:\n    x: float\n    y: float\n    id: int\n")
+jot.append("struct Item:\n    x: f64\n    y: f64\n    id: int\n")
 for i in range(n):
     k = random.randint(2, 9)
-    jot.append(f"""fn work{i}(a: int, b: float, items: [Item]) -> float:
-    total := 0.0
-    count := 0
-    for j in 0..a:
-        v := float(j * {k}) + b
+    jot.append(f"""work{i} = (a: int, b: f64, items: Item[]) -> f64:
+    total = 0.0
+    count = 0
+    loop j in [0..a):
+        v = f64(j * {k}) + b
         if v > {k * 10}.0:
             total += v * 0.5
         else if j % {k} == 0:
             total -= v / {k}.0
         else:
             count += 1
-    for it in items:
+    loop it in items:
         if it.id % {k} == 1:
             total += it.x * it.y
         else:
             total += sqrt(abs(it.x - it.y))
-    s := "item {i}"
+    s = "item {i}"
     if len(s) > {k}:
-        total += float(len(s))
-    while count > {k}:
+        total += f64(len(s))
+    loop count > {k}:
         count -= {k + 1}
         total *= 1.0001
-    total + float(count)
+    total + f64(count)
 """)
     c.append(f"""double work{i}(long a, double b, Item *items, long n) {{
     double total = 0.0;
@@ -66,7 +66,7 @@ for i in range(n):
     }}
     return total + (double)count;
 }}""")
-jot.append("items: [Item]\nfor i in 0..100: items.push(Item(float(i), float(i) * 0.5, i))\nacc := 0.0")
+jot.append("items: Item[]\nloop i in [0..100): items.push(Item(f64(i), f64(i) * 0.5, i))\nacc = 0.0")
 c.append("int main(void) {\n    Item items[100];\n    for (long i = 0; i < 100; i++) { items[i].x = i; items[i].y = i * 0.5; items[i].id = i; }\n    double acc = 0.0;")
 for i in range(n):
     jot.append(f"acc += work{i}({i % 50}, {i}.0, items)")

@@ -326,7 +326,7 @@ o_scope_close = ():
     o_open[o_scopes.pop()] = false
 
 ht_slot = (k1: int, k2: int, k3: int) -> int:
-    h = ((k1 * -7046029254386353131) xor (k2 * -4417276706812531889)) ^ (k3 * 1609587929392839161)
+    h = (k1 * -7046029254386353131) xor (k2 * -4417276706812531889) xor (k3 * 1609587929392839161)
     i = (h >> 29) & ht_mask
     loop ht_epoch[i] == o_epoch:
         if ht_k1[i] == k1 and ht_k2[i] == k2 and ht_k3[i] == k3: return i

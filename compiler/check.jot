@@ -162,14 +162,27 @@ scope_add_module = (m: int, name: int, kind: SK, r: int, decl: int) -> int:
     else: modules[m].names[name] = s
     s
 
+# Scopes are one stack of (name, symbol); each name also links its bindings, newest first, so
+# a lookup is one step instead of a scan: sc_top[name] -> newest index, sc_prev[i] -> older one.
+sc_prev: int[]
+sc_top: int[]
+
 push_scope_sym = (name: int, sym: int):
+    loop sc_top.len() <= name: sc_top.push(-1)
+    sc_prev.push(sc_top[name])
+    sc_top[name] = sc_names.len()
     sc_names.push(name)
     sc_syms.push(sym)
 
 scope_mark = () -> int: sc_names.len()
 scope_reset = (mark: int):
+    i = sc_names.len() - 1
+    loop i >= mark:
+        sc_top[sc_names[i]] = sc_prev[i]
+        i -= 1
     sc_names.truncate(mark)
     sc_syms.truncate(mark)
+    sc_prev.truncate(mark)
 
 module_lookup = (m: int, name: int) -> int:
     if m >= 0:
@@ -193,10 +206,9 @@ lookup = (name: int) -> int:
     if cx >= 0:
         floor = int(ctxs[cx].floor)
         m = int(ctxs[cx].mod)
-    i = sc_names.len() - 1
-    loop i >= floor:
-        if sc_names[i] == name: return sc_syms[i]
-        i -= 1
+    if name < sc_top.len():
+        i = sc_top[name]
+        if i >= floor: return sc_syms[i]
     module_lookup(m, name)
 
 # ---------------- "did you mean" ----------------
@@ -329,11 +341,12 @@ eval_when_toplevel = (m: int, w: int):
     register_decls(m, kids(blk))
 
 # `x = value` where no variable x exists yet is a declaration
-assign_declares = (s: int, visible: (int) -> bool) -> bool:
+# (m >= 0: at the top level of module m, where only that module's globals count)
+assign_declares = (s: int, m: int) -> bool:
     if nodes[s].kind != .assign or nodes[s].op != i32(int(Tok.assign)): return false
     lhs = int(nodes[s].a)
     lk = nodes[lhs].kind
-    if lk == .ident: return not visible(int(nodes[lhs].name))
+    if lk == .ident: return not name_assignable(int(nodes[lhs].name), m)
     if lk != .tuple: return false
     any = false
     loop i in [0..nkids(lhs)):
@@ -341,9 +354,14 @@ assign_declares = (s: int, visible: (int) -> bool) -> bool:
         ck = nodes[c].kind
         if ck == .hole: continue
         if ck != .ident: return false
-        if visible(int(nodes[c].name)): return false
+        if name_assignable(int(nodes[c].name), m): return false
         any = true
     any
+
+name_assignable = (nm: int, m: int) -> bool:
+    if m < 0: return var_visible(nm)
+    if let s = modules[m].names.get(nm): return syms[s].kind == .global
+    false
 
 assign_to_decl = (s: int):
     lhs = int(nodes[s].a)
@@ -358,10 +376,7 @@ assign_to_decl = (s: int):
 register_decls = (m: int, decls: int[]):
     loop d in decls:
         nodes[d].mod = i32(m)
-        if assign_declares(d, (nm: int) -> bool:
-            if let s = modules[m].names.get(nm): return syms[s].kind == .global
-            false
-        ): assign_to_decl(d)
+        if nodes[d].kind == .assign and assign_declares(d, m): assign_to_decl(d)
         k = nodes[d].kind
         nm = int(nodes[d].name)
         if k == .fn_:
@@ -1164,7 +1179,7 @@ check_stmt = (s: int):
         push_scope_sym(int(nodes[s].name), new_sym(int(nodes[s].name), .const_, globals.len() - 1, 0))
         nodes[s].kind = .block
         nodes[s].nlist = 0
-    else if k == .assign and assign_declares(s, var_visible):
+    else if k == .assign and assign_declares(s, -1):
         assign_to_decl(s)
         check_vardecl(s)
     else if k == .assign:
