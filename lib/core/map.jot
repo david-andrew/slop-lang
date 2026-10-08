@@ -2,58 +2,58 @@
 # The first two fields must stay `keys` and `vals` (the compiler iterates them in for loops).
 
 struct Map[K, V]:
-    keys: [K]
-    vals: [V]
-    slots: [i32]      # 0 = empty, otherwise entry index + 1
-    hashes: [u64]
+    keys: K[]
+    vals: V[]
+    slots: i32[]      # 0 = empty, otherwise entry index + 1
+    hashes: u64[]
 
 # full 64-bit avalanche (murmur3 finalizer): every key bit affects the low bits used for slots,
 # so keys like multiples of 4096 or float bit patterns spread out
-fn hash(x: int) -> u64: hash(u64(x))
+hash = (x: int) -> u64: hash(u64(x))
 
-fn hash(x: u64) -> u64:
-    h := x ^ (x >> 33)
+hash = (x: u64) -> u64:
+    h = (x xor (x >> 33))
     h = h * 0xFF51AFD7ED558CCD
-    h = h ^ (h >> 33)
+    h = (h xor (h >> 33))
     h = h * 0xC4CEB9FE1A85EC53
-    h ^ (h >> 33)
+    (h xor (h >> 33))
 
-fn hash(x: bool) -> u64:
+hash = (x: bool) -> u64:
     if x: return 1
     0
 
-fn hash(x): __hash_value(x)
+hash = (x): __hash_value(x)
 
-fn __map_find[K, V](m: Map[K, V], k: K, h: u64) -> int:
-    ns := m.slots.len()
+__map_find[K, V] = (m: Map[K, V], k: K, h: u64) -> int:
+    ns = m.slots.len()
     if ns == 0: return -1
-    mask := ns - 1
-    i := int(h) & mask
-    while true:
-        s := int(m.slots[i])
+    mask = ns - 1
+    i = int(h) & mask
+    loop true:
+        s = int(m.slots[i])
         if s == 0: return -1
-        e := s - 1
+        e = s - 1
         if m.hashes[e] == h and m.keys[e] == k: return e
         i = (i + 1) & mask
 
-fn __map_rehash[K, V](m: mut Map[K, V], ns: int):
+__map_rehash[K, V] = (m: mut Map[K, V], ns: int):
     m.slots.clear()
     m.slots.resize(ns)
-    mask := ns - 1
-    for e, h in m.hashes:
-        i := int(h) & mask
-        while m.slots[i] != 0: i = (i + 1) & mask
+    mask = ns - 1
+    loop e in 0.. and h in m.hashes:
+        i = int(h) & mask
+        loop m.slots[i] != 0: i = (i + 1) & mask
         m.slots[i] = i32(e + 1)
 
-fn []=[K, V](m: mut Map[K, V], k: K, v: V):
-    h := hash(k)
-    e := __map_find(m, k, h)
+([]=)[K, V] = (m: mut Map[K, V], k: K, v: V):
+    h = hash(k)
+    e = __map_find(m, k, h)
     if e >= 0:
         m.vals[e] = v
         return
-    n := m.keys.len()
+    n = m.keys.len()
     if (n + 1) * 4 > m.slots.len() * 3:
-        ns := m.slots.len() * 2
+        ns = m.slots.len() * 2
         if ns < 8: ns = 8
         m.keys.push(k)
         m.vals.push(v)
@@ -63,45 +63,45 @@ fn []=[K, V](m: mut Map[K, V], k: K, v: V):
     m.keys.push(k)
     m.vals.push(v)
     m.hashes.push(h)
-    mask := m.slots.len() - 1
-    i := int(h) & mask
-    while m.slots[i] != 0: i = (i + 1) & mask
+    mask = m.slots.len() - 1
+    i = int(h) & mask
+    loop m.slots[i] != 0: i = (i + 1) & mask
     m.slots[i] = i32(n + 1)
 
-fn [][K, V](m: Map[K, V], k: K) -> V:
-    e := __map_find(m, k, hash(k))
+([])[K, V] = (m: Map[K, V], k: K) -> V:
+    e = __map_find(m, k, hash(k))
     if e < 0: panic("key not found in map: {k}")
     m.vals[e]
 
-fn get[K, V](m: Map[K, V], k: K) -> V?:
-    e := __map_find(m, k, hash(k))
+get[K, V] = (m: Map[K, V], k: K) -> V?:
+    e = __map_find(m, k, hash(k))
     if e < 0: return none
     m.vals[e]
 
-fn get[K, V](m: Map[K, V], k: K, default: V) -> V:
-    e := __map_find(m, k, hash(k))
+get[K, V] = (m: Map[K, V], k: K, default: V) -> V:
+    e = __map_find(m, k, hash(k))
     if e < 0: return default
     m.vals[e]
 
-fn contains[K, V](m: Map[K, V], k: K) -> bool: __map_find(m, k, hash(k)) >= 0
-fn has[K, V](m: Map[K, V], k: K) -> bool: __map_find(m, k, hash(k)) >= 0
-fn len[K, V](m: Map[K, V]) -> int: m.keys.len()
-fn is_empty[K, V](m: Map[K, V]) -> bool: m.keys.len() == 0
-fn keys[K, V](m: Map[K, V]) -> [K]: m.keys
-fn values[K, V](m: Map[K, V]) -> [V]: m.vals
+contains[K, V] = (m: Map[K, V], k: K) -> bool: __map_find(m, k, hash(k)) >= 0
+has[K, V] = (m: Map[K, V], k: K) -> bool: __map_find(m, k, hash(k)) >= 0
+len[K, V] = (m: Map[K, V]) -> int: m.keys.len()
+is_empty[K, V] = (m: Map[K, V]) -> bool: m.keys.len() == 0
+keys[K, V] = (m: Map[K, V]) -> K[]: m.keys
+values[K, V] = (m: Map[K, V]) -> V[]: m.vals
 
-fn clear[K, V](m: mut Map[K, V]):
+clear[K, V] = (m: mut Map[K, V]):
     m.keys.clear()
     m.vals.clear()
     m.slots.clear()
     m.hashes.clear()
 
 # remove a key; returns true if it was present. The last entry moves into the hole.
-fn remove[K, V](m: mut Map[K, V], k: K) -> bool:
-    h := hash(k)
-    e := __map_find(m, k, h)
+remove[K, V] = (m: mut Map[K, V], k: K) -> bool:
+    h = hash(k)
+    e = __map_find(m, k, h)
     if e < 0: return false
-    last := m.keys.len() - 1
+    last = m.keys.len() - 1
     if e != last:
         m.keys[e] = m.keys[last]
         m.vals[e] = m.vals[last]
@@ -112,11 +112,11 @@ fn remove[K, V](m: mut Map[K, V], k: K) -> bool:
     __map_rehash(m, m.slots.len())
     true
 
-fn __fmt[K, V](buf: mut [u8], m: Map[K, V]):
-    __buf_byte(buf, '{')
-    for i, k in m.keys:
+__fmt[K, V] = (buf: mut u8[], m: Map[K, V]):
+    __buf_byte(buf, '{{')
+    loop i in 0.. and k in m.keys:
         if i > 0: __buf_append_str(buf, ", ")
         __fmt_elem(buf, k)
         __buf_append_str(buf, ": ")
         __fmt_elem(buf, m.vals[i])
-    __buf_byte(buf, '}')
+    __buf_byte(buf, '}}')

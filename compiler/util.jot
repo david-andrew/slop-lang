@@ -5,118 +5,118 @@ struct SrcFile:
     dir: str
     src: str
 
-files: [SrcFile]
-names: [str]
-name_hash: [int]
-name_tab: [i32]          # open addressing over name ids (+1; 0 = empty)
+files: SrcFile[]
+names: str[]
+name_hash: int[]
+name_tab: i32[]          # open addressing over name ids (+1; 0 = empty)
 
-fn hash_bytes(p: *u8, n: int) -> int:
-    h := -3750763034362895579                 # FNV-1a
-    for i in 0..n: h = (h ^ int(p[i])) * 1099511628211
-    h ^ (h >> 31)
+hash_bytes = (p: *u8, n: int) -> int:
+    h = -3750763034362895579                 # FNV-1a
+    loop i in [0..n): h = ((h xor int(p[i]))) * 1099511628211
+    (h xor (h >> 31))
 
-fn intern(s: str) -> int: intern_sub(s, 0, len(s))
+intern = (s: str) -> int: intern_sub(s, 0, len(s))
 
 # intern s[start..start + n] without allocating unless the name is new
-fn intern_sub(s: str, start: int, n: int) -> int:
-    if name_tab.len() == 0: name_tab = [0; 1 << 14]
-    p := data(s) + start
-    h := hash_bytes(p, n)
-    mask := name_tab.len() - 1
-    i := h & mask
-    while true:
-        e := int(name_tab[i])
+intern_sub = (s: str, start: int, n: int) -> int:
+    if name_tab.len() == 0: name_tab = fill(0, 1 << 14)
+    p = data(s) + start
+    h = hash_bytes(p, n)
+    mask = name_tab.len() - 1
+    i = h & mask
+    loop true:
+        e = int(name_tab[i])
         if e == 0: break
-        id := e - 1
+        id = e - 1
         if name_hash[id] == h and len(names[id]) == n and __mem_eq(data(names[id]), p, n): return id
         i = (i + 1) & mask
-    id := names.len()
+    id = names.len()
     if start == 0 and n == len(s): names.push(s)
-    else: names.push(s[start..start + n])
+    else: names.push(s[start..start + n))
     name_hash.push(h)
     name_tab[i] = i32(id + 1)
     if names.len() * 2 > name_tab.len():
         # grow and rehash
-        name_tab = [0; name_tab.len() * 2]
-        m2 := name_tab.len() - 1
-        for k in 0..names.len():
-            j := name_hash[k] & m2
-            while name_tab[j] != 0: j = (j + 1) & m2
+        name_tab = fill(0, name_tab.len() * 2)
+        m2 = name_tab.len() - 1
+        loop k in [0..names.len()):
+            j = name_hash[k] & m2
+            loop name_tab[j] != 0: j = (j + 1) & m2
             name_tab[j] = i32(k + 1)
     id
 
-fn name_of(id: int) -> str: names[id]
+name_of = (id: int) -> str: names[id]
 
 # position encoding: file index in the high bits, byte offset in the low 40 bits
-fn mkpos(file: int, off: int) -> int: (file << 40) | off
-fn pos_file(p: int) -> int: p >> 40
-fn pos_off(p: int) -> int: p & 0xFFFFFFFFFF
+mkpos = (file: int, off: int) -> int: (file << 40) | off
+pos_file = (p: int) -> int: p >> 40
+pos_off = (p: int) -> int: p & 0xFFFFFFFFFF
 
-line_starts: [[int]]
+line_starts: int[][]
 
-fn line_col(p: int) -> (int, int):
-    f := pos_file(p)
+line_col = (p: int) -> (int, int):
+    f = pos_file(p)
     if f < 0 or f >= files.len(): return (0, 0)
-    while line_starts.len() <= f: line_starts.push([])
+    loop line_starts.len() <= f: line_starts.push([])
     if line_starts[f].len() == 0:
-        ls := [0]
-        src := files[f].src
-        for i, c in src:
+        ls = [0]
+        src = files[f].src
+        loop i in 0.. and c in src:
             if c == '\n': ls.push(i + 1)
         line_starts[f] = ls
-    off := pos_off(p)
-    ls := data(line_starts[f])
-    lo := 0
-    hi := line_starts[f].len() - 1
-    while lo < hi:
-        mid := (lo + hi + 1) / 2
+    off = pos_off(p)
+    ls = data(line_starts[f])
+    lo = 0
+    hi = line_starts[f].len() - 1
+    loop lo < hi:
+        mid = (lo + hi + 1) / 2
         if ls[mid] <= off: lo = mid
         else: hi = mid - 1
     (lo + 1, off - ls[lo] + 1)
 
-fn pos_str(p: int) -> str:
-    f := pos_file(p)
+pos_str = (p: int) -> str:
+    f = pos_file(p)
     if f < 0 or f >= files.len(): return "<unknown>"
-    l, c := line_col(p)
+    l, c = line_col(p)
     "{files[f].path}:{l}:{c}"
 
-fn source_line(p: int) -> str:
-    f := pos_file(p)
+source_line = (p: int) -> str:
+    f = pos_file(p)
     if f < 0 or f >= files.len(): return ""
-    src := files[f].src
-    off := pos_off(p)
-    a := off
-    while a > 0 and src[a - 1] != '\n': a -= 1
-    b := off
-    while b < len(src) and src[b] != '\n': b += 1
-    src[a..b]
+    src = files[f].src
+    off = pos_off(p)
+    a = off
+    loop a > 0 and src[a - 1] != '\n': a -= 1
+    b = off
+    loop b < len(src) and src[b] != '\n': b += 1
+    src[a..b)
 
 # p < 0: no source position
-fn fatal(p: int, msg: str):
+fatal = (p: int, msg: str):
     if p < 0:
         eprint("error: {msg}")
         exit(1)
     eprint("{pos_str(p)}: error: {msg}")
-    line := source_line(p)
+    line = source_line(p)
     if len(line) > 0:
-        l, c := line_col(p)
-        caret := ""
-        for i in 0..c - 1:
+        l, c = line_col(p)
+        caret = ""
+        loop i in [0..c - 1):
             if i < len(line) and line[i] == '\t': caret += "\t"
             else: caret += " "
         eprint("    {line}\n    {caret}^")
     exit(1)
 
-fn warn(p: int, msg: str): eprint("{pos_str(p)}: warning: {msg}")
+warn = (p: int, msg: str): eprint("{pos_str(p)}: warning: {msg}")
 
-fn ice(msg: str):
+ice = (msg: str):
     eprint("internal compiler error: {msg}")
     exit(2)
 
 # append src to out with one copy (compiler code must stay compilable by the C bootstrap,
 # which lacks the `extend` intrinsic)
-fn append_bytes(out: mut [u8], src: [u8]):
-    n := out.len()
+append_bytes = (out: mut u8[], src: u8[]):
+    n = out.len()
     if src.len() == 0: return
     out.resize(n + src.len())
     mem_copy(data(out) + n, data(src), src.len())

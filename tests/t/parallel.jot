@@ -1,9 +1,9 @@
 # requires: jot (thread pool lives in lib/std)
 # data-parallel helpers: results must equal the serial computation, with no leaks
-fn collatz(n0: int) -> int:
-    n := n0
-    s := 0
-    while n != 1:
+collatz = (n0: int) -> int:
+    n = n0
+    s = 0
+    loop n != 1:
         if n % 2 == 0: n /= 2
         else: n = 3 * n + 1
         s += 1
@@ -13,23 +13,23 @@ struct P:
     pos: vec2
     vel: vec2
 
-fn main():
-    xs: [int]
-    for i in 1..50001: xs.push(i)
-    a := xs.map(fn(x): collatz(x))
-    b := parallel_map(xs, fn(x): collatz(x))
+main = ():
+    xs: int[]
+    loop i in [1..50001): xs.push(i)
+    a = xs.map((x): collatz(x))
+    b = parallel_map(xs, (x): collatz(x))
     print(a == b, b.len(), b[26])
-    words := parallel_range(2000, fn(i): "w{i * i}")
+    words = parallel_range(2000, (i): "w{i * i}")
     print(words[0], words[1999], words.len())
-    ps: [P]
-    for i in 0..10000: ps.push(P(vec2(f32(i), 0), vec2(1, 2)))
-    for _ in 0..5: parallel_update(ps, fn(p): P(p.pos + p.vel, p.vel))
+    ps: P[]
+    loop i in [0..10000): ps.push(P(vec2(f32(i), 0), vec2(1, 2)))
+    loop _ in [0..5): parallel_update(ps, (p): P(p.pos + p.vel, p.vel))
     print(ps[0].pos, ps[9999].pos)
-    nested := parallel_range(4, fn(i): parallel_range(3, fn(j): i * 10 + j))
+    nested = parallel_range(4, (i): parallel_range(3, (j): i * 10 + j))
     print(nested)
-    before := alloc_count()
-    for k in 0..30:
-        s := parallel_range(500, fn(i): "s{i}{k}")
+    before = alloc_count()
+    loop k in [0..30):
+        s = parallel_range(500, (i): "s{i}{k}")
         assert(s[499] == "s499{k}")
-    leaked := alloc_count() - before
+    leaked = alloc_count() - before
     print("leaked", leaked)

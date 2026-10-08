@@ -42,57 +42,57 @@ struct LitOut:
     color: vec4
     shadow_pos: vec4
 
-fn lit_vs(v: Vertex3D, u: LitParams) -> LitOut:
-    w := u.model * vec4(v.pos, 1)
-    n := (u.model * vec4(v.normal, 0)).xyz
+lit_vs = (v: Vertex3D, u: LitParams) -> LitOut:
+    w = u.model * vec4(v.pos, 1)
+    n = (u.model * vec4(v.normal, 0)).xyz
     LitOut(u.view_proj * w, w.xyz, n, v.uv, v.color * u.color, u.shadow_vp * w)
 
-fn lit_vs_inst(v: Vertex3D, inst: Instance3D, u: LitParams) -> LitOut:
-    p := v.pos
+lit_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> LitOut:
+    p = v.pos
     # gentle sway for foliage-like instances (wind > 0), stronger at the top of the mesh
     if u.wind > 0.0:
-        sway := sin(u.time * 2.0 + inst.model[3].x * 0.7 + inst.model[3].z * 0.5) * u.wind * max(p.y, 0.0)
+        sway = sin(u.time * 2.0 + inst.model[3].x * 0.7 + inst.model[3].z * 0.5) * u.wind * max(p.y, 0.0)
         p = p + vec3(sway, 0, sway * 0.5)
-    w := inst.model * vec4(p, 1)
-    n := (inst.model * vec4(v.normal, 0)).xyz
+    w = inst.model * vec4(p, 1)
+    n = (inst.model * vec4(v.normal, 0)).xyz
     LitOut(u.view_proj * w, w.xyz, n, v.uv, v.color * u.color * inst.color, u.shadow_vp * w)
 
-fn shadow_factor(u: LitParams, sp: vec4, ndl: f32) -> f32:
+shadow_factor = (u: LitParams, sp: vec4, ndl: f32) -> f32:
     if u.shadow_strength <= 0.0: return 1.0
-    p := sp.xyz / sp.w * 0.5 + vec3(0.5, 0.5, 0.5)
+    p = sp.xyz / sp.w * 0.5 + vec3(0.5, 0.5, 0.5)
     if p.x < 0.0 or p.x > 1.0 or p.y < 0.0 or p.y > 1.0 or p.z > 1.0: return 1.0
-    bias := 0.0015 + 0.004 * (1.0 - ndl)
+    bias = 0.0015 + 0.004 * (1.0 - ndl)
     lit: f32 = 0.0
     texel: f32 = 1.0 / 2048.0
-    for x in -1..2:
-        for y in -1..2:
-            d := sample(u.shadow_map, p.xy + vec2(f32(x), f32(y)) * texel).x
+    loop x in [-1..2):
+        loop y in [-1..2):
+            d = sample(u.shadow_map, p.xy + vec2(f32(x), f32(y)) * texel).x
             if p.z - bias <= d: lit += 1.0
     lit = lit / 9.0
     1.0 - u.shadow_strength * (1.0 - lit)
 
-fn aces(c: vec3) -> vec3:
-    a := c * (c * 2.51 + vec3(0.03, 0.03, 0.03))
-    b := c * (c * 2.43 + vec3(0.59, 0.59, 0.59)) + vec3(0.14, 0.14, 0.14)
+aces = (c: vec3) -> vec3:
+    a = c * (c * 2.51 + vec3(0.03, 0.03, 0.03))
+    b = c * (c * 2.43 + vec3(0.59, 0.59, 0.59)) + vec3(0.14, 0.14, 0.14)
     clamp(a / b, 0.0, 1.0)
 
-fn lit_fs(i: LitOut, u: LitParams) -> vec4:
-    base := i.color
+lit_fs = (i: LitOut, u: LitParams) -> vec4:
+    base = i.color
     if u.use_tex > 0.5: base = base * sample(u.tex, i.uv)
-    n := normalize(i.normal)
-    l := normalize(u.sun_dir)
-    v := normalize(u.cam_pos - i.world)
-    ndl := max(dot(n, l), 0.0)
-    sh := shadow_factor(u, i.shadow_pos, ndl)
-    hemi := mix(u.ground_color, u.sky_color, n.y * 0.5 + 0.5)
-    h := normalize(l + v)
-    spec := pow(max(dot(n, h), 0.0), 48.0) * u.specular * sh
-    rim := pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.35
-    c := base.xyz * (hemi * 0.55 + u.sun_color * (ndl * sh * 0.9)) + u.sun_color * spec + u.sky_color * rim * base.xyz
+    n = normalize(i.normal)
+    l = normalize(u.sun_dir)
+    v = normalize(u.cam_pos - i.world)
+    ndl = max(dot(n, l), 0.0)
+    sh = shadow_factor(u, i.shadow_pos, ndl)
+    hemi = mix(u.ground_color, u.sky_color, n.y * 0.5 + 0.5)
+    h = normalize(l + v)
+    spec = pow(max(dot(n, h), 0.0), 48.0) * u.specular * sh
+    rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.35
+    c = base.xyz * (hemi * 0.55 + u.sun_color * (ndl * sh * 0.9)) + u.sun_color * spec + u.sky_color * rim * base.xyz
     c = c + base.xyz * u.emissive
     # height-attenuated exponential fog
-    dist := length(i.world - u.cam_pos)
-    fog_amount := 1.0 - exp(-dist * u.fog_density * exp(-max(i.world.y, 0.0) * u.fog_height))
+    dist = length(i.world - u.cam_pos)
+    fog_amount = 1.0 - exp(-dist * u.fog_density * exp(-max(i.world.y, 0.0) * u.fog_height))
     c = mix(c, u.fog_color, clamp(fog_amount, 0.0, 1.0))
     vec4(aces(c), base.w)
 
@@ -100,9 +100,9 @@ fn lit_fs(i: LitOut, u: LitParams) -> vec4:
 struct ShadowOut:
     pos: vec4
 
-fn shadow_vs(v: Vertex3D, u: LitParams) -> ShadowOut: ShadowOut(u.shadow_vp * (u.model * vec4(v.pos, 1)))
-fn shadow_vs_inst(v: Vertex3D, inst: Instance3D, u: LitParams) -> ShadowOut: ShadowOut(u.shadow_vp * (inst.model * vec4(v.pos, 1)))
-fn shadow_fs(i: ShadowOut, u: LitParams) -> vec4: vec4(1, 1, 1, 1)
+shadow_vs = (v: Vertex3D, u: LitParams) -> ShadowOut: ShadowOut(u.shadow_vp * (u.model * vec4(v.pos, 1)))
+shadow_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> ShadowOut: ShadowOut(u.shadow_vp * (inst.model * vec4(v.pos, 1)))
+shadow_fs = (i: ShadowOut, u: LitParams) -> vec4: vec4(1, 1, 1, 1)
 
 # ---------------- sky ----------------
 struct SkyVertex:
@@ -122,22 +122,22 @@ struct SkyOut:
     pos: vec4
     ndc: vec2
 
-fn sky_vs(v: SkyVertex, u: SkyParams) -> SkyOut: SkyOut(vec4(v.pos, 0.9999, 1), v.pos)
+sky_vs = (v: SkyVertex, u: SkyParams) -> SkyOut: SkyOut(vec4(v.pos, 0.9999, 1), v.pos)
 
-fn hash21(p: vec2) -> f32: fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453)
+hash21 = (p: vec2) -> f32: fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453)
 
-fn sky_fs(i: SkyOut, u: SkyParams) -> vec4:
-    a := u.inv_view_proj * vec4(i.ndc, 1, 1)
-    b := u.inv_view_proj * vec4(i.ndc, -1, 1)
-    dir := normalize(a.xyz / a.w - b.xyz / b.w)
-    y := dir.y
-    c := mix(u.sky_horizon, u.sky_top, pow(clamp(y, 0.0, 1.0), 0.45))
+sky_fs = (i: SkyOut, u: SkyParams) -> vec4:
+    a = u.inv_view_proj * vec4(i.ndc, 1, 1)
+    b = u.inv_view_proj * vec4(i.ndc, -1, 1)
+    dir = normalize(a.xyz / a.w - b.xyz / b.w)
+    y = dir.y
+    c = mix(u.sky_horizon, u.sky_top, pow(clamp(y, 0.0, 1.0), 0.45))
     if y < 0.0: c = mix(u.sky_horizon, u.ground, clamp(-y * 4.0, 0.0, 1.0))
-    sd := max(dot(dir, normalize(u.sun_dir)), 0.0)
+    sd = max(dot(dir, normalize(u.sun_dir)), 0.0)
     c = c + u.sun_color * (pow(sd, 900.0) * 6.0 + pow(sd, 12.0) * 0.25)
     if u.stars > 0.0 and y > 0.0:
-        g := floor(dir.xz / (y + 0.3) * 220.0)
-        s := hash21(g)
+        g = floor(dir.xz / (y + 0.3) * 220.0)
+        s = hash21(g)
         if s > 0.997: c = c + vec3(1, 1, 1) * (u.stars * (s - 0.997) * 250.0 * (0.6 + 0.4 * sin(u.time * 3.0 + s * 100.0)))
     vec4(aces(c), 1)
 
@@ -157,26 +157,26 @@ struct PostOut:
     pos: vec4
     uv: vec2
 
-fn post_vs(v: SkyVertex, u: PostParams) -> PostOut: PostOut(vec4(v.pos, 0, 1), v.pos * 0.5 + vec2(0.5, 0.5))
+post_vs = (v: SkyVertex, u: PostParams) -> PostOut: PostOut(vec4(v.pos, 0, 1), v.pos * 0.5 + vec2(0.5, 0.5))
 
-fn bright_fs(i: PostOut, u: PostParams) -> vec4:
-    c := sample(u.src, i.uv).xyz
-    lum := dot(c, vec3(0.299, 0.587, 0.114))
-    k := smoothstep(u.threshold, u.threshold + 0.25, lum)
+bright_fs = (i: PostOut, u: PostParams) -> vec4:
+    c = sample(u.src, i.uv).xyz
+    lum = dot(c, vec3(0.299, 0.587, 0.114))
+    k = smoothstep(u.threshold, u.threshold + 0.25, lum)
     vec4(c * k, 1)
 
-fn blur_fs(i: PostOut, u: PostParams) -> vec4:
-    d := u.dir * u.texel
-    c := sample(u.src, i.uv).xyz * 0.227
+blur_fs = (i: PostOut, u: PostParams) -> vec4:
+    d = u.dir * u.texel
+    c = sample(u.src, i.uv).xyz * 0.227
     c = c + (sample(u.src, i.uv + d * 1.385).xyz + sample(u.src, i.uv - d * 1.385).xyz) * 0.316
     c = c + (sample(u.src, i.uv + d * 3.231).xyz + sample(u.src, i.uv - d * 3.231).xyz) * 0.070
     vec4(c, 1)
 
-fn composite_fs(i: PostOut, u: PostParams) -> vec4:
-    c := sample(u.src, i.uv).xyz + sample(u.bloom, i.uv).xyz * u.strength
-    gray := dot(c, vec3(0.299, 0.587, 0.114))
+composite_fs = (i: PostOut, u: PostParams) -> vec4:
+    c = sample(u.src, i.uv).xyz + sample(u.bloom, i.uv).xyz * u.strength
+    gray = dot(c, vec3(0.299, 0.587, 0.114))
     c = mix(vec3(gray, gray, gray), c, u.saturation) * u.tint
-    q := i.uv - vec2(0.5, 0.5)
+    q = i.uv - vec2(0.5, 0.5)
     c = c * (1.0 - u.vignette * dot(q, q) * 1.6)
     vec4(c, 1)
 
@@ -188,14 +188,14 @@ struct Draw3D:
     tex: int
     emissive: f32
     specular: f32
-    instances: [Instance3D]
+    instances: Instance3D[]
     instanced: bool
     shadow: bool
     wind: f32
-    custom: fn()
+    custom: () -> void
     has_custom: bool
 
-__3d_ready := false
+__3d_ready = false
 __lit: Shader
 __lit_inst: Shader
 __shadow_sh: Shader
@@ -205,41 +205,41 @@ __bright_sh: Shader
 __blur_sh: Shader
 __comp_sh: Shader
 __fs_tri: Mesh
-__draws: [Draw3D]
-__view := mat4()
-__proj3 := mat4()
-__cam_pos := vec3(0, 2, 5)
-__cam_target := vec3(0, 0, 0)
-__fov := 1.05
-__near := 0.1
-__far := 500.0
-__sun_dir := normalize(vec3(0.4, 0.8, 0.3))
-__sun_color := vec3(1.0, 0.95, 0.85)
-__sky_top := vec3(0.25, 0.45, 0.85)
-__sky_horizon := vec3(0.75, 0.85, 0.95)
-__ground_color := vec3(0.35, 0.3, 0.25)
-__fog_color := vec3(0.75, 0.85, 0.95)
-__fog_density := 0.004
-__fog_height := 0.05
-__sky_on := true
-__stars := 0.0
-__shadows := true
-__shadow_strength := 0.8
-__shadow_size := 30.0
-__shadow_rt := RenderTarget(Texture(0, 0, 0), 0, 0)
-__shadow_vp := mat4()
-__bloom_on := false
-__bloom_strength := 0.6
-__bloom_threshold := 0.7
-__vignette := 0.0
-__saturation := 1.0
-__tint := vec3(1, 1, 1)
-__scene_rt := RenderTarget(Texture(0, 0, 0), 0, 0)
-__bloom_a := RenderTarget(Texture(0, 0, 0), 0, 0)
-__bloom_b := RenderTarget(Texture(0, 0, 0), 0, 0)
-__post_active := false
+__draws: Draw3D[]
+__view = mat4()
+__proj3 = mat4()
+__cam_pos = vec3(0, 2, 5)
+__cam_target = vec3(0, 0, 0)
+__fov = 1.05
+__near = 0.1
+__far = 500.0
+__sun_dir = normalize(vec3(0.4, 0.8, 0.3))
+__sun_color = vec3(1.0, 0.95, 0.85)
+__sky_top = vec3(0.25, 0.45, 0.85)
+__sky_horizon = vec3(0.75, 0.85, 0.95)
+__ground_color = vec3(0.35, 0.3, 0.25)
+__fog_color = vec3(0.75, 0.85, 0.95)
+__fog_density = 0.004
+__fog_height = 0.05
+__sky_on = true
+__stars = 0.0
+__shadows = true
+__shadow_strength = 0.8
+__shadow_size = 30.0
+__shadow_rt = RenderTarget(Texture(0, 0, 0), 0, 0)
+__shadow_vp = mat4()
+__bloom_on = false
+__bloom_strength = 0.6
+__bloom_threshold = 0.7
+__vignette = 0.0
+__saturation = 1.0
+__tint = vec3(1, 1, 1)
+__scene_rt = RenderTarget(Texture(0, 0, 0), 0, 0)
+__bloom_a = RenderTarget(Texture(0, 0, 0), 0, 0)
+__bloom_b = RenderTarget(Texture(0, 0, 0), 0, 0)
+__post_active = false
 
-fn __3d_init():
+__3d_init = ():
     if __3d_ready: return
     __3d_ready = true
     __lit = make_shader(shader(lit_vs, lit_fs))
@@ -254,83 +254,83 @@ fn __3d_init():
 
 # ---------------- public API ----------------
 # place the camera; call once per frame before drawing 3D objects
-fn camera3d(pos: vec3, target: vec3, fov_degrees: float = 60.0, near: float = 0.1, far: float = 500.0):
+camera3d = (pos: vec3, target: vec3, fov_degrees: f64 = 60.0, near: f64 = 0.1, far: f64 = 500.0):
     __cam_pos = pos
     __cam_target = target
     __fov = radians(fov_degrees)
     __near = near
     __far = far
 
-fn sun(direction: vec3, color: vec3 = vec3(1, 0.95, 0.85)):
+sun = (direction: vec3, color: vec3 = vec3(1, 0.95, 0.85)):
     __sun_dir = normalize(direction)
     __sun_color = color
 
-fn sky(top: vec3, horizon: vec3, ground: vec3 = vec3(0.3, 0.27, 0.24)):
+sky = (top: vec3, horizon: vec3, ground: vec3 = vec3(0.3, 0.27, 0.24)):
     __sky_top = top
     __sky_horizon = horizon
     __ground_color = ground
     __sky_on = true
 
-fn hide_sky(): __sky_on = false
-fn night_stars(amount: float): __stars = amount
-fn fog(color: vec3, density: float = 0.01, height_falloff: float = 0.05):
+hide_sky = (): __sky_on = false
+night_stars = (amount: f64): __stars = amount
+fog = (color: vec3, density: f64 = 0.01, height_falloff: f64 = 0.05):
     __fog_color = color
     __fog_density = f32(density)
     __fog_height = f32(height_falloff)
-fn shadows(on: bool, strength: float = 0.8, area: float = 30.0):
+shadows = (on: bool, strength: f64 = 0.8, area: f64 = 30.0):
     __shadows = on
     __shadow_strength = strength
     __shadow_size = area
 # bloom + color grading for the whole frame (2D and 3D)
-fn post_effects(bloom: float = 0.6, threshold: float = 0.7, vignette: float = 0.35, saturation: float = 1.0, tint: vec3 = vec3(1, 1, 1)):
+post_effects = (bloom: f64 = 0.6, threshold: f64 = 0.7, vignette: f64 = 0.35, saturation: f64 = 1.0, tint: vec3 = vec3(1, 1, 1)):
     __bloom_on = true
     __bloom_strength = bloom
     __bloom_threshold = threshold
     __vignette = vignette
     __saturation = saturation
     __tint = tint
-fn no_post_effects(): __bloom_on = false
+no_post_effects = (): __bloom_on = false
 
-fn draw_mesh(m: Mesh, transform: mat4 = mat4(), color: vec4 = vec4(1, 1, 1, 1), texture: Texture = Texture(0, 0, 0), emissive: float = 0.0, specular: float = 0.3, cast_shadow: bool = true):
+draw_mesh = (m: Mesh, transform: mat4 = mat4(), color: vec4 = vec4(1, 1, 1, 1), texture: Texture = Texture(0, 0, 0), emissive: f64 = 0.0, specular: f64 = 0.3, cast_shadow: bool = true):
     __draws.push(Draw3D(m, transform, color, texture.id, f32(emissive), f32(specular), [], false, cast_shadow, 0, __noop3d, false))
 
 # many copies of a mesh in one draw call (crowds, forests, particles...)
-fn draw_mesh_instanced(m: Mesh, instances: [Instance3D], color: vec4 = vec4(1, 1, 1, 1), emissive: float = 0.0, specular: float = 0.2, cast_shadow: bool = true, wind: float = 0.0):
+draw_mesh_instanced = (m: Mesh, instances: Instance3D[], color: vec4 = vec4(1, 1, 1, 1), emissive: f64 = 0.0, specular: f64 = 0.2, cast_shadow: bool = true, wind: f64 = 0.0):
     __draws.push(Draw3D(m, mat4(), color, 0, f32(emissive), f32(specular), instances, true, cast_shadow, f32(wind), __noop3d, false))
 
 # draw with your own shader inside the 3D pass; `render` runs with depth testing on.
 # Use scene_view_proj(), scene_camera(), scene_sun(), scene_shadow_vp(), scene_shadow_map()...
 # transparent = true: run after the sky with alpha blending on and depth writes off;
 # additive = true: like transparent, but colors add up (glows, beams, light shafts)
-fn draw_custom(render: fn(), transparent: bool = false, additive: bool = false):
+draw_custom = (render: () -> void, transparent: bool = false, additive: bool = false):
     a: f32 = 1.0
     if transparent or additive: a = 0.5
     em: f32 = 0.0
     if additive: em = 1.0
     __draws.push(Draw3D(__dummy_mesh(), mat4(), vec4(1, 1, 1, a), 0, em, 0, [], false, false, 0, render, true))
 
-fn __noop3d(): pass
-fn __dummy_mesh() -> Mesh: Mesh()
+__noop3d = (): pass
+__dummy_mesh = () -> Mesh: Mesh()
 
-fn scene_view_proj() -> mat4: __proj3 * __view
-fn scene_camera() -> vec3: __cam_pos
-fn scene_sun() -> vec3: __sun_dir
-fn scene_sun_color() -> vec3: __sun_color
-fn scene_sky_color() -> vec3: __sky_top * 0.6 + __sky_horizon * 0.4
-fn scene_ground_color() -> vec3: __ground_color
-fn scene_fog_color() -> vec3: __fog_color
-fn scene_fog() -> vec2: vec2(__fog_density, __fog_height)
-fn scene_shadow_vp() -> mat4: __shadow_vp
-fn scene_shadow_map() -> Texture: __shadow_rt.texture
-fn scene_shadow_strength() -> f32: f32(__shadow_strength) * f32(int(__shadows))
+scene_view_proj = () -> mat4: __proj3 * __view
+scene_camera = () -> vec3: __cam_pos
+scene_sun = () -> vec3: __sun_dir
+scene_sun_color = () -> vec3: __sun_color
+scene_sky_color = () -> vec3: __sky_top * 0.6 + __sky_horizon * 0.4
+scene_ground_color = () -> vec3: __ground_color
+scene_fog_color = () -> vec3: __fog_color
+scene_fog = () -> vec2: vec2(__fog_density, __fog_height)
+scene_shadow_vp = () -> mat4: __shadow_vp
+scene_shadow_map = () -> Texture: __shadow_rt.texture
+scene_shadow_strength = () -> f32: f32(__shadow_strength) * f32(int(__shadows))
 
-fn instance(transform: mat4, color: vec4 = vec4(1, 1, 1, 1)) -> Instance3D: Instance3D(transform, color)
+instance = (transform: mat4, color: vec4 = vec4(1, 1, 1, 1)) -> Instance3D: Instance3D(transform, color)
 
 # transform helpers
-fn transform(pos: vec3, rot_y: float = 0.0, scale: float = 1.0) -> mat4:
+transform = (pos: vec3, rot_y: f64 = 0.0, scale: f64 = 1.0) -> mat4:
     translation(pos) * rotation_y(rot_y) * scaling(vec3(f32(scale), f32(scale), f32(scale)))
 
-fn __params(d: Draw3D, vp: mat4) -> LitParams:
+__params = (d: Draw3D, vp: mat4) -> LitParams:
     LitParams(view_proj = vp, model = d.model, shadow_vp = __shadow_vp, color = d.color, cam_pos = __cam_pos,
         sun_dir = __sun_dir, sun_color = __sun_color, sky_color = __sky_top * 0.6 + __sky_horizon * 0.4,
         ground_color = __ground_color, fog_color = __fog_color, fog_density = __fog_density, fog_height = __fog_height,
@@ -338,25 +338,25 @@ fn __params(d: Draw3D, vp: mat4) -> LitParams:
         shadow_strength = f32(__shadow_strength) * f32(int(__shadows)), time = f32(elapsed()), wind = d.wind,
         tex = Texture(d.tex, 1, 1), shadow_map = __shadow_rt.texture)
 
-fn __render3d():
+__render3d = ():
     if __draws.len() == 0: return
     __3d_init()
     flush()
-    w := __target_w
-    h := __target_h
-    aspect := float(w) / float(max(h, 1))
+    w = __target_w
+    h = __target_h
+    aspect = f64(w) / f64(max(h, 1))
     __view = look_at(__cam_pos, __cam_target, vec3(0, 1, 0))
     __proj3 = perspective(__fov, aspect, __near, __far)
-    vp := __proj3 * __view
+    vp = __proj3 * __view
     # shadow pass: orthographic projection around the camera target
     if __shadows:
         if __shadow_rt.fbo == 0:
-            res := 2048
+            res = 2048
             if __soft: res = 1024
             __shadow_rt = __depth_target(res)
-        center := __cam_target
-        lpos := center + __sun_dir * f32(__shadow_size * 2.0)
-        s := __shadow_size
+        center = __cam_target
+        lpos = center + __sun_dir * f32(__shadow_size * 2.0)
+        s = __shadow_size
         __shadow_vp = orthographic(-s, s, -s, s, 0.1, s * 5.0) * look_at(lpos, center, vec3(0, 1, 0))
         glBindFramebuffer(GL_FRAMEBUFFER, u32(__shadow_rt.fbo))
         glViewport(0, 0, i32(__shadow_rt.texture.width), i32(__shadow_rt.texture.height))
@@ -365,9 +365,9 @@ fn __render3d():
         glDepthFunc(GL_LEQUAL)
         glDisable(GL_BLEND)
         glColorMask(0, 0, 0, 0)
-        for mut d in __draws:
+        loop mut d in __draws:
             if not d.shadow or d.has_custom: continue
-            p := __params(d, vp)
+            p = __params(d, vp)
             p.shadow_map = Texture(0, 1, 1)          # never sample the target being rendered
             if d.instanced: draw_instanced(__shadow_sh_inst, d.mesh, d.instances, p)
             else: draw(__shadow_sh, d.mesh, p)
@@ -380,7 +380,7 @@ fn __render3d():
     glEnable(GL_CULL_FACE)
     glCullFace(GL_BACK)
     glDisable(GL_BLEND)
-    for mut d in __draws:
+    loop mut d in __draws:
         if d.has_custom:
             if d.color.w < 1.0: continue
             d.custom()
@@ -389,19 +389,19 @@ fn __render3d():
             glDisable(GL_BLEND)
             continue
         if d.color.w < 1.0: continue
-        p := __params(d, vp)
+        p = __params(d, vp)
         if d.instanced: draw_instanced(__lit_inst, d.mesh, d.instances, p)
         else: draw(__lit, d.mesh, p)
     if __sky_on:
         glDisable(GL_CULL_FACE)
-        sp := SkyParams(inverse(vp), __sky_top, __sky_horizon, __ground_color, __sun_dir, __sun_color, f32(elapsed()), f32(__stars))
+        sp = SkyParams(inverse(vp), __sky_top, __sky_horizon, __ground_color, __sun_dir, __sun_color, f32(elapsed()), f32(__stars))
         draw(__sky_sh, __fs_tri, sp)
     # transparent objects last, blended
     glEnable(GL_BLEND)
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
     glDepthMask(0)
     glDisable(GL_CULL_FACE)
-    for mut d in __draws:
+    loop mut d in __draws:
         if d.color.w >= 1.0: continue
         if d.has_custom:
             if d.emissive > 0.0: glBlendFunc(GL_SRC_ALPHA, GL_ONE)
@@ -411,7 +411,7 @@ fn __render3d():
             glDepthMask(0)
             glDisable(GL_CULL_FACE)
             continue
-        p := __params(d, vp)
+        p = __params(d, vp)
         if d.instanced: draw_instanced(__lit_inst, d.mesh, d.instances, p)
         else: draw(__lit, d.mesh, p)
     glDepthMask(1)
@@ -419,34 +419,34 @@ fn __render3d():
     __apply_blend(__blend)
     __draws.clear()
 
-fn __rebind_target():
+__rebind_target = ():
     if __cur_target >= 0:
         glBindFramebuffer(GL_FRAMEBUFFER, u32(__cur_target))
     else:
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
     glViewport(0, 0, i32(__target_w), i32(__target_h))
 
-fn __depth_target(size: int) -> RenderTarget:
-    id := gl_create_texture()
+__depth_target = (size: int) -> RenderTarget:
+    id = gl_create_texture()
     glBindTexture(GL_TEXTURE_2D, u32(id))
     gl_tex_image(size, size, GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, null, 0)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, i32(GL_NEAREST))
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, i32(GL_NEAREST))
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, i32(GL_CLAMP_TO_EDGE))
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, i32(GL_CLAMP_TO_EDGE))
-    fbo := gl_create_framebuffer()
+    fbo = gl_create_framebuffer()
     glBindFramebuffer(GL_FRAMEBUFFER, u32(fbo))
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, u32(id), 0)
     RenderTarget(Texture(id, size, size), fbo, 0)
 
 # ---------------- frame post-processing ----------------
-fn __post_begin():
+__post_begin = ():
     if not __bloom_on:
         __post_active = false
         return
     __3d_init()
-    w := __win_w
-    h := __win_h
+    w = __win_w
+    h = __win_h
     if __scene_rt.texture.width != w or __scene_rt.texture.height != h:
         __scene_rt = render_target(w, h)
         __bloom_a = render_target(max(w / 4, 1), max(h / 4, 1))
@@ -454,24 +454,24 @@ fn __post_begin():
     draw_to(__scene_rt)
     __post_active = true
 
-fn __post_pass(sh: Shader, dst: RenderTarget, p: PostParams):
+__post_pass = (sh: Shader, dst: RenderTarget, p: PostParams):
     glBindFramebuffer(GL_FRAMEBUFFER, u32(dst.fbo))
     glViewport(0, 0, i32(dst.texture.width), i32(dst.texture.height))
     draw(sh, __fs_tri, p)
 
-fn __post_end():
+__post_end = ():
     if not __post_active: return
     __render3d()
     flush()
     glDisable(GL_BLEND)
     glDisable(GL_DEPTH_TEST)
-    bw := __bloom_a.texture.width
-    bh := __bloom_a.texture.height
-    texel := vec2(1.0 / f32(bw), 1.0 / f32(bh))
+    bw = __bloom_a.texture.width
+    bh = __bloom_a.texture.height
+    texel = vec2(1.0 / f32(bw), 1.0 / f32(bh))
     # (`bloom` must not alias a pass's render target: WebGL rejects feedback loops)
-    p := PostParams(__scene_rt.texture, __scene_rt.texture, texel, f32(__bloom_threshold), f32(__bloom_strength), f32(__vignette), vec2(1, 0), f32(__saturation), __tint)
+    p = PostParams(__scene_rt.texture, __scene_rt.texture, texel, f32(__bloom_threshold), f32(__bloom_strength), f32(__vignette), vec2(1, 0), f32(__saturation), __tint)
     __post_pass(__bright_sh, __bloom_a, p)
-    for k in 0..2:
+    loop k in [0..2):
         p.src = __bloom_a.texture
         p.dir = vec2(1, 0)
         __post_pass(__blur_sh, __bloom_b, p)
@@ -487,35 +487,35 @@ fn __post_end():
     __post_active = false
 
 # ---------------- mesh generators ----------------
-fn __v3(p: vec3, n: vec3, uv: vec2) -> Vertex3D: Vertex3D(p, n, uv, vec4(1, 1, 1, 1))
+__v3 = (p: vec3, n: vec3, uv: vec2) -> Vertex3D: Vertex3D(p, n, uv, vec4(1, 1, 1, 1))
 
-fn cube_mesh(size: float = 1.0) -> Mesh:
-    vs: [Vertex3D]
-    s := f32(size / 2.0)
-    faces := [(vec3(1, 0, 0), vec3(0, 1, 0)), (vec3(-1, 0, 0), vec3(0, 1, 0)), (vec3(0, 1, 0), vec3(0, 0, -1)),
+cube_mesh = (size: f64 = 1.0) -> Mesh:
+    vs: Vertex3D[]
+    s = f32(size / 2.0)
+    faces = [(vec3(1, 0, 0), vec3(0, 1, 0)), (vec3(-1, 0, 0), vec3(0, 1, 0)), (vec3(0, 1, 0), vec3(0, 0, -1)),
               (vec3(0, -1, 0), vec3(0, 0, 1)), (vec3(0, 0, 1), vec3(0, 1, 0)), (vec3(0, 0, -1), vec3(0, 1, 0))]
-    for f in faces:
-        n := f.0
-        up := f.1
-        side := cross(up, n)
-        c := [n + up - side, n - up - side, n - up + side, n + up + side]
-        uvs := [vec2(0, 0), vec2(0, 1), vec2(1, 1), vec2(1, 0)]
-        for k in [0, 1, 2, 0, 2, 3]: vs.push(__v3(c[k] * s, n, uvs[k]))
+    loop f in faces:
+        n = f.0
+        up = f.1
+        side = cross(up, n)
+        c = [n + up - side, n - up - side, n - up + side, n + up + side]
+        uvs = [vec2(0, 0), vec2(0, 1), vec2(1, 1), vec2(1, 0)]
+        loop k in [0, 1, 2, 0, 2, 3]: vs.push(__v3(c[k] * s, n, uvs[k]))
     mesh(vs)
 
-fn sphere_mesh(radius: float = 0.5, segments: int = 32, rings: int = 16) -> Mesh:
-    vs: [Vertex3D]
-    idx: [u32]
-    for r in 0..rings + 1:
-        th := PI * float(r) / float(rings)
-        for s in 0..segments + 1:
-            ph := TAU * float(s) / float(segments)
-            n := vec3(f32(sin(th) * cos(ph)), f32(cos(th)), f32(sin(th) * sin(ph)))
-            vs.push(__v3(n * f32(radius), n, vec2(f32(float(s) / float(segments)), f32(float(r) / float(rings)))))
-    for r in 0..rings:
-        for s in 0..segments:
-            a := u32(r * (segments + 1) + s)
-            b := a + u32(segments + 1)
+sphere_mesh = (radius: f64 = 0.5, segments: int = 32, rings: int = 16) -> Mesh:
+    vs: Vertex3D[]
+    idx: u32[]
+    loop r in [0..rings + 1):
+        th = PI * f64(r) / f64(rings)
+        loop s in [0..segments + 1):
+            ph = TAU * f64(s) / f64(segments)
+            n = vec3(f32(sin(th) * cos(ph)), f32(cos(th)), f32(sin(th) * sin(ph)))
+            vs.push(__v3(n * f32(radius), n, vec2(f32(f64(s) / f64(segments)), f32(f64(r) / f64(rings)))))
+    loop r in [0..rings):
+        loop s in [0..segments):
+            a = u32(r * (segments + 1) + s)
+            b = a + u32(segments + 1)
             idx.push(a)
             idx.push(a + 1)
             idx.push(b)
@@ -525,26 +525,26 @@ fn sphere_mesh(radius: float = 0.5, segments: int = 32, rings: int = 16) -> Mesh
     mesh(vs, idx)
 
 # a flat grid in the XZ plane; `height` gives the terrain elevation at (x, z)
-fn terrain_mesh(size: float, divisions: int, height: fn(float, float) -> float, color: fn(float, float, float) -> vec4) -> Mesh:
-    vs: [Vertex3D]
-    idx: [u32]
-    n := divisions
-    step := size / float(n)
-    half := size / 2.0
-    for zi in 0..n + 1:
-        for xi in 0..n + 1:
-            x := -half + float(xi) * step
-            z := -half + float(zi) * step
-            y := height(x, z)
-            e := step * 0.5
-            nx := height(x - e, z) - height(x + e, z)
-            nz := height(x, z - e) - height(x, z + e)
-            nrm := normalize(vec3(f32(nx), f32(2.0 * e), f32(nz)))
-            vs.push(Vertex3D(vec3(f32(x), f32(y), f32(z)), nrm, vec2(f32(float(xi) / float(n)), f32(float(zi) / float(n))), color(x, y, z)))
-    for zi in 0..n:
-        for xi in 0..n:
-            a := u32(zi * (n + 1) + xi)
-            b := a + u32(n + 1)
+terrain_mesh = (size: f64, divisions: int, height: (f64, f64) -> f64, color: (f64, f64, f64) -> vec4) -> Mesh:
+    vs: Vertex3D[]
+    idx: u32[]
+    n = divisions
+    step = size / f64(n)
+    half = size / 2.0
+    loop zi in [0..n + 1):
+        loop xi in [0..n + 1):
+            x = -half + f64(xi) * step
+            z = -half + f64(zi) * step
+            y = height(x, z)
+            e = step * 0.5
+            nx = height(x - e, z) - height(x + e, z)
+            nz = height(x, z - e) - height(x, z + e)
+            nrm = normalize(vec3(f32(nx), f32(2.0 * e), f32(nz)))
+            vs.push(Vertex3D(vec3(f32(x), f32(y), f32(z)), nrm, vec2(f32(f64(xi) / f64(n)), f32(f64(zi) / f64(n))), color(x, y, z)))
+    loop zi in [0..n):
+        loop xi in [0..n):
+            a = u32(zi * (n + 1) + xi)
+            b = a + u32(n + 1)
             idx.push(a)
             idx.push(b)
             idx.push(a + 1)
@@ -553,43 +553,43 @@ fn terrain_mesh(size: float, divisions: int, height: fn(float, float) -> float, 
             idx.push(b + 1)
     mesh(vs, idx)
 
-fn plane_mesh(size: float = 10.0) -> Mesh:
-    terrain_mesh(size, 1, fn(x: float, z: float): 0.0, fn(x: float, y: float, z: float): vec4(1, 1, 1, 1))
+plane_mesh = (size: f64 = 10.0) -> Mesh:
+    terrain_mesh(size, 1, (x: f64, z: f64): 0.0, (x: f64, y: f64, z: f64): vec4(1, 1, 1, 1))
 
-fn cylinder_mesh(radius: float = 0.5, height: float = 1.0, segments: int = 24, top_radius: float = -1.0) -> Mesh:
-    vs: [Vertex3D]
-    tr := top_radius
+cylinder_mesh = (radius: f64 = 0.5, height: f64 = 1.0, segments: int = 24, top_radius: f64 = -1.0) -> Mesh:
+    vs: Vertex3D[]
+    tr = top_radius
     if tr < 0.0: tr = radius
-    for i in 0..segments:
-        a0 := TAU * float(i) / float(segments)
-        a1 := TAU * float(i + 1) / float(segments)
-        d0 := vec3(f32(cos(a0)), 0, f32(sin(a0)))
-        d1 := vec3(f32(cos(a1)), 0, f32(sin(a1)))
-        slope := f32((radius - tr) / height)
-        n0 := normalize(d0 + vec3(0, slope, 0))
-        n1 := normalize(d1 + vec3(0, slope, 0))
-        b0 := d0 * f32(radius)
-        b1 := d1 * f32(radius)
-        t0 := d0 * f32(tr) + vec3(0, f32(height), 0)
-        t1 := d1 * f32(tr) + vec3(0, f32(height), 0)
+    loop i in [0..segments):
+        a0 = TAU * f64(i) / f64(segments)
+        a1 = TAU * f64(i + 1) / f64(segments)
+        d0 = vec3(f32(cos(a0)), 0, f32(sin(a0)))
+        d1 = vec3(f32(cos(a1)), 0, f32(sin(a1)))
+        slope = f32((radius - tr) / height)
+        n0 = normalize(d0 + vec3(0, slope, 0))
+        n1 = normalize(d1 + vec3(0, slope, 0))
+        b0 = d0 * f32(radius)
+        b1 = d1 * f32(radius)
+        t0 = d0 * f32(tr) + vec3(0, f32(height), 0)
+        t1 = d1 * f32(tr) + vec3(0, f32(height), 0)
         vs.push(__v3(b0, n0, vec2(0, 1)))
         vs.push(__v3(t0, n0, vec2(0, 0)))
         vs.push(__v3(t1, n1, vec2(1, 0)))
         vs.push(__v3(b0, n0, vec2(0, 1)))
         vs.push(__v3(t1, n1, vec2(1, 0)))
         vs.push(__v3(b1, n1, vec2(1, 1)))
-        up := vec3(0, 1, 0)
-        top := vec3(0, f32(height), 0)
+        up = vec3(0, 1, 0)
+        top = vec3(0, f32(height), 0)
         vs.push(__v3(top, up, vec2(0.5, 0.5)))
         vs.push(__v3(t1, up, vec2(0.5, 0.5)))
         vs.push(__v3(t0, up, vec2(0.5, 0.5)))
-        dn := vec3(0, -1, 0)
+        dn = vec3(0, -1, 0)
         vs.push(__v3(vec3(0, 0, 0), dn, vec2(0.5, 0.5)))
         vs.push(__v3(b0, dn, vec2(0.5, 0.5)))
         vs.push(__v3(b1, dn, vec2(0.5, 0.5)))
     mesh(vs)
 
-fn cone_mesh(radius: float = 0.5, height: float = 1.0, segments: int = 24) -> Mesh: cylinder_mesh(radius, height, segments, 0.0)
+cone_mesh = (radius: f64 = 0.5, height: f64 = 1.0, segments: int = 24) -> Mesh: cylinder_mesh(radius, height, segments, 0.0)
 
 # custom mesh from vertex/index arrays
-fn custom_mesh(vertices: [Vertex3D], indices: [u32] = []) -> Mesh: mesh(vertices, indices)
+custom_mesh = (vertices: Vertex3D[], indices: u32[] = []) -> Mesh: mesh(vertices, indices)

@@ -1,63 +1,63 @@
 # Reference counting must not leak: alloc_count() returns to its baseline.
 struct Item:
     name: str
-    tags: [str]
-    score: float
+    tags: str[]
+    score: f64
 
 enum Node:
     leaf(v: str)
-    pair(a: [str], b: str)
+    pair(a: str[], b: str)
 
-fn make_items(n: int) -> [Item]:
-    out: [Item]
-    for i in 0..n:
-        out.push(Item("item{i}", ["t{i}", "u"], float(i)))
+make_items = (n: int) -> Item[]:
+    out: Item[]
+    loop i in [0..n):
+        out.push(Item("item{i}", ["t{i}", "u"], f64(i)))
     out
 
-fn churn():
-    items := make_items(50)
-    copy := items
+churn = ():
+    items = make_items(50)
+    copy = items
     copy[3].name = "changed"
     copy[4].tags.push("extra")
-    s := ""
-    for it in items: s += it.name
-    names := items.map(fn(it: Item): it.name)
-    joined := join(names, ",")
+    s = ""
+    loop it in items: s += it.name
+    names = items.map((it: Item): it.name)
+    joined = join(names, ",")
     m: {str: Item} = {}
-    for it in items: m[it.name] = it
+    loop it in items: m[it.name] = it
     m.remove("item7")
-    nodes := [Node.leaf("x"), Node.pair(["a", "b"], "c")]
-    nodes2 := nodes
+    nodes = [Node.leaf("x"), Node.pair(["a", "b"], "c")]
+    nodes2 = nodes
     nodes2.push(Node.leaf("y"))
-    k := 0
-    for n in nodes2:
+    k = 0
+    loop n in nodes2:
         match n:
             leaf(v): k += len(v)
             pair(a, b): k += a.len() + len(b)
     opt: str? = "hello {k}"
-    if v := opt: s = v
-    f := fn(x: int): "{s}{x}"
-    g := f
-    h := g(1) + f(2)
-    parts := split(joined, ",")
+    if let v = opt: s = v
+    f = (x: int): "{s}{x}"
+    g = f
+    h = g(1) + f(2)
+    parts = split(joined, ",")
     parts.sort()
-    t := (parts[0], [1, 2, 3], "z")
-    q := t
-    sl := parts[1..5]
-    for mut p in sl: p = p + "!"
-    while sl.len() > 0: sl.pop()
-    x := items[0]
+    t = (parts[0], [1, 2, 3], "z")
+    q = t
+    sl = parts[1..5)
+    loop mut p in sl: p = p + "!"
+    loop sl.len() > 0: sl.pop()
+    x = items[0]
     items.clear()
-    w := words("a b  c")
+    w = words("a b  c")
     w.insert(1, "zz")
     w.remove(0)
 
-fn make_label(i: int) -> str: "label-{i}"
+make_label = (i: int) -> str: "label-{i}"
 
-base := alloc_count()
-for round in 0..20: churn()
-for i in 0..100:
-    l := make_label(i)
+base = alloc_count()
+loop round in [0..20): churn()
+loop i in [0..100):
+    l = make_label(i)
     if len(l) > 100: break
-leaked := alloc_count() - base
+leaked = alloc_count() - base
 print("leaked:", leaked)

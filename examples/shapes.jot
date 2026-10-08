@@ -1,17 +1,17 @@
 # A tour of the 2D drawing API.
-t := 0.0
+t = 0.0
 
-fn update(dt: float):
+update = (dt: f64):
     t += dt
     if key_pressed(.escape): quit()
 
-fn draw():
+draw = ():
     clear(rgb(0.08, 0.09, 0.14))
     rect_gradient(0, 0, 1280, 720, rgb(0.1, 0.12, 0.25), rgb(0.35, 0.18, 0.3))
-    for i in 0..12:
-        a := t * 0.5 + float(i) * TAU / 12.0
-        p := vec2(640, 360) + from_angle(a) * 220.0
-        circle(p, 26, hsv(float(i) / 12.0, 0.6, 0.95))
+    loop i in [0..12):
+        a = t * 0.5 + f64(i) * TAU / 12.0
+        p = vec2(640, 360) + from_angle(a) * 220.0
+        circle(p, 26, hsv(f64(i) / 12.0, 0.6, 0.95))
     blend(.add)
     circle_gradient(vec2(640, 360), 180, rgba(1, 0.8, 0.4, 0.5), rgba(1, 0.4, 0.2, 0))
     blend(.alpha)

@@ -1,13 +1,13 @@
 # arithmetic and variables
-a := 7
-b := 3
+a = 7
+b = 3
 print(a + b, a - b, a * b, a / b, a % b)
-f := 2.5
+f = 2.5
 print(f * 2.0, f / 2.0, 1.0 / 3.0)
 print(0.1 + 0.2, 100.0, 1e20, 1.5e-7, -3.25)
 print(true and false, true or false, not true)
-s := "hello"
-t := s + " world"
+s = "hello"
+t = s + " world"
 print(t, len(t))
 print("interp: {a * 2} {s}!")
 x: f32 = 1.5
@@ -16,33 +16,33 @@ u: u8 = 250
 u += 10
 print(u)
 
-fn fib(n: int) -> int:
+fib = (n: int) -> int:
     if n < 2: return n
     fib(n - 1) + fib(n - 2)
 print(fib(20))
 
-fn sq(x: int): x * x
+sq = (x: int): x * x
 print(sq(9))
 
 # arrays
-xs := [5, 3, 9, 1]
+xs = [5, 3, 9, 1]
 xs.push(7)
 print(xs, xs.len())
-ys := xs
+ys = xs
 ys[0] = 100
 print(xs[0], ys[0])
 xs.sort()
 print(xs)
-print(xs.map(fn(v): v * 10))
-print(xs.filter(fn(v): v > 4))
-total := 0
-for v in xs: total += v
+print(xs.map((v): v * 10))
+print(xs.filter((v): v > 4))
+total = 0
+loop v in xs: total += v
 print(total)
-for i, v in xs:
+loop i in 0.. and v in xs:
     if i == 2: print("third is", v)
 
 # strings
-words := "the quick brown fox".split(" ")
+words = "the quick brown fox".split(" ")
 print(words, words.len())
 print(join(words, "-"))
 print("abc".upper(), "  pad  ".trim(), "hello".contains("ell"))

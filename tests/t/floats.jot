@@ -1,6 +1,6 @@
 # requires: jot (correct float parsing/printing lives in lib/core, but literal parsing needs the self-hosted compiler)
 # float parsing is correctly rounded and printing is the shortest string that reads back exactly
-fn main():
+main = ():
     print(0.1, 0.1 + 0.2, 1.0 / 3.0, 2.0 / 3.0, 1e23, 5e-324, 1.7976931348623157e308)
     print(2.2250738585072014e-308, 9007199254740993.0, 1e16, 1e15, 123456.789, 100.0)
     print(to_float("2.4703282292062328e-324") ?? -1.0, to_float("1e400") ?? -1.0, to_float("3.14159265358979323846264338327950288") ?? -1.0)
@@ -9,5 +9,5 @@ fn main():
     b: f32 = 1.0 / 3.0
     print(a, b, f32(16777217))
     print(sin(PI), cos(PI / 2.0), atan(1.0) * 4.0, exp(1.0), log(10.0), sqrt(2.0))
-    x := 1.0 / 0.0
+    x = 1.0 / 0.0
     print(x, -x, "{x:.2}")

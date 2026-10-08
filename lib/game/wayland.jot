@@ -3,14 +3,14 @@
 # wl_seat, and server-side decorations where the compositor offers them (a small title bar
 # drawn here otherwise).
 
-__wl_fd := -1
-__wl_next_id := 2              # 1 is wl_display
-__wl_kind: [int]               # object id -> interface (WLK_*)
-__wl_out: [u8]                 # requests not yet sent
-__wl_out_fds: [int]            # file descriptors that go with them
-__wl_in: [u8]
-__wl_in_fds: [int]
-__wl_failed := ""
+__wl_fd = -1
+__wl_next_id = 2              # 1 is wl_display
+__wl_kind: int[]               # object id -> interface (WLK_*)
+__wl_out: u8[]                 # requests not yet sent
+__wl_out_fds: int[]            # file descriptors that go with them
+__wl_in: u8[]
+__wl_in_fds: int[]
+__wl_failed = ""
 
 const WLK_NONE = 0
 const WLK_DISPLAY = 1
@@ -31,126 +31,126 @@ const WLK_DECO_MANAGER = 15
 const WLK_DECORATION = 16
 const WLK_FRAME = 17           # a frame callback
 
-__wl_registry := 0
-__wl_compositor := 0
-__wl_shm := 0
-__wl_wm_base := 0
-__wl_seat := 0
-__wl_deco_mgr := 0
-__wl_surface := 0
-__wl_xdg_surface := 0
-__wl_toplevel := 0
-__wl_pointer := 0
-__wl_keyboard := 0
-__wl_sync_done := false
-__wl_configured := false
-__wl_pending_w := 0
-__wl_pending_h := 0
-__wl_frame_pending := false
+__wl_registry = 0
+__wl_compositor = 0
+__wl_shm = 0
+__wl_wm_base = 0
+__wl_seat = 0
+__wl_deco_mgr = 0
+__wl_surface = 0
+__wl_xdg_surface = 0
+__wl_toplevel = 0
+__wl_pointer = 0
+__wl_keyboard = 0
+__wl_sync_done = false
+__wl_configured = false
+__wl_pending_w = 0
+__wl_pending_h = 0
+__wl_frame_pending = false
 
 # client-side decorations (a title bar above the content) when the server draws none
-__wl_csd := true
+__wl_csd = true
 const WL_BAR = 30
-__wl_pointer_serial := 0
-__wl_pointer_in_bar := false
-__wl_pointer_x := 0.0
-__wl_pointer_y := 0.0
-__wl_shift := false
+__wl_pointer_serial = 0
+__wl_pointer_in_bar = false
+__wl_pointer_x = 0.0
+__wl_pointer_y = 0.0
+__wl_shift = false
 
 # shared-memory buffers: three, so one can be drawn while the compositor holds the others
 struct __WlBuf:
     id: int
     busy: bool
     offset: int
-__wl_bufs: [__WlBuf]
-__wl_pool := 0
-__wl_pool_fd := -1
+__wl_bufs: __WlBuf[]
+__wl_pool = 0
+__wl_pool_fd = -1
 __wl_pool_mem: *u8 = null
-__wl_pool_size := 0
-__wl_buf_w := 0
-__wl_buf_h := 0
+__wl_pool_size = 0
+__wl_buf_w = 0
+__wl_buf_h = 0
 
-fn __wl_new(kind: int) -> int:
-    id := __wl_next_id
+__wl_new = (kind: int) -> int:
+    id = __wl_next_id
     __wl_next_id += 1
-    while __wl_kind.len() <= id: __wl_kind.push(WLK_NONE)
+    loop __wl_kind.len() <= id: __wl_kind.push(WLK_NONE)
     __wl_kind[id] = kind
     id
 
 # ---- requests ----
-__wl_msg: [u8]
-fn __wl_begin(obj: int, op: int):
+__wl_msg: u8[]
+__wl_begin = (obj: int, op: int):
     __wl_msg.clear()
     __put32(__wl_msg, obj)
     __put32(__wl_msg, op)            # size is patched in __wl_end
-fn __wl_u(v: int): __put32(__wl_msg, v)
-fn __wl_s(s: str):
+__wl_u = (v: int): __put32(__wl_msg, v)
+__wl_s = (s: str):
     __put32(__wl_msg, len(s) + 1)
-    for c in s: __wl_msg.push(c)
+    loop c in s: __wl_msg.push(c)
     __wl_msg.push(0)
-    while __wl_msg.len() % 4 != 0: __wl_msg.push(0)
-fn __wl_end():
-    n := __wl_msg.len()
-    op := int(__wl_msg[4]) | (int(__wl_msg[5]) << 8)
-    v := (n << 16) | op
+    loop __wl_msg.len() % 4 != 0: __wl_msg.push(0)
+__wl_end = ():
+    n = __wl_msg.len()
+    op = int(__wl_msg[4]) | (int(__wl_msg[5]) << 8)
+    v = (n << 16) | op
     __wl_msg[4] = u8(v & 255)
     __wl_msg[5] = u8((v >> 8) & 255)
     __wl_msg[6] = u8((v >> 16) & 255)
     __wl_msg[7] = u8((v >> 24) & 255)
-    for b in __wl_msg: __wl_out.push(b)
+    loop b in __wl_msg: __wl_out.push(b)
 
-fn __wl_flush():
+__wl_flush = ():
     if __wl_out.len() == 0 or __wl_fd < 0: return
     # sendmsg with the pending file descriptors as SCM_RIGHTS
-    iov := [0, 0]
+    iov = [0, 0]
     iov[0] = data(__wl_out) as int
     iov[1] = __wl_out.len()
-    ctl := [0; 8]
-    msg := [0; 7]
+    ctl = fill(0, 8)
+    msg = fill(0, 7)
     msg[2] = data(iov) as int
     msg[3] = 1
     if __wl_out_fds.len() > 0:
-        c := data(ctl) as *u8
-        clen := 16 + 4 * __wl_out_fds.len()
+        c = data(ctl) as *u8
+        clen = 16 + 4 * __wl_out_fds.len()
         (c as *int)[0] = clen
         (c as *i32)[2] = 1                     # SOL_SOCKET
         (c as *i32)[3] = 1                     # SCM_RIGHTS
-        for i, f in __wl_out_fds: (c as *i32)[4 + i] = i32(f)
+        loop i in 0.. and f in __wl_out_fds: (c as *i32)[4 + i] = i32(f)
         msg[4] = c as int
         msg[5] = (clen + 7) / 8 * 8
-    r := syscall(46, __wl_fd, data(msg), 0x4000)          # MSG_NOSIGNAL
+    r = syscall(46, __wl_fd, data(msg), 0x4000)          # MSG_NOSIGNAL
     if r < 0: __wl_failed = "the compositor closed the connection"
     __wl_out.clear()
     __wl_out_fds.clear()
 
 # ---- events ----
-fn __wl_u32(b: [u8], i: int) -> int: int(b[i]) | (int(b[i + 1]) << 8) | (int(b[i + 2]) << 16) | (int(b[i + 3]) << 24)
-fn __wl_i32(b: [u8], i: int) -> int:
-    v := __wl_u32(b, i)
+__wl_u32 = (b: u8[], i: int) -> int: int(b[i]) | (int(b[i + 1]) << 8) | (int(b[i + 2]) << 16) | (int(b[i + 3]) << 24)
+__wl_i32 = (b: u8[], i: int) -> int:
+    v = __wl_u32(b, i)
     if v >= 0x80000000: return v - 0x100000000
     v
-fn __wl_str(b: [u8], i: int) -> (str, int):
-    n := __wl_u32(b, i)
-    s := ""
-    if n > 0: s = str_from_bytes(b[i + 4..i + 4 + n - 1])
+__wl_str = (b: u8[], i: int) -> (str, int):
+    n = __wl_u32(b, i)
+    s = ""
+    if n > 0: s = str_from_bytes(b[i + 4..i + 4 + n - 1))
     (s, i + 4 + (n + 3) / 4 * 4)
 
 # read what the compositor sent (blocking up to timeout_ms; 0 polls) and handle it
-fn __wl_read(timeout_ms: int) -> bool:
+__wl_read = (timeout_ms: int) -> bool:
     if __wl_fd < 0: return false
-    pfd := [0; 1]
+    pfd = fill(0, 1)
     (data(pfd) as *i32)[0] = i32(__wl_fd)
     (data(pfd) as *i16)[2] = 1                 # POLLIN
     if syscall(7, data(pfd), 1, timeout_ms) <= 0: return false
-    buf := [u8(0); 8192]
-    iov := [data(buf) as int, 8192]
-    ctl := [0; 16]
-    msg := [0; 7]
+    buf = fill(u8(0), 8192)
+    iov = [data(buf) as int, 8192]
+    ctl = fill(0, 16)
+    msg = fill(0, 7)
     msg[2] = data(iov) as int
     msg[3] = 1
     msg[4] = data(ctl) as int
     msg[5] = 128
-    r := syscall(47, __wl_fd, data(msg), 0x40)            # recvmsg, MSG_DONTWAIT
+    r = syscall(47, __wl_fd, data(msg), 0x40)            # recvmsg, MSG_DONTWAIT
     if r == 0:
         __wl_failed = "the compositor closed the connection"
         __win_close = true
@@ -158,46 +158,46 @@ fn __wl_read(timeout_ms: int) -> bool:
     if r < 0: return false
     # file descriptors that came along (keymaps)
     if msg[5] >= 20:
-        c := data(ctl) as *u8
-        clen := (c as *int)[0]
-        for k in 0..(clen - 16) / 4: __wl_in_fds.push(int((c as *i32)[4 + k]))
-    for k in 0..r: __wl_in.push(buf[k])
+        c = data(ctl) as *u8
+        clen = (c as *int)[0]
+        loop k in [0..(clen - 16) / 4): __wl_in_fds.push(int((c as *i32)[4 + k]))
+    loop k in [0..r): __wl_in.push(buf[k])
     __wl_dispatch()
     true
 
-fn __wl_dispatch():
-    p := 0
-    while p + 8 <= __wl_in.len():
-        obj := __wl_u32(__wl_in, p)
-        h := __wl_u32(__wl_in, p + 4)
-        size := h >> 16
-        op := h & 0xFFFF
+__wl_dispatch = ():
+    p = 0
+    loop p + 8 <= __wl_in.len():
+        obj = __wl_u32(__wl_in, p)
+        h = __wl_u32(__wl_in, p + 4)
+        size = h >> 16
+        op = h & 0xFFFF
         if size < 8 or p + size > __wl_in.len(): break
-        __wl_event(obj, op, __wl_in[p + 8..p + size])
+        __wl_event(obj, op, __wl_in[p + 8..p + size))
         p += size
     __wl_in = __wl_in[p..]
 
-fn __wl_take_fd() -> int:
+__wl_take_fd = () -> int:
     if __wl_in_fds.len() == 0: return -1
-    f := __wl_in_fds[0]
+    f = __wl_in_fds[0]
     __wl_in_fds = __wl_in_fds[1..]
     f
 
-fn __wl_event(obj: int, op: int, a: [u8]):
-    kind := WLK_NONE
+__wl_event = (obj: int, op: int, a: u8[]):
+    kind = WLK_NONE
     if obj < __wl_kind.len(): kind = __wl_kind[obj]
     if kind == WLK_DISPLAY:
         if op == 0:
-            msg, _ := __wl_str(a, 8)
+            msg, _ = __wl_str(a, 8)
             __wl_failed = "protocol error: {msg}"
             eprint("wayland: {__wl_failed}")
         else if op == 1:
-            id := __wl_u32(a, 0)
+            id = __wl_u32(a, 0)
             if id < __wl_kind.len(): __wl_kind[id] = WLK_NONE
     else if kind == WLK_REGISTRY and op == 0:
-        name := __wl_u32(a, 0)
-        iface, q := __wl_str(a, 4)
-        ver := __wl_u32(a, q)
+        name = __wl_u32(a, 0)
+        iface, q = __wl_str(a, 4)
+        ver = __wl_u32(a, q)
         if iface == "wl_compositor": __wl_compositor = __wl_bind(name, iface, min(ver, 4), WLK_COMPOSITOR)
         else if iface == "wl_shm": __wl_shm = __wl_bind(name, iface, 1, WLK_SHM)
         else if iface == "xdg_wm_base": __wl_wm_base = __wl_bind(name, iface, 1, WLK_WM_BASE)
@@ -222,8 +222,8 @@ fn __wl_event(obj: int, op: int, a: [u8]):
             __win_h = __wl_pending_h
     else if kind == WLK_TOPLEVEL:
         if op == 0:
-            w := __wl_i32(a, 0)
-            h := __wl_i32(a, 4)
+            w = __wl_i32(a, 0)
+            h = __wl_i32(a, 4)
             if __wl_csd: h -= WL_BAR
             __wl_pending_w = w
             __wl_pending_h = h
@@ -231,10 +231,10 @@ fn __wl_event(obj: int, op: int, a: [u8]):
     else if kind == WLK_DECORATION and op == 0:
         __wl_csd = __wl_u32(a, 0) != 2
     else if kind == WLK_BUFFER and op == 0:
-        for mut b in __wl_bufs:
+        loop mut b in __wl_bufs:
             if b.id == obj: b.busy = false
     else if kind == WLK_SEAT and op == 0:
-        caps := __wl_u32(a, 0)
+        caps = __wl_u32(a, 0)
         if caps & 1 != 0 and __wl_pointer == 0:
             __wl_pointer = __wl_new(WLK_POINTER)
             __wl_begin(__wl_seat, 0)
@@ -249,8 +249,8 @@ fn __wl_event(obj: int, op: int, a: [u8]):
     else if kind == WLK_POINTER: __wl_pointer_event(op, a)
     else if kind == WLK_KEYBOARD: __wl_keyboard_event(op, a)
 
-fn __wl_bind(name: int, iface: str, ver: int, kind: int) -> int:
-    id := __wl_new(kind)
+__wl_bind = (name: int, iface: str, ver: int, kind: int) -> int:
+    id = __wl_new(kind)
     __wl_begin(__wl_registry, 0)
     __wl_u(name)
     __wl_s(iface)
@@ -260,27 +260,27 @@ fn __wl_bind(name: int, iface: str, ver: int, kind: int) -> int:
     id
 
 # a request and a sync round trip: everything sent before has been handled
-fn __wl_roundtrip():
-    cb := __wl_new(WLK_CALLBACK)
+__wl_roundtrip = ():
+    cb = __wl_new(WLK_CALLBACK)
     __wl_sync_done = false
     __wl_begin(1, 0)
     __wl_u(cb)
     __wl_end()
     __wl_flush()
-    tries := 0
-    while not __wl_sync_done and len(__wl_failed) == 0 and tries < 200:
+    tries = 0
+    loop not __wl_sync_done and len(__wl_failed) == 0 and tries < 200:
         __wl_read(25)
         tries += 1
 
 # ---- input ----
-fn __wl_pointer_event(op: int, a: [u8]):
+__wl_pointer_event = (op: int, a: u8[]):
     if op == 0 or op == 2:
-        o := 8
+        o = 8
         if op == 2: o = 4
         if op == 0: __wl_pointer_serial = __wl_u32(a, 0)
-        x := float(__wl_i32(a, o)) / 256.0
-        y := float(__wl_i32(a, o + 4)) / 256.0
-        if __wl_csd: y -= float(WL_BAR)
+        x = f64(__wl_i32(a, o)) / 256.0
+        y = f64(__wl_i32(a, o + 4)) / 256.0
+        if __wl_csd: y -= f64(WL_BAR)
         __wl_pointer_x = x
         __wl_pointer_y = y
         __wl_pointer_in_bar = __wl_csd and y < 0.0
@@ -290,12 +290,12 @@ fn __wl_pointer_event(op: int, a: [u8]):
             __mouse_x = x
             __mouse_y = y
     else if op == 3:
-        serial := __wl_u32(a, 0)
-        btn := __wl_u32(a, 8)
-        down := __wl_u32(a, 12) == 1
+        serial = __wl_u32(a, 0)
+        btn = __wl_u32(a, 8)
+        down = __wl_u32(a, 12) == 1
         if __wl_pointer_in_bar:
             if down and btn == 0x110:
-                if __wl_pointer_x >= float(__win_w - WL_BAR): __win_close = true
+                if __wl_pointer_x >= f64(__win_w - WL_BAR): __win_close = true
                 else:
                     __wl_begin(__wl_toplevel, 5)       # move
                     __wl_u(__wl_seat)
@@ -307,11 +307,11 @@ fn __wl_pointer_event(op: int, a: [u8]):
         else if btn == 0x112: __mouse_event(1, down)
         else if btn == 0x111: __mouse_event(2, down)
     else if op == 4 and __wl_u32(a, 4) == 0:
-        v := float(__wl_i32(a, 8)) / 256.0
+        v = f64(__wl_i32(a, 8)) / 256.0
         __mouse_wheel -= v / 10.0
 
 # evdev key codes -> Key
-fn __wl_key(code: int) -> int:
+__wl_key = (code: int) -> int:
     if code >= 2 and code <= 10: return int(Key.n1) + code - 2
     if code == 11: return int(Key.n0)
     if code >= 59 and code <= 68: return int(Key.f1) + code - 59
@@ -379,42 +379,42 @@ fn __wl_key(code: int) -> int:
 # the character a key types on a US layout (0: none)
 const __WL_US_LOWER = "\0\x1b1234567890-=\0\0qwertyuiop[]\0\0asdfghjkl;'`\0\\zxcvbnm,./"
 const __WL_US_UPPER = "\0\x1b!@#$%^&*()_+\0\0QWERTYUIOP{{}}\0\0ASDFGHJKL:\"~\0|ZXCVBNM<>?"
-fn __wl_char(code: int) -> int:
+__wl_char = (code: int) -> int:
     if code == 57: return 32
-    t := __WL_US_LOWER
+    t = __WL_US_LOWER
     if __wl_shift: t = __WL_US_UPPER
     if code < len(t): return int(t[code])
     0
 
-fn __wl_keyboard_event(op: int, a: [u8]):
+__wl_keyboard_event = (op: int, a: u8[]):
     if op == 0:
-        f := __wl_take_fd()
+        f = __wl_take_fd()
         if f >= 0: syscall(3, f)               # the keymap: keys are mapped by code instead
     else if op == 2:
-        for mut kd in __key_down: kd = false
+        loop mut kd in __key_down: kd = false
     else if op == 3:
-        code := __wl_u32(a, 8)
-        down := __wl_u32(a, 12) == 1
+        code = __wl_u32(a, 8)
+        down = __wl_u32(a, 12) == 1
         __key_event(__wl_key(code), down)
         if down:
-            ch := __wl_char(code)
+            ch = __wl_char(code)
             if ch >= 32 and ch < 127: __text_input += chr(ch)
     else if op == 4:
         __wl_shift = __wl_u32(a, 4) & 1 != 0
 
 # ---- setup ----
-fn __wl_connect() -> str:
-    disp := env("WAYLAND_DISPLAY") ?? "wayland-0"
-    path := disp
+__wl_connect = () -> str:
+    disp = env("WAYLAND_DISPLAY") ?? "wayland-0"
+    path = disp
     if not starts_with(disp, "/"):
-        dir := env("XDG_RUNTIME_DIR") ?? ""
+        dir = env("XDG_RUNTIME_DIR") ?? ""
         if len(dir) == 0: return "XDG_RUNTIME_DIR is not set"
         path = "{dir}/{disp}"
-    fd := syscall(41, 1, 1 | 0x80000, 0)
+    fd = syscall(41, 1, 1 | 0x80000, 0)
     if fd < 0: return "cannot create a socket"
-    addr := [u8(0); 110]
+    addr = fill(u8(0), 110)
     addr[0] = 1
-    for k in 0..len(path): addr[2 + k] = path[k]
+    loop k in [0..len(path)): addr[2 + k] = path[k]
     if syscall(42, fd, data(addr), 2 + len(path) + 1) != 0:
         syscall(3, fd)
         return "cannot connect to the Wayland compositor at {path}"
@@ -429,8 +429,8 @@ fn __wl_connect() -> str:
     if __wl_compositor == 0 or __wl_shm == 0 or __wl_wm_base == 0: return "the compositor lacks wl_compositor, wl_shm or xdg_wm_base"
     ""
 
-fn __wl_open(title: str, w: int, h: int) -> str:
-    why := __wl_connect()
+__wl_open = (title: str, w: int, h: int) -> str:
+    why = __wl_connect()
     if len(why) > 0: return why
     __wl_surface = __wl_new(WLK_SURFACE)
     __wl_begin(__wl_compositor, 0)
@@ -452,7 +452,7 @@ fn __wl_open(title: str, w: int, h: int) -> str:
     __wl_s("jot")
     __wl_end()
     if __wl_deco_mgr != 0:
-        deco := __wl_new(WLK_DECORATION)
+        deco = __wl_new(WLK_DECORATION)
         __wl_begin(__wl_deco_mgr, 1)
         __wl_u(deco)
         __wl_u(__wl_toplevel)
@@ -463,8 +463,8 @@ fn __wl_open(title: str, w: int, h: int) -> str:
     __wl_begin(__wl_surface, 6)                # commit (no buffer yet): ask for a configure
     __wl_end()
     __wl_roundtrip()
-    tries := 0
-    while not __wl_configured and tries < 100 and len(__wl_failed) == 0:
+    tries = 0
+    loop not __wl_configured and tries < 100 and len(__wl_failed) == 0:
         __wl_read(20)
         tries += 1
     if len(__wl_failed) > 0: return __wl_failed
@@ -472,21 +472,21 @@ fn __wl_open(title: str, w: int, h: int) -> str:
     __wl_flush()
     ""
 
-fn __wl_set_title(title: str):
+__wl_set_title = (title: str):
     if __wl_toplevel == 0: return
     __wl_begin(__wl_toplevel, 2)
     __wl_s(title)
     __wl_end()
     __wl_flush()
 
-fn __wl_poll():
-    while __wl_read(0): pass
+__wl_poll = ():
+    loop __wl_read(0): pass
     __wl_flush()
 
 # ---- presenting ----
-fn __wl_ensure_buffers(w: int, h: int):
+__wl_ensure_buffers = (w: int, h: int):
     if __wl_buf_w == w and __wl_buf_h == h and __wl_bufs.len() > 0: return
-    for b in __wl_bufs:
+    loop b in __wl_bufs:
         __wl_begin(b.id, 0)                    # wl_buffer.destroy
         __wl_end()
     __wl_bufs.clear()
@@ -495,7 +495,7 @@ fn __wl_ensure_buffers(w: int, h: int):
         __wl_end()
         syscall(11, __wl_pool_mem, __wl_pool_size)
         syscall(3, __wl_pool_fd)
-    one := w * h * 4
+    one = w * h * 4
     __wl_pool_size = one * 3
     __wl_pool_fd = syscall(319, data("jot-wl\0"), 1)        # memfd_create(MFD_CLOEXEC)
     syscall(77, __wl_pool_fd, __wl_pool_size)              # ftruncate
@@ -506,8 +506,8 @@ fn __wl_ensure_buffers(w: int, h: int):
     __wl_u(__wl_pool_size)
     __wl_end()
     __wl_out_fds.push(__wl_pool_fd)
-    for k in 0..3:
-        id := __wl_new(WLK_BUFFER)
+    loop k in [0..3):
+        id = __wl_new(WLK_BUFFER)
         __wl_begin(__wl_pool, 0)
         __wl_u(id)
         __wl_u(one * k)
@@ -522,26 +522,26 @@ fn __wl_ensure_buffers(w: int, h: int):
     __wl_flush()
 
 # show a frame: fill(pixels, width) writes the window's pixels (BGRX rows, top first)
-fn __wl_present(fill: fn(*u8, int, int)):
-    w := __win_w
-    ch := __win_h
-    h := ch
+__wl_present = (fill: (*u8, int, int) -> void):
+    w = __win_w
+    ch = __win_h
+    h = ch
     if __wl_csd: h += WL_BAR
     __wl_ensure_buffers(w, h)
     # wait for the previous frame to be shown (pacing) and for a free buffer
-    tries := 0
-    while (__wl_frame_pending or __wl_free_buffer() < 0) and tries < 10 and not __win_close:
+    tries = 0
+    loop (__wl_frame_pending or __wl_free_buffer() < 0) and tries < 10 and not __win_close:
         __wl_read(8)
         tries += 1
-    k := __wl_free_buffer()
+    k = __wl_free_buffer()
     if k < 0: return
-    mem := __wl_pool_mem + __wl_bufs[k].offset
+    mem = __wl_pool_mem + __wl_bufs[k].offset
     if __wl_csd:
         __wl_draw_bar(mem, w)
         fill(mem + w * WL_BAR * 4, w, ch)
     else: fill(mem, w, ch)
     __wl_bufs[k].busy = true
-    cb := __wl_new(WLK_FRAME)
+    cb = __wl_new(WLK_FRAME)
     __wl_begin(__wl_surface, 3)                # frame
     __wl_u(cb)
     __wl_end()
@@ -561,22 +561,22 @@ fn __wl_present(fill: fn(*u8, int, int)):
     __wl_end()
     __wl_flush()
 
-fn __wl_free_buffer() -> int:
-    for i, b in __wl_bufs:
+__wl_free_buffer = () -> int:
+    loop i in 0.. and b in __wl_bufs:
         if not b.busy: return i
     -1
 
 # a plain title bar with a close button at the right
-fn __wl_draw_bar(mem: *u8, w: int):
-    row := mem as *u32
-    for y in 0..WL_BAR:
-        for x in 0..w:
-            c := u32(0x2B2B30)
+__wl_draw_bar = (mem: *u8, w: int):
+    row = mem as *u32
+    loop y in [0..WL_BAR):
+        loop x in [0..w):
+            c = u32(0x2B2B30)
             if y == WL_BAR - 1: c = 0x1A1A1E
             else if x >= w - WL_BAR:
                 # the close cross
-                cx := x - (w - WL_BAR)
-                d1 := cx - y
-                d2 := cx + y - WL_BAR
+                cx = x - (w - WL_BAR)
+                d1 = cx - y
+                d2 = cx + y - WL_BAR
                 if cx > 9 and cx < WL_BAR - 9 and y > 9 and y < WL_BAR - 9 and (abs(d1) <= 1 or abs(d2 + 1) <= 1): c = 0xE0E0E0
             row[y * w + x] = c

@@ -1,10 +1,10 @@
 # `jot test tests/unit/sample_test.jot` runs the test blocks below
-fn clamp(x: int, lo: int, hi: int) -> int:
+clamp = (x: int, lo: int, hi: int) -> int:
     if x < lo: return lo
     if x > hi: return hi
     x
 
-table := [3, 1, 2]
+table = [3, 1, 2]
 
 test "clamp keeps values in range":
     assert(clamp(5, 0, 10) == 5)
@@ -13,7 +13,7 @@ test "clamp keeps values in range":
 
 test "top-level code ran first":
     assert(table.len() == 3)
-    sorted_ := table.sorted()
+    sorted_ = table.sorted()
     assert(sorted_ == [1, 2, 3])
 
 test "strings":

@@ -10,77 +10,77 @@
 enum PadButton: a, b, x, y, lb, rb, back, start, home, lstick, rstick, up, down, left, right
 
 const __PAD_BUTTONS = 15
-__pad_on := false
-__pad_axes: [float] = [0.0; 6]          # left x, left y, right x, right y, left trigger, right trigger
-__pad_down: [bool] = [false; 15]
-__pad_prev: [bool] = [false; 15]
+__pad_on = false
+__pad_axes: f64[] = fill(0.0, 6)          # left x, left y, right x, right y, left trigger, right trigger
+__pad_down: bool[] = fill(false, 15)
+__pad_prev: bool[] = fill(false, 15)
 
-fn gamepad_connected() -> bool: __pad_on
+gamepad_connected = () -> bool: __pad_on
 # axis value in -1..1 (triggers 0..1): 0 left x, 1 left y, 2 right x, 3 right y, 4 left trigger, 5 right trigger
-fn gamepad_axis(i: int) -> float:
+gamepad_axis = (i: int) -> f64:
     if i < 0 or i >= 6: return 0.0
     __pad_axes[i]
-fn gamepad_down(b: PadButton) -> bool: __pad_down[int(b)]
-fn gamepad_pressed(b: PadButton) -> bool: __pad_down[int(b)] and not __pad_prev[int(b)]
-fn gamepad_released(b: PadButton) -> bool: __pad_prev[int(b)] and not __pad_down[int(b)]
+gamepad_down = (b: PadButton) -> bool: __pad_down[int(b)]
+gamepad_pressed = (b: PadButton) -> bool: __pad_down[int(b)] and not __pad_prev[int(b)]
+gamepad_released = (b: PadButton) -> bool: __pad_prev[int(b)] and not __pad_down[int(b)]
 
-fn __dead_zone(v: vec2) -> vec2:
-    l := length(v)
+__dead_zone = (v: vec2) -> vec2:
+    l = length(v)
     if l < 0.22: return vec2(0, 0)
-    v * f32(min((float(l) - 0.22) / 0.78, 1.0) / float(l))
+    v * f32(min((f64(l) - 0.22) / 0.78, 1.0) / f64(l))
 
-fn left_stick() -> vec2: __dead_zone(vec2(f32(__pad_axes[0]), f32(__pad_axes[1])))
-fn right_stick() -> vec2: __dead_zone(vec2(f32(__pad_axes[2]), f32(__pad_axes[3])))
+left_stick = () -> vec2: __dead_zone(vec2(f32(__pad_axes[0]), f32(__pad_axes[1])))
+right_stick = () -> vec2: __dead_zone(vec2(f32(__pad_axes[2]), f32(__pad_axes[3])))
 
 # called once per frame by the game loop
-fn __pad_frame():
-    for i in 0..__PAD_BUTTONS: __pad_prev[i] = __pad_down[i]
+__pad_frame = ():
+    loop i in [0..__PAD_BUTTONS): __pad_prev[i] = __pad_down[i]
     when TARGET != "wasm": __pad_poll()
 
 when TARGET == "wasm":
     @export("__pad_axis")
-    fn __web_pad_axis(i: i32, v: f32):
-        if i >= 0 and i < 6: __pad_axes[int(i)] = float(v)
+    __web_pad_axis = (i: i32, v: f32):
+        if i >= 0 and i < 6: __pad_axes[int(i)] = f64(v)
     @export("__pad_button")
-    fn __web_pad_button(i: i32, down: i32):
+    __web_pad_button = (i: i32, down: i32):
         if i >= 0 and i < 15: __pad_down[int(i)] = down != 0
     @export("__pad_present")
-    fn __web_pad_present(on: i32): __pad_on = on != 0
+    __web_pad_present = (on: i32): __pad_on = on != 0
 else:
-    __js_fd := -1
-    __js_retry := 0.0
-    __js_raw_axes: [float] = [0.0; 8]
-    __js_raw_btn: [bool] = [false; 16]
-    __js_buf: [u8] = [0; 128]
+    __js_fd = -1
+    __js_retry = 0.0
+    __js_raw_axes: f64[] = fill(0.0, 8)
+    __js_raw_btn: bool[] = fill(false, 16)
+    __js_buf: u8[] = fill(0, 128)
 
-    fn __pad_poll():
+    __pad_poll = ():
         if __js_fd < 0:
             if elapsed() < __js_retry: return
             __js_retry = elapsed() + 2.0          # look for a controller every two seconds
-            dev := env("JOT_JOYSTICK") ?? "/dev/input/js0"
-            fd := syscall(2, data(__zstr(dev)), 0x800, 0)      # O_RDONLY | O_NONBLOCK
+            dev = env("JOT_JOYSTICK") ?? "/dev/input/js0"
+            fd = syscall(2, data(__zstr(dev)), 0x800, 0)      # O_RDONLY | O_NONBLOCK
             if fd < 0: return
             __js_fd = fd
             __pad_on = true
-        while true:
-            n := syscall(0, __js_fd, data(__js_buf), 128)
+        loop true:
+            n = syscall(0, __js_fd, data(__js_buf), 128)
             if n == -11: break                     # EAGAIN: no more events
             if n <= 0:
                 # unplugged
                 syscall(3, __js_fd)
                 __js_fd = -1
                 __pad_on = false
-                for i in 0..6: __pad_axes[i] = 0.0
-                for i in 0..__PAD_BUTTONS: __pad_down[i] = false
+                loop i in [0..6): __pad_axes[i] = 0.0
+                loop i in [0..__PAD_BUTTONS): __pad_down[i] = false
                 return
-            k := 0
-            while k + 8 <= n:
-                p := data(__js_buf) + k
-                value := int(((p + 4) as *i16)[0])
-                kind := int(p[6]) & 0x7F
-                num := int(p[7])
+            k = 0
+            loop k + 8 <= n:
+                p = data(__js_buf) + k
+                value = int(((p + 4) as *i16)[0])
+                kind = int(p[6]) & 0x7F
+                num = int(p[7])
                 if kind == 1 and num < 16: __js_raw_btn[num] = value != 0
-                if kind == 2 and num < 8: __js_raw_axes[num] = float(value) / 32767.0
+                if kind == 2 and num < 8: __js_raw_axes[num] = f64(value) / 32767.0
                 k += 8
         # Linux xpad layout: axes lx ly lt rx ry rt dpad-x dpad-y; buttons a b x y lb rb back start home ls rs
         __pad_axes[0] = __js_raw_axes[0]
@@ -89,7 +89,7 @@ else:
         __pad_axes[3] = __js_raw_axes[4]
         __pad_axes[4] = (__js_raw_axes[2] + 1.0) / 2.0
         __pad_axes[5] = (__js_raw_axes[5] + 1.0) / 2.0
-        for i in 0..11: __pad_down[i] = __js_raw_btn[i]
+        loop i in [0..11): __pad_down[i] = __js_raw_btn[i]
         __pad_down[int(PadButton.up)] = __js_raw_axes[7] < -0.5
         __pad_down[int(PadButton.down)] = __js_raw_axes[7] > 0.5
         __pad_down[int(PadButton.left)] = __js_raw_axes[6] < -0.5

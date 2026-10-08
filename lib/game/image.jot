@@ -3,45 +3,45 @@
 struct Image:
     width: int
     height: int
-    pixels: [u8]          # RGBA, row-major, top row first
+    pixels: u8[]          # RGBA, row-major, top row first
 
-fn image(w: int, h: int, fill: vec4 = vec4(0, 0, 0, 0)) -> Image:
-    img := Image(w, h, [u8(0); w * h * 4])
+image = (w: int, h: int, fill: vec4 = vec4(0, 0, 0, 0)) -> Image:
+    img = Image(w, h, fill(u8(0), w * h * 4))
     if fill != vec4(0, 0, 0, 0):
-        for y in 0..h:
-            for x in 0..w: img.set(x, y, fill)
+        loop y in [0..h):
+            loop x in [0..w): img.set(x, y, fill)
     img
 
-fn set(img: mut Image, x: int, y: int, c: vec4):
+set = (img: mut Image, x: int, y: int, c: vec4):
     if x < 0 or y < 0 or x >= img.width or y >= img.height: return
-    i := (y * img.width + x) * 4
+    i = (y * img.width + x) * 4
     img.pixels[i] = u8(clamp(int(c.x * 255.0 + 0.5), 0, 255))
     img.pixels[i + 1] = u8(clamp(int(c.y * 255.0 + 0.5), 0, 255))
     img.pixels[i + 2] = u8(clamp(int(c.z * 255.0 + 0.5), 0, 255))
     img.pixels[i + 3] = u8(clamp(int(c.w * 255.0 + 0.5), 0, 255))
 
-fn get(img: Image, x: int, y: int) -> vec4:
+get = (img: Image, x: int, y: int) -> vec4:
     if x < 0 or y < 0 or x >= img.width or y >= img.height: return vec4(0, 0, 0, 0)
-    i := (y * img.width + x) * 4
-    p := img.pixels
+    i = (y * img.width + x) * 4
+    p = img.pixels
     vec4(f32(p[i]) / 255.0, f32(p[i + 1]) / 255.0, f32(p[i + 2]) / 255.0, f32(p[i + 3]) / 255.0)
 
 # ---------------- inflate (RFC 1951) ----------------
 struct Inflate:
-    src: [u8]
+    src: u8[]
     pos: int
     bitbuf: int
     bitcnt: int
-    out: [u8]
+    out: u8[]
     err: bool
 
 struct Huff:
-    count: [int]      # codes of each length (0..15)
-    symbol: [int]     # symbols ordered by code
+    count: int[]      # codes of each length (0..15)
+    symbol: int[]     # symbols ordered by code
 
-fn __bits(s: mut Inflate, need: int) -> int:
-    v := s.bitbuf
-    while s.bitcnt < need:
+__bits = (s: mut Inflate, need: int) -> int:
+    v = s.bitbuf
+    loop s.bitcnt < need:
         if s.pos >= s.src.len():
             s.err = true
             return 0
@@ -52,25 +52,25 @@ fn __bits(s: mut Inflate, need: int) -> int:
     s.bitcnt -= need
     v & ((1 << need) - 1)
 
-fn __huff(lengths: [int], n: int) -> Huff:
-    h := Huff([0; 16], [0; n])
-    for i in 0..n: h.count[lengths[i]] += 1
-    offs := [0; 17]
-    for l in 1..16: offs[l + 1] = offs[l] + h.count[l]
-    for i in 0..n:
+__huff = (lengths: int[], n: int) -> Huff:
+    h = Huff(fill(0, 16), fill(0, n))
+    loop i in [0..n): h.count[lengths[i]] += 1
+    offs = fill(0, 17)
+    loop l in [1..16): offs[l + 1] = offs[l] + h.count[l]
+    loop i in [0..n):
         if lengths[i] != 0:
             h.symbol[offs[lengths[i]]] = i
             offs[lengths[i]] += 1
     h.count[0] = 0
     h
 
-fn __decode(s: mut Inflate, h: Huff) -> int:
-    code := 0
-    first := 0
-    index := 0
-    for len_ in 1..16:
+__decode = (s: mut Inflate, h: Huff) -> int:
+    code = 0
+    first = 0
+    index = 0
+    loop len_ in [1..16):
         code |= __bits(s, 1)
-        cnt := h.count[len_]
+        cnt = h.count[len_]
         if code - cnt < first: return h.symbol[index + (code - first)]
         index += cnt
         first += cnt
@@ -79,14 +79,14 @@ fn __decode(s: mut Inflate, h: Huff) -> int:
     s.err = true
     -1
 
-__len_base := [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
-__len_extra := [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
-__dist_base := [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
-__dist_extra := [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+__len_base = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+__len_extra = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+__dist_base = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+__dist_extra = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
 
-fn __codes(s: mut Inflate, lit: Huff, dist: Huff):
-    while not s.err:
-        sym := __decode(s, lit)
+__codes = (s: mut Inflate, lit: Huff, dist: Huff):
+    loop not s.err:
+        sym = __decode(s, lit)
         if sym < 0: return
         if sym < 256: s.out.push(u8(sym))
         else if sym == 256: return
@@ -95,59 +95,59 @@ fn __codes(s: mut Inflate, lit: Huff, dist: Huff):
             if sym >= 29:
                 s.err = true
                 return
-            n := __len_base[sym] + __bits(s, __len_extra[sym])
-            ds := __decode(s, dist)
+            n = __len_base[sym] + __bits(s, __len_extra[sym])
+            ds = __decode(s, dist)
             if ds < 0 or ds >= 30:
                 s.err = true
                 return
-            d := __dist_base[ds] + __bits(s, __dist_extra[ds])
-            start := s.out.len() - d
+            d = __dist_base[ds] + __bits(s, __dist_extra[ds])
+            start = s.out.len() - d
             if start < 0:
                 s.err = true
                 return
-            for i in 0..n: s.out.push(s.out[start + i])
+            loop i in [0..n): s.out.push(s.out[start + i])
 
-fn inflate(src: [u8], start: int = 0) -> [u8]?:
-    s := Inflate(src, start, 0, 0, [], false)
+inflate = (src: u8[], start: int = 0) -> u8[]?:
+    s = Inflate(src, start, 0, 0, [], false)
     s.out.reserve(src.len() * 4)
-    while true:
-        last := __bits(s, 1)
-        kind := __bits(s, 2)
+    loop true:
+        last = __bits(s, 1)
+        kind = __bits(s, 2)
         if kind == 0:
             s.bitbuf = 0
             s.bitcnt = 0
             if s.pos + 4 > src.len(): return none
-            n := int(src[s.pos]) | (int(src[s.pos + 1]) << 8)
+            n = int(src[s.pos]) | (int(src[s.pos + 1]) << 8)
             s.pos += 4
             if s.pos + n > src.len(): return none
-            for i in 0..n: s.out.push(src[s.pos + i])
+            loop i in [0..n): s.out.push(src[s.pos + i])
             s.pos += n
         else if kind == 1:
-            l := [0; 288]
-            for i in 0..144: l[i] = 8
-            for i in 144..256: l[i] = 9
-            for i in 256..280: l[i] = 7
-            for i in 280..288: l[i] = 8
-            d := [5; 30]
+            l = fill(0, 288)
+            loop i in [0..144): l[i] = 8
+            loop i in [144..256): l[i] = 9
+            loop i in [256..280): l[i] = 7
+            loop i in [280..288): l[i] = 8
+            d = fill(5, 30)
             __codes(s, __huff(l, 288), __huff(d, 30))
         else if kind == 2:
-            nlen := __bits(s, 5) + 257
-            ndist := __bits(s, 5) + 1
-            ncode := __bits(s, 4) + 4
-            order := [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
-            lens := [0; 19]
-            for i in 0..ncode: lens[order[i]] = __bits(s, 3)
-            lencode := __huff(lens, 19)
-            all := [0; 320]
-            i := 0
-            while i < nlen + ndist and not s.err:
-                sym := __decode(s, lencode)
+            nlen = __bits(s, 5) + 257
+            ndist = __bits(s, 5) + 1
+            ncode = __bits(s, 4) + 4
+            order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+            lens = fill(0, 19)
+            loop i in [0..ncode): lens[order[i]] = __bits(s, 3)
+            lencode = __huff(lens, 19)
+            all = fill(0, 320)
+            i = 0
+            loop i < nlen + ndist and not s.err:
+                sym = __decode(s, lencode)
                 if sym < 16:
                     all[i] = sym
                     i += 1
                 else:
-                    rep := 0
-                    val := 0
+                    rep = 0
+                    val = 0
                     if sym == 16:
                         if i == 0: return none
                         val = all[i - 1]
@@ -155,42 +155,42 @@ fn inflate(src: [u8], start: int = 0) -> [u8]?:
                     else if sym == 17: rep = 3 + __bits(s, 3)
                     else: rep = 11 + __bits(s, 7)
                     if i + rep > nlen + ndist: return none
-                    for k in 0..rep:
+                    loop k in [0..rep):
                         all[i] = val
                         i += 1
-            __codes(s, __huff(all[..nlen], nlen), __huff(all[nlen..nlen + ndist], ndist))
+            __codes(s, __huff(all[..nlen), nlen), __huff(all[nlen..nlen + ndist), ndist))
         else: return none
         if s.err: return none
         if last == 1: break
     s.out
 
 # ---------------- PNG ----------------
-fn __be32(b: [u8], o: int) -> int: (int(b[o]) << 24) | (int(b[o + 1]) << 16) | (int(b[o + 2]) << 8) | int(b[o + 3])
+__be32 = (b: u8[], o: int) -> int: (int(b[o]) << 24) | (int(b[o + 1]) << 16) | (int(b[o + 2]) << 8) | int(b[o + 3])
 
-fn __paeth(a: int, b: int, c: int) -> int:
-    p := a + b - c
-    pa := abs(p - a)
-    pb := abs(p - b)
-    pc := abs(p - c)
+__paeth = (a: int, b: int, c: int) -> int:
+    p = a + b - c
+    pa = abs(p - a)
+    pb = abs(p - b)
+    pc = abs(p - c)
     if pa <= pb and pa <= pc: return a
     if pb <= pc: return b
     c
 
 # decode a PNG file; none if the data is not a supported PNG
-fn load_png(file: [u8]) -> Image?:
+load_png = (file: u8[]) -> Image?:
     if file.len() < 33 or file[1] != 'P' or file[2] != 'N' or file[3] != 'G': return none
-    pos := 8
-    w := 0
-    h := 0
-    depth := 0
-    ctype := 0
-    palette: [u8]
-    trns: [u8]
-    idat: [u8]
-    while pos + 8 <= file.len():
-        n := __be32(file, pos)
-        kind := file[pos + 4..pos + 8]
-        body := pos + 8
+    pos = 8
+    w = 0
+    h = 0
+    depth = 0
+    ctype = 0
+    palette: u8[]
+    trns: u8[]
+    idat: u8[]
+    loop pos + 8 <= file.len():
+        n = __be32(file, pos)
+        kind = file[pos + 4..pos + 8)
+        body = pos + 8
         if pos + 12 + n > file.len(): return none
         if kind == bytes("IHDR"):
             w = __be32(file, body)
@@ -198,50 +198,50 @@ fn load_png(file: [u8]) -> Image?:
             depth = int(file[body + 8])
             ctype = int(file[body + 9])
             if file[body + 12] != 0: return none      # interlaced images are not supported
-        else if kind == bytes("PLTE"): palette = file[body..body + n]
-        else if kind == bytes("tRNS"): trns = file[body..body + n]
+        else if kind == bytes("PLTE"): palette = file[body..body + n)
+        else if kind == bytes("tRNS"): trns = file[body..body + n)
         else if kind == bytes("IDAT"):
-            for i in 0..n: idat.push(file[body + i])
+            loop i in [0..n): idat.push(file[body + i])
         else if kind == bytes("IEND"): break
         pos += 12 + n
     if w <= 0 or h <= 0 or idat.len() < 2: return none
-    raw := inflate(idat, 2) ?? []
-    channels := 1
+    raw = inflate(idat, 2) ?? []
+    channels = 1
     if ctype == 2: channels = 3
     else if ctype == 4: channels = 2
     else if ctype == 6: channels = 4
-    bpp_bits := channels * depth
-    stride := (w * bpp_bits + 7) / 8
-    bpp := max((bpp_bits + 7) / 8, 1)
+    bpp_bits = channels * depth
+    stride = (w * bpp_bits + 7) / 8
+    bpp = max((bpp_bits + 7) / 8, 1)
     if raw.len() < h * (stride + 1): return none
     # unfilter in place
-    cur := [u8(0); stride]
-    prev := [u8(0); stride]
-    img := Image(w, h, [u8(0); w * h * 4])
-    for y in 0..h:
-        f := int(raw[y * (stride + 1)])
-        base := y * (stride + 1) + 1
-        for x in 0..stride:
-            a := 0
+    cur = fill(u8(0), stride)
+    prev = fill(u8(0), stride)
+    img = Image(w, h, fill(u8(0), w * h * 4))
+    loop y in [0..h):
+        f = int(raw[y * (stride + 1)])
+        base = y * (stride + 1) + 1
+        loop x in [0..stride):
+            a = 0
             if x >= bpp: a = int(cur[x - bpp])
-            b := int(prev[x])
-            c := 0
+            b = int(prev[x])
+            c = 0
             if x >= bpp: c = int(prev[x - bpp])
-            v := int(raw[base + x])
+            v = int(raw[base + x])
             if f == 1: v += a
             else if f == 2: v += b
             else if f == 3: v += (a + b) / 2
             else if f == 4: v += __paeth(a, b, c)
             cur[x] = u8(v & 255)
         # expand to RGBA
-        for x in 0..w:
-            o := (y * w + x) * 4
-            r := 0
-            g := 0
-            bb := 0
-            al := 255
+        loop x in [0..w):
+            o = (y * w + x) * 4
+            r = 0
+            g = 0
+            bb = 0
+            al = 255
             if depth == 8:
-                i := x * channels
+                i = x * channels
                 if ctype == 0:
                     r = int(cur[i])
                     g = r
@@ -251,7 +251,7 @@ fn load_png(file: [u8]) -> Image?:
                     g = int(cur[i + 1])
                     bb = int(cur[i + 2])
                 else if ctype == 3:
-                    pi := int(cur[i])
+                    pi = int(cur[i])
                     if pi * 3 + 2 < palette.len():
                         r = int(palette[pi * 3])
                         g = int(palette[pi * 3 + 1])
@@ -268,7 +268,7 @@ fn load_png(file: [u8]) -> Image?:
                     bb = int(cur[i + 2])
                     al = int(cur[i + 3])
             else if depth == 16:
-                i := x * channels * 2
+                i = x * channels * 2
                 r = int(cur[i])
                 if ctype == 2 or ctype == 6:
                     g = int(cur[i + 2])
@@ -280,10 +280,10 @@ fn load_png(file: [u8]) -> Image?:
                 if ctype == 4: al = int(cur[i + 2])
             else:
                 # 1, 2, 4 bit gray or palette
-                per := 8 / depth
-                byte := int(cur[x / per])
-                shift := (per - 1 - x % per) * depth
-                v := (byte >> shift) & ((1 << depth) - 1)
+                per = 8 / depth
+                byte = int(cur[x / per])
+                shift = (per - 1 - x % per) * depth
+                v = (byte >> shift) & ((1 << depth) - 1)
                 if ctype == 3:
                     if v * 3 + 2 < palette.len():
                         r = int(palette[v * 3])
@@ -298,72 +298,72 @@ fn load_png(file: [u8]) -> Image?:
             img.pixels[o + 1] = u8(g)
             img.pixels[o + 2] = u8(bb)
             img.pixels[o + 3] = u8(al)
-        t := prev
+        t = prev
         prev = cur
         cur = t
     img
 
 # load an image from an embedded file: load_image(embed("hero.png"))
-fn load_image(file: [u8]) -> Image:
-    if img := load_png(file): return img
+load_image = (file: u8[]) -> Image:
+    if let img = load_png(file): return img
     panic("unsupported or corrupt image (only PNG is supported)")
 
 # ---------------- PNG writing (uncompressed deflate blocks) ----------------
-__crc_table: [u32]
-fn __crc32(b: [u8], start: int, end: int) -> u32:
+__crc_table: u32[]
+__crc32 = (b: u8[], start: int, end: int) -> u32:
     if __crc_table.len() == 0:
-        for n in 0..256:
-            c := u32(n)
-            for k in 0..8:
-                if c & 1 == 1: c = u32(0xEDB88320) ^ (c >> 1)
+        loop n in [0..256):
+            c = u32(n)
+            loop k in [0..8):
+                if c & 1 == 1: c = (u32(0xEDB88320) xor (c >> 1))
                 else: c = c >> 1
             __crc_table.push(c)
-    c := u32(0xFFFFFFFF)
-    for i in start..end: c = __crc_table[int((c ^ u32(b[i])) & 255)] ^ (c >> 8)
-    c ^ u32(0xFFFFFFFF)
+    c = u32(0xFFFFFFFF)
+    loop i in [start..end): c = (__crc_table[int((c ^ u32(b[i])) & 255)] xor (c >> 8))
+    (c xor u32(0xFFFFFFFF))
 
-fn __put_be32(b: mut [u8], v: int):
+__put_be32 = (b: mut u8[], v: int):
     b.push(u8((v >> 24) & 255))
     b.push(u8((v >> 16) & 255))
     b.push(u8((v >> 8) & 255))
     b.push(u8(v & 255))
 
-fn __png_chunk(out: mut [u8], kind: str, body: [u8]):
+__png_chunk = (out: mut u8[], kind: str, body: u8[]):
     __put_be32(out, body.len())
-    start := out.len()
-    for c in kind: out.push(c)
-    for c in body: out.push(c)
+    start = out.len()
+    loop c in kind: out.push(c)
+    loop c in body: out.push(c)
     __put_be32(out, int(__crc32(out, start, out.len())))
 
-fn encode_png(img: Image) -> [u8]:
-    out: [u8] = [0x89, 'P', 'N', 'G', 13, 10, 26, 10]
-    hdr: [u8]
+encode_png = (img: Image) -> u8[]:
+    out: u8[] = [0x89, 'P', 'N', 'G', 13, 10, 26, 10]
+    hdr: u8[]
     __put_be32(hdr, img.width)
     __put_be32(hdr, img.height)
-    for c in [8, 6, 0, 0, 0]: hdr.push(u8(c))
+    loop c in [8, 6, 0, 0, 0]: hdr.push(u8(c))
     __png_chunk(out, "IHDR", hdr)
-    raw: [u8]
-    row := img.width * 4
-    for y in 0..img.height:
+    raw: u8[]
+    row = img.width * 4
+    loop y in [0..img.height):
         raw.push(0)
-        for i in 0..row: raw.push(img.pixels[y * row + i])
-    z: [u8] = [0x78, 0x01]
-    pos := 0
-    while pos < raw.len() or raw.len() == 0:
-        n := min(65535, raw.len() - pos)
-        last := 0
+        loop i in [0..row): raw.push(img.pixels[y * row + i])
+    z: u8[] = [0x78, 0x01]
+    pos = 0
+    loop pos < raw.len() or raw.len() == 0:
+        n = min(65535, raw.len() - pos)
+        last = 0
         if pos + n >= raw.len(): last = 1
         z.push(u8(last))
         z.push(u8(n & 255))
         z.push(u8(n >> 8))
         z.push(u8(~n & 255))
         z.push(u8((~n >> 8) & 255))
-        for i in 0..n: z.push(raw[pos + i])
+        loop i in [0..n): z.push(raw[pos + i])
         pos += n
         if raw.len() == 0: break
     a: u32 = 1
     bb: u32 = 0
-    for c in raw:
+    loop c in raw:
         a = (a + u32(c)) % 65521
         bb = (bb + a) % 65521
     __put_be32(z, int((bb << 16) | a))
@@ -371,18 +371,18 @@ fn encode_png(img: Image) -> [u8]:
     __png_chunk(out, "IEND", [])
     out
 
-fn save_png(img: Image, path: str) -> bool: write_bytes(path, encode_png(img))
+save_png = (img: Image, path: str) -> bool: write_bytes(path, encode_png(img))
 
 # read the current framebuffer into an image
-fn screenshot() -> Image:
+screenshot = () -> Image:
     flush()
-    w := __target_w
-    h := __target_h
-    img := image(w, h)
-    flipped := [u8(0); w * h * 4]
+    w = __target_w
+    h = __target_h
+    img = image(w, h)
+    flipped = fill(u8(0), w * h * 4)
     gl_read_pixels(0, 0, w, h, data(flipped))
-    row := w * 4
-    for y in 0..h:
-        src := (h - 1 - y) * row
-        for i in 0..row: img.pixels[y * row + i] = flipped[src + i]
+    row = w * 4
+    loop y in [0..h):
+        src = (h - 1 - y) * row
+        loop i in [0..row): img.pixels[y * row + i] = flipped[src + i]
     img

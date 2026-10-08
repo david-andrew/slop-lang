@@ -1,150 +1,150 @@
 # Generic array utilities. Arrays are values with copy-on-write storage.
 
-fn is_empty[T](xs: [T]) -> bool: xs.len() == 0
-fn first[T](xs: [T]) -> T: xs[0]
-fn last[T](xs: [T]) -> T: xs[xs.len() - 1]
+is_empty[T] = (xs: T[]) -> bool: xs.len() == 0
+first[T] = (xs: T[]) -> T: xs[0]
+last[T] = (xs: T[]) -> T: xs[xs.len() - 1]
 
-fn contains[T](xs: [T], x: T) -> bool:
-    for e in xs:
+contains[T] = (xs: T[], x: T) -> bool:
+    loop e in xs:
         if e == x: return true
     false
 
-fn index_of[T](xs: [T], x: T) -> int:
-    for i, e in xs:
+index_of[T] = (xs: T[], x: T) -> int:
+    loop i in 0.. and e in xs:
         if e == x: return i
     -1
 
-fn map[T, U](xs: [T], f: fn(T) -> U) -> [U]:
-    out: [U]
+map[T, U] = (xs: T[], f: (T) -> U) -> U[]:
+    out: U[]
     out.reserve(xs.len())
-    for x in xs: out.push(f(x))
+    loop x in xs: out.push(f(x))
     out
 
-fn filter[T](xs: [T], f: fn(T) -> bool) -> [T]:
-    out: [T]
-    for x in xs:
+filter[T] = (xs: T[], f: (T) -> bool) -> T[]:
+    out: T[]
+    loop x in xs:
         if f(x): out.push(x)
     out
 
-fn each[T](xs: [T], f: fn(T)):
-    for x in xs: f(x)
+each[T] = (xs: T[], f: (T) -> void):
+    loop x in xs: f(x)
 
-fn reduce[T, A](xs: [T], init: A, f: fn(A, T) -> A) -> A:
-    acc := init
-    for x in xs: acc = f(acc, x)
+reduce[T, A] = (xs: T[], init: A, f: (A, T) -> A) -> A:
+    acc = init
+    loop x in xs: acc = f(acc, x)
     acc
 
-fn any[T](xs: [T], f: fn(T) -> bool) -> bool:
-    for x in xs:
+any[T] = (xs: T[], f: (T) -> bool) -> bool:
+    loop x in xs:
         if f(x): return true
     false
 
-fn all[T](xs: [T], f: fn(T) -> bool) -> bool:
-    for x in xs:
+all[T] = (xs: T[], f: (T) -> bool) -> bool:
+    loop x in xs:
         if not f(x): return false
     true
 
-fn find[T](xs: [T], f: fn(T) -> bool) -> T?:
-    for x in xs:
+find[T] = (xs: T[], f: (T) -> bool) -> T?:
+    loop x in xs:
         if f(x): return x
     none
 
-fn count[T](xs: [T], f: fn(T) -> bool) -> int:
-    n := 0
-    for x in xs:
+count[T] = (xs: T[], f: (T) -> bool) -> int:
+    n = 0
+    loop x in xs:
         if f(x): n += 1
     n
 
-fn sum[T](xs: [T]) -> T:
+sum[T] = (xs: T[]) -> T:
     s: T
-    for x in xs: s = s + x
+    loop x in xs: s = s + x
     s
 
-fn min[T](xs: [T]) -> T:
-    m := xs[0]
-    for x in xs:
+min[T] = (xs: T[]) -> T:
+    m = xs[0]
+    loop x in xs:
         if x < m: m = x
     m
 
-fn max[T](xs: [T]) -> T:
-    m := xs[0]
-    for x in xs:
+max[T] = (xs: T[]) -> T:
+    m = xs[0]
+    loop x in xs:
         if x > m: m = x
     m
 
-fn reverse[T](xs: mut [T]):
-    i := 0
-    j := xs.len() - 1
-    while i < j:
-        t := xs[i]
+reverse[T] = (xs: mut T[]):
+    i = 0
+    j = xs.len() - 1
+    loop i < j:
+        t = xs[i]
         xs[i] = xs[j]
         xs[j] = t
         i += 1
         j -= 1
 
-fn reversed[T](xs: [T]) -> [T]:
-    out := xs
+reversed[T] = (xs: T[]) -> T[]:
+    out = xs
     out.reverse()
     out
 
-fn range(a: int, b: int) -> [int]:
-    out: [int]
-    for i in a..b: out.push(i)
+range = (a: int, b: int) -> int[]:
+    out: int[]
+    loop i in [a..b): out.push(i)
     out
 
-fn enumerate[T](xs: [T]) -> [(int, T)]:
-    out: [(int, T)]
-    for i, x in xs: out.push((i, x))
+enumerate[T] = (xs: T[]) -> (int, T)[]:
+    out: (int, T)[]
+    loop i, x in xs: out.push((i, x))
     out
 
-fn zip[A, B](xs: [A], ys: [B]) -> [(A, B)]:
-    out: [(A, B)]
-    n := xs.len()
+zip[A, B] = (xs: A[], ys: B[]) -> (A, B)[]:
+    out: (A, B)[]
+    n = xs.len()
     if ys.len() < n: n = ys.len()
-    for i in 0..n: out.push((xs[i], ys[i]))
+    loop i in [0..n): out.push((xs[i], ys[i]))
     out
 
-fn flatten[T](xss: [[T]]) -> [T]:
-    out: [T]
-    for xs in xss:
-        for x in xs: out.push(x)
+flatten[T] = (xss: T[][]) -> T[]:
+    out: T[]
+    loop xs in xss:
+        loop x in xs: out.push(x)
     out
 
-fn swap[T](xs: mut [T], i: int, j: int):
-    t := xs[i]
+swap[T] = (xs: mut T[], i: int, j: int):
+    t = xs[i]
     xs[i] = xs[j]
     xs[j] = t
 
 # ---------------- sorting ----------------
-fn __insertion_sort[T](xs: mut [T], lo: int, hi: int, less: fn(T, T) -> bool):
-    i := lo + 1
-    while i < hi:
-        j := i
-        while j > lo and less(xs[j], xs[j - 1]):
-            t := xs[j]
+__insertion_sort[T] = (xs: mut T[], lo: int, hi: int, less: (T, T) -> bool):
+    i = lo + 1
+    loop i < hi:
+        j = i
+        loop j > lo and less(xs[j], xs[j - 1]):
+            t = xs[j]
             xs[j] = xs[j - 1]
             xs[j - 1] = t
             j -= 1
         i += 1
 
-fn __quick_sort[T](xs: mut [T], lo: int, hi: int, less: fn(T, T) -> bool, depth: int):
+__quick_sort[T] = (xs: mut T[], lo: int, hi: int, less: (T, T) -> bool, depth: int):
     if hi - lo <= 16:
         __insertion_sort(xs, lo, hi, less)
         return
     if depth == 0:
         __heap_sort(xs, lo, hi, less)
         return
-    mid := lo + (hi - lo) / 2
+    mid = lo + (hi - lo) / 2
     # median of three
     if less(xs[mid], xs[lo]): swap(xs, mid, lo)
     if less(xs[hi - 1], xs[lo]): swap(xs, hi - 1, lo)
     if less(xs[hi - 1], xs[mid]): swap(xs, hi - 1, mid)
-    pivot := xs[mid]
-    i := lo
-    j := hi - 1
-    while i <= j:
-        while less(xs[i], pivot): i += 1
-        while less(pivot, xs[j]): j -= 1
+    pivot = xs[mid]
+    i = lo
+    j = hi - 1
+    loop i <= j:
+        loop less(xs[i], pivot): i += 1
+        loop less(pivot, xs[j]): j -= 1
         if i <= j:
             swap(xs, i, j)
             i += 1
@@ -152,10 +152,10 @@ fn __quick_sort[T](xs: mut [T], lo: int, hi: int, less: fn(T, T) -> bool, depth:
     if lo < j + 1: __quick_sort(xs, lo, j + 1, less, depth - 1)
     if i < hi: __quick_sort(xs, i, hi, less, depth - 1)
 
-fn __sift_down[T](xs: mut [T], lo: int, start: int, n: int, less: fn(T, T) -> bool):
-    root := start
-    while true:
-        child := 2 * root + 1
+__sift_down[T] = (xs: mut T[], lo: int, start: int, n: int, less: (T, T) -> bool):
+    root = start
+    loop true:
+        child = 2 * root + 1
         if child >= n: return
         if child + 1 < n and less(xs[lo + child], xs[lo + child + 1]): child += 1
         if less(xs[lo + root], xs[lo + child]):
@@ -163,40 +163,40 @@ fn __sift_down[T](xs: mut [T], lo: int, start: int, n: int, less: fn(T, T) -> bo
             root = child
         else: return
 
-fn __heap_sort[T](xs: mut [T], lo: int, hi: int, less: fn(T, T) -> bool):
-    n := hi - lo
-    s := n / 2 - 1
-    while s >= 0:
+__heap_sort[T] = (xs: mut T[], lo: int, hi: int, less: (T, T) -> bool):
+    n = hi - lo
+    s = n / 2 - 1
+    loop s >= 0:
         __sift_down(xs, lo, s, n, less)
         s -= 1
-    e := n - 1
-    while e > 0:
+    e = n - 1
+    loop e > 0:
         swap(xs, lo, lo + e)
         __sift_down(xs, lo, 0, e, less)
         e -= 1
 
-fn __less[T](a: T, b: T) -> bool: a < b
+__less[T] = (a: T, b: T) -> bool: a < b
 
 # sort in place (ascending, using <)
-fn sort[T](xs: mut [T]):
+sort[T] = (xs: mut T[]):
     __quick_sort(xs, 0, xs.len(), __less, 64)
 
 # sort in place with a custom "less than" function
-fn sort_with[T](xs: mut [T], less: fn(T, T) -> bool):
+sort_with[T] = (xs: mut T[], less: (T, T) -> bool):
     __quick_sort(xs, 0, xs.len(), less, 64)
 
 # sort in place by a key
-fn sort_by[T, K](xs: mut [T], key: fn(T) -> K):
-    __quick_sort(xs, 0, xs.len(), fn(a: T, b: T) -> bool: key(a) < key(b), 64)
+sort_by[T, K] = (xs: mut T[], key: (T) -> K):
+    __quick_sort(xs, 0, xs.len(), (a: T, b: T) -> bool: key(a) < key(b), 64)
 
-fn sorted[T](xs: [T]) -> [T]:
-    out := xs
+sorted[T] = (xs: T[]) -> T[]:
+    out = xs
     out.sort()
     out
 
-fn __fmt_join[T](xs: [T], sep: str) -> str:
-    buf: [u8]
-    for i, x in xs:
+__fmt_join[T] = (xs: T[], sep: str) -> str:
+    buf: u8[]
+    loop i, x in xs:
         if i > 0: __buf_append_str(buf, sep)
         __fmt(buf, x)
     str_from_bytes(buf)

@@ -1,52 +1,52 @@
 # WebAssembly backend: IR -> wasm binary module, packaged into a self-contained HTML file.
 # Memory layout: [0,1024) unused | rodata | data (globals) | shadow stack (grows down) | heap
 
-use util
-use ast
-use types
-use check
-use ir
-use lower
+use 'util.jot'
+use 'ast.jot'
+use 'types.jot'
+use 'check.jot'
+use 'ir.jot'
+use 'lower.jot'
 
 const RO_BASE = 1024
 const STACK_SIZE = 1 << 20
 
-wfuncs: [IrFn]            # lowered functions, by lfunc index
-wf_present: [bool]
+wfuncs: IrFn[]            # lowered functions, by lfunc index
+wf_present: bool[]
 
-fn wasm_collect():
-    while wfuncs.len() <= ir.fn_index:
+wasm_collect = ():
+    loop wfuncs.len() <= ir.fn_index:
         wfuncs.push(IrFn())
         wf_present.push(false)
     wfuncs[ir.fn_index] = ir
     wf_present[ir.fn_index] = true
 
 # ---------------- encoding helpers ----------------
-fn uleb(o: mut [u8], v0: int):
-    v := v0
-    while true:
-        byte := v & 0x7F
+uleb = (o: mut u8[], v0: int):
+    v = v0
+    loop true:
+        byte = v & 0x7F
         v = v >> 7
         if v == 0:
             o.push(u8(byte))
             return
         o.push(u8(byte | 0x80))
 
-fn sleb(o: mut [u8], v0: int):
-    v := v0
-    while true:
-        byte := v & 0x7F
+sleb = (o: mut u8[], v0: int):
+    v = v0
+    loop true:
+        byte = v & 0x7F
         v = v >> 7
         if (v == 0 and byte & 0x40 == 0) or (v == -1 and byte & 0x40 != 0):
             o.push(u8(byte))
             return
         o.push(u8(byte | 0x80))
 
-fn wstr(o: mut [u8], s: str):
+wstr = (o: mut u8[], s: str):
     uleb(o, len(s))
-    for c in s: o.push(c)
+    loop c in s: o.push(c)
 
-fn section(out: mut [u8], id: int, body: [u8]):
+section = (out: mut u8[], id: int, body: u8[]):
     out.push(u8(id))
     uleb(out, body.len())
     append_bytes(out, body)
@@ -56,15 +56,15 @@ const WT_I64 = 0x7E
 const WT_F32 = 0x7D
 const WT_F64 = 0x7C
 
-fn wt(vt: int) -> int:
+wt = (vt: int) -> int:
     if vt == VF: return WT_F64
     if vt == VS: return WT_F32
     WT_I64
 
 # wasm value type for an import parameter of Jot type t
-fn import_wt(t0: int) -> int:
-    t := prune(t0)
-    k := types[t].kind
+import_wt = (t0: int) -> int:
+    t = prune(t0)
+    k = types[t].kind
     if k == .float_:
         if int(types[t].bits) == 32: return WT_F32
         return WT_F64
@@ -72,90 +72,90 @@ fn import_wt(t0: int) -> int:
     WT_I32
 
 # ---------------- function types ----------------
-type_sigs: [[u8]]
+type_sigs: u8[][]
 type_index: {str: int} = {}
 
-fn sig_index(params: [int], results: [int]) -> int:
-    key := "{params}:{results}"
-    if i := type_index.get(key): return i
-    s: [u8] = [0x60]
+sig_index = (params: int[], results: int[]) -> int:
+    key = "{params}:{results}"
+    if let i = type_index.get(key): return i
+    s: u8[] = [0x60]
     uleb(s, params.len())
-    for p in params: s.push(u8(p))
+    loop p in params: s.push(u8(p))
     uleb(s, results.len())
-    for r in results: s.push(u8(r))
+    loop r in results: s.push(u8(r))
     type_sigs.push(s)
-    i := type_sigs.len() - 1
+    i = type_sigs.len() - 1
     type_index[key] = i
     i
 
-fn fn_sig_of(f: IrFn) -> int:
-    ps: [int]
-    for p in 0..f.nparams: ps.push(wt(int(f.vtypes[p])))
-    rs: [int]
+fn_sig_of = (f: IrFn) -> int:
+    ps: int[]
+    loop p in [0..f.nparams): ps.push(wt(int(f.vtypes[p])))
+    rs: int[]
     if f.ret >= 0: rs.push(wt(f.ret))
     sig_index(ps, rs)
 
-fn is_import(lf: int) -> bool:
-    l := lfuncs[lf]
+is_import = (lf: int) -> bool:
+    l = lfuncs[lf]
     l.kind == LK_INST and fns[l.inst].decl != 0 and has_flag(int(fns[l.inst].decl), NF_EXTERN)
 
-fn import_sig(lf: int) -> int:
-    f := lfuncs[lf].inst
-    ps: [int]
-    for t in fns[f].ptypes: ps.push(import_wt(t))
-    rs: [int]
+import_sig = (lf: int) -> int:
+    f = lfuncs[lf].inst
+    ps: int[]
+    loop t in fns[f].ptypes: ps.push(import_wt(t))
+    rs: int[]
     if tkind(int(fns[f].ret)) != .void_: rs.push(import_wt(int(fns[f].ret)))
     sig_index(ps, rs)
 
 # ---------------- module state ----------------
-wfn_index: [int]          # lfunc -> wasm function index
+wfn_index: int[]          # lfunc -> wasm function index
 table_index: {int: int} = {}
-table_funcs: [int]
-data_base := 0
-stack_top := 0
+table_funcs: int[]
+data_base = 0
+stack_top = 0
 
-fn tbl(lf: int) -> int:
-    if i := table_index.get(lf): return i
+tbl = (lf: int) -> int:
+    if let i = table_index.get(lf): return i
     table_funcs.push(lf)
-    i := table_funcs.len()      # index 0 stays null
+    i = table_funcs.len()      # index 0 stays null
     table_index[lf] = i
     i
 
 # ---------------- function body ----------------
-wb: [u8]
-loc_of: [int]             # vreg -> local index
-fp_local := 0
-cur_frame := 0
+wb: u8[]
+loc_of: int[]             # vreg -> local index
+fp_local = 0
+cur_frame = 0
 cur_wf: IrFn
 
-fn op(x: int): wb.push(u8(x))
-fn lget(v: int):
+op = (x: int): wb.push(u8(x))
+lget = (v: int):
     if int(cur_wf.vtypes[v]) == VK:
         i64c(cur_wf.kval[v])
         return
     op(0x20)
     uleb(wb, loc_of[v])
-fn lset(v: int):
+lset = (v: int):
     op(0x21)
     uleb(wb, loc_of[v])
-fn i64c(v: int):
+i64c = (v: int):
     op(0x42)
     sleb(wb, v)
-fn i32c(v: int):
+i32c = (v: int):
     op(0x41)
     sleb(wb, v)
 # push the i32 address of a load/store; returns the static offset for its memarg
-fn waddr(ins: Ins) -> int:
+waddr = (ins: Ins) -> int:
     lget(int(ins.a))
-    ix := mem_index(ins)
+    ix = mem_index(ins)
     if ix >= 0:
         lget(ix)
-        sc := mem_scale(ins)
+        sc = mem_scale(ins)
         if sc > 0:
             i64c(sc)
             op(0x86)            # i64.shl
         op(0x7C)                # i64.add
-    off := int(ins.imm)
+    off = int(ins.imm)
     if off < 0:
         i64c(off)
         op(0x7C)
@@ -163,14 +163,14 @@ fn waddr(ins: Ins) -> int:
     op(0xA7)                    # i32.wrap_i64
     off
 
-fn addr32(v: int):
+addr32 = (v: int):
     lget(v)
     op(0xA7)              # i32.wrap_i64
-fn memarg(align: int, off: int):
+memarg = (align: int, off: int):
     uleb(wb, align)
     uleb(wb, off)
-fn to_i64_from_i32(): op(0xAD)    # i64.extend_i32_u
-fn restore_sp():
+to_i64_from_i32 = (): op(0xAD)    # i64.extend_i32_u
+restore_sp = ():
     if cur_frame > 0:
         op(0x20)
         uleb(wb, fp_local)
@@ -179,30 +179,30 @@ fn restore_sp():
         op(0x24)
         uleb(wb, 0)       # global.set $sp
 
-fn bin64(code: int, ins: Ins):
+bin64 = (code: int, ins: Ins):
     lget(int(ins.a))
     lget(int(ins.b))
     op(code)
     lset(int(ins.dst))
 
-fn cmp_res(): to_i64_from_i32()
+cmp_res = (): to_i64_from_i32()
 
-fn emit_call_args(start: int, n: int, lf: int):
-    imp := lf >= 0 and is_import(lf)
-    pts: [int]
+emit_call_args = (start: int, n: int, lf: int):
+    imp = lf >= 0 and is_import(lf)
+    pts: int[]
     if imp:
-        for t in fns[lfuncs[lf].inst].ptypes: pts.push(import_wt(t))
-    for k in 0..n:
-        v := int(cur_wf.args[start + k])
+        loop t in fns[lfuncs[lf].inst].ptypes: pts.push(import_wt(t))
+    loop k in [0..n):
+        v = int(cur_wf.args[start + k])
         lget(v)
         if imp and pts[k] == WT_I32: op(0xA7)
 
-fn call_result(ins: Ins, lf: int):
-    d := int(ins.dst)
-    imp := lf >= 0 and is_import(lf)
+call_result = (ins: Ins, lf: int):
+    d = int(ins.dst)
+    imp = lf >= 0 and is_import(lf)
     if imp:
-        f := lfuncs[lf].inst
-        rt := int(fns[f].ret)
+        f = lfuncs[lf].inst
+        rt = int(fns[f].ret)
         if tkind(rt) != .void_:
             if import_wt(rt) == WT_I32: to_i64_from_i32()
             if d >= 0: lset(d)
@@ -211,11 +211,11 @@ fn call_result(ins: Ins, lf: int):
     if d >= 0: lset(d)
     else if int(ins.ty) >= 0: op(0x1A)
 
-fn emit_wins(ins: Ins):
-    o := ins.op
-    d := int(ins.dst)
-    a := int(ins.a)
-    bb := int(ins.b)
+emit_wins = (ins: Ins):
+    o = ins.op
+    d = int(ins.dst)
+    a = int(ins.a)
+    bb = int(ins.b)
     match o:
         nop, assume: pass
         iconst:
@@ -224,12 +224,12 @@ fn emit_wins(ins: Ins):
         fconst:
             if int(ins.ty) == VS:
                 op(0x43)
-                bits := ins.imm
-                for k in 0..4: wb.push(u8((bits >> (8 * k)) & 255))
+                bits = ins.imm
+                loop k in [0..4): wb.push(u8((bits >> (8 * k)) & 255))
             else:
                 op(0x44)
-                bits := ins.imm
-                for k in 0..8: wb.push(u8((bits >> (8 * k)) & 255))
+                bits = ins.imm
+                loop k in [0..8): wb.push(u8((bits >> (8 * k)) & 255))
             lset(d)
         mov:
             lget(a)
@@ -260,7 +260,7 @@ fn emit_wins(ins: Ins):
         eq, ne, lts, ltu, gts, gtu, les, leu, ges, geu:
             lget(a)
             lget(bb)
-            c := 0x51
+            c = 0x51
             if o == .ne: c = 0x52
             else if o == .lts: c = 0x53
             else if o == .ltu: c = 0x54
@@ -274,12 +274,12 @@ fn emit_wins(ins: Ins):
             cmp_res()
             lset(d)
         fadd, fsub, fmul, fdiv, fmin, fmax:
-            f32 := int(ins.ty) == VS
+            f32 = int(ins.ty) == VS
             lget(a)
             lget(bb)
-            base := 0xA0
+            base = 0xA0
             if f32: base = 0x92
-            k := 0
+            k = 0
             if o == .fsub: k = 1
             else if o == .fmul: k = 2
             else if o == .fdiv: k = 3
@@ -288,9 +288,9 @@ fn emit_wins(ins: Ins):
             op(base + k)
             lset(d)
         fneg, fabs, fsqrt, ffloor, fceil, ftrunc:
-            f32 := int(ins.ty) == VS
+            f32 = int(ins.ty) == VS
             lget(a)
-            c := 0
+            c = 0
             if o == .fabs: c = 0x99
             else if o == .fneg: c = 0x9A
             else if o == .fceil: c = 0x9B
@@ -301,10 +301,10 @@ fn emit_wins(ins: Ins):
             op(c)
             lset(d)
         feq, fne, flt, fle, fgt, fge:
-            f32 := int(ins.ty) == VS
+            f32 = int(ins.ty) == VS
             lget(a)
             lget(bb)
-            c := 0x61
+            c = 0x61
             if o == .fne: c = 0x62
             else if o == .flt: c = 0x63
             else if o == .fgt: c = 0x64
@@ -365,9 +365,9 @@ fn emit_wins(ins: Ins):
             else: op(0xBD)
             lset(d)
         load:
-            mode := int(ins.c)
-            size := mode & 15
-            off := waddr(ins)
+            mode = int(ins.c)
+            size = mode & 15
+            off = waddr(ins)
             if mode & M_FLOAT != 0:
                 if size == 4:
                     op(0x2A)
@@ -376,7 +376,7 @@ fn emit_wins(ins: Ins):
                     op(0x2B)
                     memarg(3, off)
             else:
-                sg := mode & M_SIGNED != 0
+                sg = mode & M_SIGNED != 0
                 if size == 8:
                     op(0x29)
                     memarg(3, off)
@@ -394,11 +394,11 @@ fn emit_wins(ins: Ins):
                     memarg(0, off)
             lset(d)
         store:
-            mode := int(ins.c)
-            size := mode & 15
-            off := waddr(ins)
+            mode = int(ins.c)
+            size = mode & 15
+            off = waddr(ins)
             lget(bb)
-            vt := vtype_of(bb)
+            vt = vtype_of(bb)
             if vt == VF:
                 op(0x39)
                 memarg(3, off)
@@ -458,9 +458,9 @@ fn emit_wins(ins: Ins):
             op(0)
         vop:
             # one f32 lane at a time
-            code := int(ins.imm)
-            n := (code >> 4) & 7
-            for i in 0..n:
+            code = int(ins.imm)
+            n = (code >> 4) & 7
+            loop i in [0..n):
                 addr32(a)
                 if code & VOP_SPLAT_B != 0: lget(bb)
                 else:
@@ -483,20 +483,20 @@ fn emit_wins(ins: Ins):
             uleb(wb, 11)
             op(0)
         zeroslots:
-            for k in 0..bb:
-                item := int(cur_wf.args[a + k])
+            loop k in [0..bb):
+                item = int(cur_wf.args[a + k])
                 if item & 1 == 1:
-                    v := item >> 1
+                    v = item >> 1
                     if vtype_of(v) == VF:
                         op(0x44)
-                        for z in 0..8: op(0)
+                        loop z in [0..8): op(0)
                     else if vtype_of(v) == VS:
                         op(0x43)
-                        for z in 0..4: op(0)
+                        loop z in [0..4): op(0)
                     else: i64c(0)
                     lset(v)
                 else:
-                    s := item >> 1
+                    s = item >> 1
                     op(0x20)
                     uleb(wb, fp_local)
                     i32c(slot_offs[s])
@@ -507,7 +507,7 @@ fn emit_wins(ins: Ins):
                     uleb(wb, 11)
                     op(0)
         call:
-            lf := int(ins.imm)
+            lf = int(ins.imm)
             if is_import(lf) and name_of(int(nodes[int(fns[lfuncs[lf].inst].decl)].name)) == "__wasm_grow":
                 lget(int(cur_wf.args[a]))
                 op(0xA7)
@@ -524,9 +524,9 @@ fn emit_wins(ins: Ins):
         calli, callc:
             emit_call_args(a, bb, -1)
             addr32(int(ins.c))
-            ps: [int]
-            for k in 0..bb: ps.push(wt(vtype_of(int(cur_wf.args[a + k]))))
-            rs: [int]
+            ps: int[]
+            loop k in [0..bb): ps.push(wt(vtype_of(int(cur_wf.args[a + k]))))
+            rs: int[]
             if int(ins.ty) >= 0: rs.push(wt(int(ins.ty)))
             op(0x11)
             uleb(wb, sig_index(ps, rs))
@@ -571,7 +571,7 @@ fn emit_wins(ins: Ins):
             op(0x1B)                    # select
             op(0x0E)
             uleb(wb, bb)
-            for k in 0..bb: uleb(wb, int(cur_wf.args[int(ins.c) + k]))
+            loop k in [0..bb): uleb(wb, int(cur_wf.args[int(ins.c) + k]))
             uleb(wb, int(ins.imm))
         ret:
             if a >= 0: lget(a)
@@ -580,25 +580,25 @@ fn emit_wins(ins: Ins):
         trap: op(0x00)
         select: op(0x00)
 
-fn vtype_of(v: int) -> int:
-    t := int(cur_wf.vtypes[v])
+vtype_of = (v: int) -> int:
+    t = int(cur_wf.vtypes[v])
     if t == VK: return VI
     t
 
-slot_offs: [int]
+slot_offs: int[]
 
-fn wasm_body(f: IrFn) -> [u8]:
+wasm_body = (f: IrFn) -> u8[]:
     cur_wf = f
     wb = []
-    nv := f.vtypes.len()
-    loc_of = [0; nv]
+    nv = f.vtypes.len()
+    loc_of = fill(0, nv)
     # locals: params keep their indices, others grouped by type
-    for p in 0..f.nparams: loc_of[p] = p
-    next := f.nparams
-    groups: [(int, int)]
-    for t in [VI, VF, VS]:
-        cnt := 0
-        for v in f.nparams..nv:
+    loop p in [0..f.nparams): loc_of[p] = p
+    next = f.nparams
+    groups: (int, int)[]
+    loop t in [VI, VF, VS]:
+        cnt = 0
+        loop v in [f.nparams..nv):
             if int(f.vtypes[v]) == t:
                 loc_of[v] = next
                 next += 1
@@ -608,16 +608,16 @@ fn wasm_body(f: IrFn) -> [u8]:
     next += 1
     groups.push((1, WT_I32))
     # frame
-    slot_offs = [0; f.slot_size.len()]
-    off := 0
-    for s in 0..f.slot_size.len():
-        al := int(f.slot_align[s])
+    slot_offs = fill(0, f.slot_size.len())
+    off = 0
+    loop s in [0..f.slot_size.len()):
+        al = int(f.slot_align[s])
         off = align_up(off, al)
         slot_offs[s] = off
         off += int(f.slot_size[s])
     cur_frame = align_up(off, 16)
     uleb(wb, groups.len())
-    for g in groups:
+    loop g in groups:
         uleb(wb, g.0)
         wb.push(u8(g.1))
     if cur_frame > 0:
@@ -629,66 +629,66 @@ fn wasm_body(f: IrFn) -> [u8]:
         uleb(wb, fp_local)   # local.tee $fp
         op(0x24)
         uleb(wb, 0)          # global.set $sp
-    for ins in f.code: emit_wins(ins)
+    loop ins in f.code: emit_wins(ins)
     op(0x0B)
-    out := wb
+    out = wb
     wb = []
     out
 
 # ---------------- module ----------------
-fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
-    nf := lfuncs.len()
-    wfn_index = [-1; nf]
-    imports: [int]
-    defined: [int]
-    for lf in 0..nf:
+wasm_module = (inits: int[], main_lf: int, frame_lf: int) -> u8[]:
+    nf = lfuncs.len()
+    wfn_index = fill(-1, nf)
+    imports: int[]
+    defined: int[]
+    loop lf in [0..nf):
         if is_import(lf): imports.push(lf)
         else if lf < wf_present.len() and wf_present[lf]: defined.push(lf)
-    k := 0
-    for lf in imports:
+    k = 0
+    loop lf in imports:
         wfn_index[lf] = k
         k += 1
-    for lf in defined:
+    loop lf in defined:
         wfn_index[lf] = k
         k += 1
-    start_index := k
+    start_index = k
     # exported functions get adapters with JavaScript-friendly parameter types (i32/f32/f64)
-    exp_lfs: [int]
-    for lf in defined:
+    exp_lfs: int[]
+    loop lf in defined:
         if len(wfuncs[lf].export_name) > 0: exp_lfs.push(lf)
-    adapter_base := start_index + 1
+    adapter_base = start_index + 1
     data_base = align_up(RO_BASE + rodata.len(), 16)
     stack_top = align_up(data_base + data_size + STACK_SIZE, 16)
-    pages := (stack_top + 65535) / 65536 + 1
+    pages = (stack_top + 65535) / 65536 + 1
     # bodies (this also registers table entries and signatures)
-    bodies: [[u8]]
-    for lf in defined: bodies.push(wasm_body(wfuncs[lf]))
+    bodies: u8[][]
+    loop lf in defined: bodies.push(wasm_body(wfuncs[lf]))
     # entry function: initializers then main
-    eb: [u8] = [0]
-    for f in inits:
+    eb: u8[] = [0]
+    loop f in inits:
         eb.push(0x10)
         uleb(eb, wfn_index[f])
     if main_lf >= 0:
         eb.push(0x10)
         uleb(eb, wfn_index[main_lf])
     eb.push(0x0B)
-    start_sig := sig_index([], [])
-    adapter_sigs: [int]
-    adapter_bodies: [[u8]]
-    for lf in exp_lfs:
-        f := lfuncs[lf].inst
-        ps: [int]
-        for t in fns[f].ptypes: ps.push(import_wt(t))
-        rs: [int]
-        rt := int(fns[f].ret)
+    start_sig = sig_index([], [])
+    adapter_sigs: int[]
+    adapter_bodies: u8[][]
+    loop lf in exp_lfs:
+        f = lfuncs[lf].inst
+        ps: int[]
+        loop t in fns[f].ptypes: ps.push(import_wt(t))
+        rs: int[]
+        rt = int(fns[f].ret)
         if tkind(rt) != .void_: rs.push(import_wt(rt))
         adapter_sigs.push(sig_index(ps, rs))
-        ab: [u8] = [0]
-        for i, t in fns[f].ptypes:
+        ab: u8[] = [0]
+        loop i in 0.. and t in fns[f].ptypes:
             ab.push(0x20)
             uleb(ab, i)
             if import_wt(t) == WT_I32:
-                tt := prune(t)
+                tt = prune(t)
                 if types[tt].kind == .int_ and types[tt].sign: ab.push(0xAC)
                 else: ab.push(0xAD)
         ab.push(0x10)
@@ -696,20 +696,20 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
         if tkind(rt) != .void_ and import_wt(rt) == WT_I32: ab.push(0xA7)
         ab.push(0x0B)
         adapter_bodies.push(ab)
-    sigs: [int]
-    for lf in imports: sigs.push(import_sig(lf))
-    for lf in defined: sigs.push(fn_sig_of(wfuncs[lf]))
-    out: [u8] = [0, 'a', 's', 'm', 1, 0, 0, 0]
+    sigs: int[]
+    loop lf in imports: sigs.push(import_sig(lf))
+    loop lf in defined: sigs.push(fn_sig_of(wfuncs[lf]))
+    out: u8[] = [0, 'a', 's', 'm', 1, 0, 0, 0]
     # type section
-    s: [u8]
+    s: u8[]
     uleb(s, type_sigs.len())
-    for t in type_sigs:
+    loop t in type_sigs:
         append_bytes(s, t)
     section(out, 1, s)
     # imports
     s = []
     uleb(s, imports.len())
-    for i, lf in imports:
+    loop i in 0.. and lf in imports:
         wstr(s, "env")
         wstr(s, name_of(int(nodes[int(fns[lfuncs[lf].inst].decl)].name)))
         s.push(0)
@@ -718,9 +718,9 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
     # functions
     s = []
     uleb(s, defined.len() + 1 + exp_lfs.len())
-    for i in 0..defined.len(): uleb(s, sigs[imports.len() + i])
+    loop i in [0..defined.len()): uleb(s, sigs[imports.len() + i])
     uleb(s, start_sig)
-    for a in adapter_sigs: uleb(s, a)
+    loop a in adapter_sigs: uleb(s, a)
     section(out, 3, s)
     # table
     s = [1, 0x70, 0]
@@ -737,9 +737,9 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
     section(out, 6, s)
     # exports
     s = []
-    exports: [(str, int)]
+    exports: (str, int)[]
     exports.push(("__start", start_index))
-    for i, lf in exp_lfs: exports.push((wfuncs[lf].export_name, adapter_base + i))
+    loop i in 0.. and lf in exp_lfs: exports.push((wfuncs[lf].export_name, adapter_base + i))
     uleb(s, exports.len() + 2)
     wstr(s, "memory")
     s.push(2)
@@ -747,7 +747,7 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
     wstr(s, "table")
     s.push(1)
     uleb(s, 0)
-    for e in exports:
+    loop e in exports:
         wstr(s, e.0)
         s.push(0)
         uleb(s, e.1)
@@ -755,64 +755,64 @@ fn wasm_module(inits: [int], main_lf: int, frame_lf: int) -> [u8]:
     # elements: table[1..] = address-taken functions
     s = [1, 0, 0x41, 1, 0x0B]
     uleb(s, table_funcs.len())
-    for lf in table_funcs:
+    loop lf in table_funcs:
         if wfn_index[lf] < 0: ice("function {lfuncs[lf].name} used as a value but not generated")
         uleb(s, wfn_index[lf])
     section(out, 9, s)
     # code
     s = []
     uleb(s, defined.len() + 1 + exp_lfs.len())
-    for bd in bodies:
+    loop bd in bodies:
         uleb(s, bd.len())
         append_bytes(s, bd)
     uleb(s, eb.len())
     append_bytes(s, eb)
-    for ab in adapter_bodies:
+    loop ab in adapter_bodies:
         uleb(s, ab.len())
-        for c in ab: s.push(c)
+        loop c in ab: s.push(c)
     section(out, 10, s)
     # data: rodata
     s = [1, 0, 0x41]
     sleb(s, RO_BASE)
     s.push(0x0B)
     uleb(s, rodata.len())
-    for c in rodata: s.push(c)
+    loop c in rodata: s.push(c)
     section(out, 11, s)
     out
 
 # ---------------- HTML packaging ----------------
-fn base64(b: [u8]) -> str:
-    tbl_ := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-    out: [u8]
+base64 = (b: u8[]) -> str:
+    tbl_ = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    out: u8[]
     out.reserve(b.len() * 4 / 3 + 4)
-    i := 0
-    n := b.len()
-    while i + 2 < n:
-        v := (int(b[i]) << 16) | (int(b[i + 1]) << 8) | int(b[i + 2])
+    i = 0
+    n = b.len()
+    loop i + 2 < n:
+        v = (int(b[i]) << 16) | (int(b[i + 1]) << 8) | int(b[i + 2])
         out.push(tbl_[(v >> 18) & 63])
         out.push(tbl_[(v >> 12) & 63])
         out.push(tbl_[(v >> 6) & 63])
         out.push(tbl_[v & 63])
         i += 3
     if n - i == 1:
-        v := int(b[i]) << 16
+        v = int(b[i]) << 16
         out.push(tbl_[(v >> 18) & 63])
         out.push(tbl_[(v >> 12) & 63])
         out.push('=')
         out.push('=')
     else if n - i == 2:
-        v := (int(b[i]) << 16) | (int(b[i + 1]) << 8)
+        v = (int(b[i]) << 16) | (int(b[i + 1]) << 8)
         out.push(tbl_[(v >> 18) & 63])
         out.push(tbl_[(v >> 12) & 63])
         out.push(tbl_[(v >> 6) & 63])
         out.push('=')
     str_from_bytes(out)
 
-fn write_html(path: str, wasm: [u8], title: str) -> bool:
-    js := ""
-    for part in ["runtime.js", "gfx.js", "audio.js", "boot.js"]:
-        src := read_file("{lib_dir}/web/{part}") ?? ""
+write_html = (path: str, wasm: u8[], title: str) -> bool:
+    js = ""
+    loop part in ["runtime.js", "gfx.js", "audio.js", "boot.js"]:
+        src = read_file("{lib_dir}/web/{part}") ?? ""
         if len(src) == 0 and part != "audio.js": ice("missing {lib_dir}/web/{part}")
         js += src + "\n"
-    html := "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>{title}</title>\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<style>html,body\{margin:0;height:100%;background:#111;color:#ddd;font:14px monospace}canvas\{display:block;margin:auto;outline:none}#log\{white-space:pre-wrap;margin:8px;max-height:40vh;overflow:auto}</style>\n</head><body><canvas id=\"jot-canvas\" tabindex=\"1\" width=\"0\" height=\"0\"></canvas><div id=\"log\"></div>\n<script>\nconst JOT_WASM = \"{base64(wasm)}\";\n{js}\n</script></body></html>\n"
+    html = "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>{title}</title>\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<style>html,body\{margin:0;height:100%;background:#111;color:#ddd;font:14px monospace}canvas\{display:block;margin:auto;outline:none}#log\{white-space:pre-wrap;margin:8px;max-height:40vh;overflow:auto}</style>\n</head><body><canvas id=\"jot-canvas\" tabindex=\"1\" width=\"0\" height=\"0\"></canvas><div id=\"log\"></div>\n<script>\nconst JOT_WASM = \"{base64(wasm)}\";\n{js}\n</script></body></html>\n"
     write_file(path, html)

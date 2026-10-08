@@ -3,12 +3,12 @@
 const K = 2.5
 const N = 7
 const HALF_PI = PI / 2.0
-fn main():
+main = ():
     print(-PI, -(PI), -K, -N, -2.5, 0.0 - PI)
-    x := PI
+    x = PI
     print(-x, -K * 2.0, -N * 2, -PI / 2.0, HALF_PI)
     a: f32 = -K
     b: i32 = -N
     print(a, b, 1.5 + -K, -(-N))
-    v := vec2(-1, -2.5) * -K
+    v = vec2(-1, -2.5) * -K
     print(v)

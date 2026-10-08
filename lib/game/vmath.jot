@@ -1,89 +1,89 @@
 # Vector and matrix math for the built-in vec2/vec3/vec4/mat4 types (f32 components).
 # mat4 is column-major: m[i] is column i.
 
-fn __fmt_f32(buf: mut [u8], x: f32): __fmt_float(buf, float(x), true)
-fn __fmt_i32(buf: mut [u8], x: int): __fmt(buf, x)
+__fmt_f32 = (buf: mut u8[], x: f32): __fmt_float(buf, f64(x), true)
+__fmt_i32 = (buf: mut u8[], x: int): __fmt(buf, x)
 
 # column-major: each result column is a combination of a's columns (packed vector arithmetic)
-fn __mat4_mul(out: *f32, a: *f32, b: *f32):
-    ac := a as *vec4
-    oc := out as *vec4
-    for c in 0..4:
-        k := b + c * 4
+__mat4_mul = (out: *f32, a: *f32, b: *f32):
+    ac = a as *vec4
+    oc = out as *vec4
+    loop c in [0..4):
+        k = b + c * 4
         oc[c] = ac[0] * k[0] + ac[1] * k[1] + ac[2] * k[2] + ac[3] * k[3]
 
-fn __mat4_mul_vec4(out: *f32, m: *f32, v: *f32):
-    mc := m as *vec4
+__mat4_mul_vec4 = (out: *f32, m: *f32, v: *f32):
+    mc = m as *vec4
     (out as *vec4)[0] = mc[0] * v[0] + mc[1] * v[1] + mc[2] * v[2] + mc[3] * v[3]
 
-fn dot(a: vec2, b: vec2) -> f32: a.x * b.x + a.y * b.y
-fn dot(a: vec3, b: vec3) -> f32: a.x * b.x + a.y * b.y + a.z * b.z
-fn dot(a: vec4, b: vec4) -> f32: a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
-fn cross(a: vec3, b: vec3) -> vec3: vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
-fn cross(a: vec2, b: vec2) -> f32: a.x * b.y - a.y * b.x
-fn length(v: vec2) -> f32: sqrt(v.x * v.x + v.y * v.y)
-fn length(v: vec3) -> f32: sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
-fn length(v: vec4) -> f32: sqrt(dot(v, v))
-fn length_sq(v: vec2) -> f32: v.x * v.x + v.y * v.y
-fn length_sq(v: vec3) -> f32: dot(v, v)
-fn distance(a: vec2, b: vec2) -> f32: length(a - b)
-fn distance(a: vec3, b: vec3) -> f32: length(a - b)
-fn normalize(v: vec2) -> vec2:
-    l := length(v)
+dot = (a: vec2, b: vec2) -> f32: a.x * b.x + a.y * b.y
+dot = (a: vec3, b: vec3) -> f32: a.x * b.x + a.y * b.y + a.z * b.z
+dot = (a: vec4, b: vec4) -> f32: a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
+cross = (a: vec3, b: vec3) -> vec3: vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
+cross = (a: vec2, b: vec2) -> f32: a.x * b.y - a.y * b.x
+length = (v: vec2) -> f32: sqrt(v.x * v.x + v.y * v.y)
+length = (v: vec3) -> f32: sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+length = (v: vec4) -> f32: sqrt(dot(v, v))
+length_sq = (v: vec2) -> f32: v.x * v.x + v.y * v.y
+length_sq = (v: vec3) -> f32: dot(v, v)
+distance = (a: vec2, b: vec2) -> f32: length(a - b)
+distance = (a: vec3, b: vec3) -> f32: length(a - b)
+normalize = (v: vec2) -> vec2:
+    l = length(v)
     if l == 0.0: return v
     v / l
-fn normalize(v: vec3) -> vec3:
-    l := length(v)
+normalize = (v: vec3) -> vec3:
+    l = length(v)
     if l == 0.0: return v
     v / l
-fn normalize(v: vec4) -> vec4:
-    l := length(v)
+normalize = (v: vec4) -> vec4:
+    l = length(v)
     if l == 0.0: return v
     v / l
-fn lerp(a: f32, b: f32, t: f32) -> f32: a + (b - a) * t
-fn lerp(a: vec2, b: vec2, t: f32) -> vec2: a + (b - a) * t
-fn lerp(a: vec3, b: vec3, t: f32) -> vec3: a + (b - a) * t
-fn lerp(a: vec4, b: vec4, t: f32) -> vec4: a + (b - a) * t
-fn mix(a: vec3, b: vec3, t: f32) -> vec3: a + (b - a) * t
-fn mix(a: vec4, b: vec4, t: f32) -> vec4: a + (b - a) * t
-fn abs(v: vec2) -> vec2: vec2(abs(v.x), abs(v.y))
-fn abs(v: vec3) -> vec3: vec3(abs(v.x), abs(v.y), abs(v.z))
-fn min(a: vec2, b: vec2) -> vec2: vec2(min(a.x, b.x), min(a.y, b.y))
-fn max(a: vec2, b: vec2) -> vec2: vec2(max(a.x, b.x), max(a.y, b.y))
-fn min(a: vec3, b: vec3) -> vec3: vec3(min(a.x, b.x), min(a.y, b.y), min(a.z, b.z))
-fn max(a: vec3, b: vec3) -> vec3: vec3(max(a.x, b.x), max(a.y, b.y), max(a.z, b.z))
-fn clamp(v: vec2, lo: vec2, hi: vec2) -> vec2: vec2(clamp(v.x, lo.x, hi.x), clamp(v.y, lo.y, hi.y))
-fn clamp(v: vec3, lo: f32, hi: f32) -> vec3: vec3(clamp(v.x, lo, hi), clamp(v.y, lo, hi), clamp(v.z, lo, hi))
-fn floor(v: vec2) -> vec2: vec2(f32(floor(float(v.x))), f32(floor(float(v.y))))
-fn reflect(d: vec3, n: vec3) -> vec3: d - n * (2.0 * dot(d, n))
-fn reflect(d: vec2, n: vec2) -> vec2: d - n * (2.0 * dot(d, n))
-fn perp(v: vec2) -> vec2: vec2(-v.y, v.x)
-fn angle(v: vec2) -> float: atan2(float(v.y), float(v.x))
-fn from_angle(a: float) -> vec2: vec2(f32(cos(a)), f32(sin(a)))
-fn rotate(v: vec2, a: float) -> vec2:
-    c := f32(cos(a))
-    s := f32(sin(a))
+lerp = (a: f32, b: f32, t: f32) -> f32: a + (b - a) * t
+lerp = (a: vec2, b: vec2, t: f32) -> vec2: a + (b - a) * t
+lerp = (a: vec3, b: vec3, t: f32) -> vec3: a + (b - a) * t
+lerp = (a: vec4, b: vec4, t: f32) -> vec4: a + (b - a) * t
+mix = (a: vec3, b: vec3, t: f32) -> vec3: a + (b - a) * t
+mix = (a: vec4, b: vec4, t: f32) -> vec4: a + (b - a) * t
+abs = (v: vec2) -> vec2: vec2(abs(v.x), abs(v.y))
+abs = (v: vec3) -> vec3: vec3(abs(v.x), abs(v.y), abs(v.z))
+min = (a: vec2, b: vec2) -> vec2: vec2(min(a.x, b.x), min(a.y, b.y))
+max = (a: vec2, b: vec2) -> vec2: vec2(max(a.x, b.x), max(a.y, b.y))
+min = (a: vec3, b: vec3) -> vec3: vec3(min(a.x, b.x), min(a.y, b.y), min(a.z, b.z))
+max = (a: vec3, b: vec3) -> vec3: vec3(max(a.x, b.x), max(a.y, b.y), max(a.z, b.z))
+clamp = (v: vec2, lo: vec2, hi: vec2) -> vec2: vec2(clamp(v.x, lo.x, hi.x), clamp(v.y, lo.y, hi.y))
+clamp = (v: vec3, lo: f32, hi: f32) -> vec3: vec3(clamp(v.x, lo, hi), clamp(v.y, lo, hi), clamp(v.z, lo, hi))
+floor = (v: vec2) -> vec2: vec2(f32(floor(f64(v.x))), f32(floor(f64(v.y))))
+reflect = (d: vec3, n: vec3) -> vec3: d - n * (2.0 * dot(d, n))
+reflect = (d: vec2, n: vec2) -> vec2: d - n * (2.0 * dot(d, n))
+perp = (v: vec2) -> vec2: vec2(-v.y, v.x)
+angle = (v: vec2) -> f64: atan2(f64(v.y), f64(v.x))
+from_angle = (a: f64) -> vec2: vec2(f32(cos(a)), f32(sin(a)))
+rotate = (v: vec2, a: f64) -> vec2:
+    c = f32(cos(a))
+    s = f32(sin(a))
     vec2(v.x * c - v.y * s, v.x * s + v.y * c)
-fn move_toward(a: vec2, b: vec2, step: f32) -> vec2:
-    d := b - a
-    l := length(d)
+move_toward = (a: vec2, b: vec2, step: f32) -> vec2:
+    d = b - a
+    l = length(d)
     if l <= step or l == 0.0: return b
     a + d / l * step
-fn sinf(x: f32) -> f32: f32(sin(float(x)))
-fn cosf(x: f32) -> f32: f32(cos(float(x)))
+sinf = (x: f32) -> f32: f32(sin(f64(x)))
+cosf = (x: f32) -> f32: f32(cos(f64(x)))
 
 # ---------------- colors (vec4 rgba in 0..1) ----------------
-fn rgb(r: f32, g: f32, b: f32) -> vec4: vec4(r, g, b, 1)
-fn rgba(r: f32, g: f32, b: f32, a: f32) -> vec4: vec4(r, g, b, a)
-fn gray(v: f32) -> vec4: vec4(v, v, v, 1)
-fn hex(c: int) -> vec4: vec4(f32((c >> 16) & 255) / 255.0, f32((c >> 8) & 255) / 255.0, f32(c & 255) / 255.0, 1)
-fn hsv(h: float, s: float, v: float) -> vec4:
-    hh := mod(h, 1.0) * 6.0
-    i := int(hh)
-    f := hh - float(i)
-    p := v * (1.0 - s)
-    q := v * (1.0 - s * f)
-    t := v * (1.0 - s * (1.0 - f))
+rgb = (r: f32, g: f32, b: f32) -> vec4: vec4(r, g, b, 1)
+rgba = (r: f32, g: f32, b: f32, a: f32) -> vec4: vec4(r, g, b, a)
+gray = (v: f32) -> vec4: vec4(v, v, v, 1)
+hex = (c: int) -> vec4: vec4(f32((c >> 16) & 255) / 255.0, f32((c >> 8) & 255) / 255.0, f32(c & 255) / 255.0, 1)
+hsv = (h: f64, s: f64, v: f64) -> vec4:
+    hh = mod(h, 1.0) * 6.0
+    i = int(hh)
+    f = hh - f64(i)
+    p = v * (1.0 - s)
+    q = v * (1.0 - s * f)
+    t = v * (1.0 - s * (1.0 - f))
     match i:
         0: rgb(f32(v), f32(t), f32(p))
         1: rgb(f32(q), f32(v), f32(p))
@@ -91,9 +91,9 @@ fn hsv(h: float, s: float, v: float) -> vec4:
         3: rgb(f32(p), f32(q), f32(v))
         4: rgb(f32(t), f32(p), f32(v))
         _: rgb(f32(v), f32(p), f32(q))
-fn with_alpha(c: vec4, a: f32) -> vec4: vec4(c.x, c.y, c.z, a)
-fn lighten(c: vec4, k: f32) -> vec4: vec4(c.x + (1.0 - c.x) * k, c.y + (1.0 - c.y) * k, c.z + (1.0 - c.z) * k, c.w)
-fn darken(c: vec4, k: f32) -> vec4: vec4(c.x * (1.0 - k), c.y * (1.0 - k), c.z * (1.0 - k), c.w)
+with_alpha = (c: vec4, a: f32) -> vec4: vec4(c.x, c.y, c.z, a)
+lighten = (c: vec4, k: f32) -> vec4: vec4(c.x + (1.0 - c.x) * k, c.y + (1.0 - c.y) * k, c.z + (1.0 - c.z) * k, c.w)
+darken = (c: vec4, k: f32) -> vec4: vec4(c.x * (1.0 - k), c.y * (1.0 - k), c.z * (1.0 - k), c.w)
 
 const WHITE = vec4(1, 1, 1, 1)
 const BLACK = vec4(0, 0, 0, 1)
@@ -109,84 +109,84 @@ const GRAY = vec4(0.5, 0.5, 0.5, 1)
 const TRANSPARENT = vec4(0, 0, 0, 0)
 
 # ---------------- matrices ----------------
-fn mat4_identity() -> mat4: mat4()
+mat4_identity = () -> mat4: mat4()
 
-fn translation(t: vec3) -> mat4:
-    m := mat4()
+translation = (t: vec3) -> mat4:
+    m = mat4()
     m[3] = vec4(t, 1)
     m
 
-fn scaling(s: vec3) -> mat4:
-    m := mat4()
+scaling = (s: vec3) -> mat4:
+    m = mat4()
     m[0] = vec4(s.x, 0, 0, 0)
     m[1] = vec4(0, s.y, 0, 0)
     m[2] = vec4(0, 0, s.z, 0)
     m
 
-fn rotation(axis0: vec3, a: float) -> mat4:
-    axis := normalize(axis0)
-    c := f32(cos(a))
-    s := f32(sin(a))
-    t := 1.0 - c
-    x := axis.x
-    y := axis.y
-    z := axis.z
-    m := mat4()
+rotation = (axis0: vec3, a: f64) -> mat4:
+    axis = normalize(axis0)
+    c = f32(cos(a))
+    s = f32(sin(a))
+    t = 1.0 - c
+    x = axis.x
+    y = axis.y
+    z = axis.z
+    m = mat4()
     m[0] = vec4(t * x * x + c, t * x * y + s * z, t * x * z - s * y, 0)
     m[1] = vec4(t * x * y - s * z, t * y * y + c, t * y * z + s * x, 0)
     m[2] = vec4(t * x * z + s * y, t * y * z - s * x, t * z * z + c, 0)
     m
-fn rotation_x(a: float) -> mat4: rotation(vec3(1, 0, 0), a)
-fn rotation_y(a: float) -> mat4: rotation(vec3(0, 1, 0), a)
-fn rotation_z(a: float) -> mat4: rotation(vec3(0, 0, 1), a)
+rotation_x = (a: f64) -> mat4: rotation(vec3(1, 0, 0), a)
+rotation_y = (a: f64) -> mat4: rotation(vec3(0, 1, 0), a)
+rotation_z = (a: f64) -> mat4: rotation(vec3(0, 0, 1), a)
 
-fn perspective(fov_y: float, aspect: float, near: float, far: float) -> mat4:
-    f := f32(1.0 / tan(fov_y / 2.0))
-    m := mat4(0)
+perspective = (fov_y: f64, aspect: f64, near: f64, far: f64) -> mat4:
+    f = f32(1.0 / tan(fov_y / 2.0))
+    m = mat4(0)
     m[0] = vec4(f / f32(aspect), 0, 0, 0)
     m[1] = vec4(0, f, 0, 0)
     m[2] = vec4(0, 0, f32((far + near) / (near - far)), -1)
     m[3] = vec4(0, 0, f32(2.0 * far * near / (near - far)), 0)
     m
 
-fn orthographic(left: float, right: float, bottom: float, top: float, near: float, far: float) -> mat4:
-    m := mat4()
+orthographic = (left: f64, right: f64, bottom: f64, top: f64, near: f64, far: f64) -> mat4:
+    m = mat4()
     m[0] = vec4(f32(2.0 / (right - left)), 0, 0, 0)
     m[1] = vec4(0, f32(2.0 / (top - bottom)), 0, 0)
     m[2] = vec4(0, 0, f32(-2.0 / (far - near)), 0)
     m[3] = vec4(f32(-(right + left) / (right - left)), f32(-(top + bottom) / (top - bottom)), f32(-(far + near) / (far - near)), 1)
     m
 
-fn look_at(eye: vec3, target: vec3, up: vec3) -> mat4:
-    f := normalize(target - eye)
-    s := normalize(cross(f, up))
-    u := cross(s, f)
-    m := mat4()
+look_at = (eye: vec3, target: vec3, up: vec3) -> mat4:
+    f = normalize(target - eye)
+    s = normalize(cross(f, up))
+    u = cross(s, f)
+    m = mat4()
     m[0] = vec4(s.x, u.x, -f.x, 0)
     m[1] = vec4(s.y, u.y, -f.y, 0)
     m[2] = vec4(s.z, u.z, -f.z, 0)
     m[3] = vec4(-dot(s, eye), -dot(u, eye), dot(f, eye), 1)
     m
 
-fn transpose(m: mat4) -> mat4:
-    r := mat4()
-    for c in 0..4:
-        for k in 0..4: r[c][k] = m[k][c]
+transpose = (m: mat4) -> mat4:
+    r = mat4()
+    loop c in [0..4):
+        loop k in [0..4): r[c][k] = m[k][c]
     r
 
-fn transform_point(m: mat4, p: vec3) -> vec3:
-    v := m * vec4(p, 1)
+transform_point = (m: mat4, p: vec3) -> vec3:
+    v = m * vec4(p, 1)
     vec3(v.x, v.y, v.z) / v.w
 
-fn transform_dir(m: mat4, d: vec3) -> vec3:
-    v := m * vec4(d, 0)
+transform_dir = (m: mat4, d: vec3) -> vec3:
+    v = m * vec4(d, 0)
     vec3(v.x, v.y, v.z)
 
-fn inverse(m: mat4) -> mat4:
-    a := [f32(0.0); 16]
-    for c in 0..4:
-        for r in 0..4: a[c * 4 + r] = m[c][r]
-    inv := [f32(0.0); 16]
+inverse = (m: mat4) -> mat4:
+    a = fill(f32(0.0), 16)
+    loop c in [0..4):
+        loop r in [0..4): a[c * 4 + r] = m[c][r]
+    inv = fill(f32(0.0), 16)
     inv[0] = a[5] * a[10] * a[15] - a[5] * a[11] * a[14] - a[9] * a[6] * a[15] + a[9] * a[7] * a[14] + a[13] * a[6] * a[11] - a[13] * a[7] * a[10]
     inv[4] = -a[4] * a[10] * a[15] + a[4] * a[11] * a[14] + a[8] * a[6] * a[15] - a[8] * a[7] * a[14] - a[12] * a[6] * a[11] + a[12] * a[7] * a[10]
     inv[8] = a[4] * a[9] * a[15] - a[4] * a[11] * a[13] - a[8] * a[5] * a[15] + a[8] * a[7] * a[13] + a[12] * a[5] * a[11] - a[12] * a[7] * a[9]
@@ -203,43 +203,43 @@ fn inverse(m: mat4) -> mat4:
     inv[7] = a[0] * a[6] * a[11] - a[0] * a[7] * a[10] - a[4] * a[2] * a[11] + a[4] * a[3] * a[10] + a[8] * a[2] * a[7] - a[8] * a[3] * a[6]
     inv[11] = -a[0] * a[5] * a[11] + a[0] * a[7] * a[9] + a[4] * a[1] * a[11] - a[4] * a[3] * a[9] - a[8] * a[1] * a[7] + a[8] * a[3] * a[5]
     inv[15] = a[0] * a[5] * a[10] - a[0] * a[6] * a[9] - a[4] * a[1] * a[10] + a[4] * a[2] * a[9] + a[8] * a[1] * a[6] - a[8] * a[2] * a[5]
-    det := a[0] * inv[0] + a[1] * inv[4] + a[2] * inv[8] + a[3] * inv[12]
-    r := mat4()
+    det = a[0] * inv[0] + a[1] * inv[4] + a[2] * inv[8] + a[3] * inv[12]
+    r = mat4()
     if det == 0.0: return r
-    for c in 0..4:
-        for k in 0..4: r[c][k] = inv[c * 4 + k] / det
+    loop c in [0..4):
+        loop k in [0..4): r[c][k] = inv[c * 4 + k] / det
     r
 
 # ---------------- quaternions (vec4: x, y, z, w) ----------------
-fn quat_axis_angle(axis: vec3, a: float) -> vec4:
-    s := f32(sin(a / 2.0))
-    n := normalize(axis)
+quat_axis_angle = (axis: vec3, a: f64) -> vec4:
+    s = f32(sin(a / 2.0))
+    n = normalize(axis)
     vec4(n.x * s, n.y * s, n.z * s, f32(cos(a / 2.0)))
-fn quat_mul(a: vec4, b: vec4) -> vec4:
+quat_mul = (a: vec4, b: vec4) -> vec4:
     vec4(a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x, a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z)
-fn quat_rotate(q: vec4, v: vec3) -> vec3:
-    u := vec3(q.x, q.y, q.z)
-    t := cross(u, v) * 2.0
+quat_rotate = (q: vec4, v: vec3) -> vec3:
+    u = vec3(q.x, q.y, q.z)
+    t = cross(u, v) * 2.0
     v + t * q.w + cross(u, t)
-fn quat_to_mat4(q: vec4) -> mat4:
-    x := q.x
-    y := q.y
-    z := q.z
-    w := q.w
-    m := mat4()
+quat_to_mat4 = (q: vec4) -> mat4:
+    x = q.x
+    y = q.y
+    z = q.z
+    w = q.w
+    m = mat4()
     m[0] = vec4(1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w), 0)
     m[1] = vec4(2.0 * (x * y - z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + x * w), 0)
     m[2] = vec4(2.0 * (x * z + y * w), 2.0 * (y * z - x * w), 1.0 - 2.0 * (x * x + y * y), 0)
     m
-fn slerp(a: vec4, b0: vec4, t: f32) -> vec4:
-    b := b0
-    d := dot(a, b)
+slerp = (a: vec4, b0: vec4, t: f32) -> vec4:
+    b = b0
+    d = dot(a, b)
     if d < 0.0:
         b = b * -1.0
         d = -d
     if d > 0.9995: return normalize(a + (b - a) * t)
-    th := acos(float(d))
-    s := sin(th)
-    wa := f32(sin((1.0 - float(t)) * th) / s)
-    wb := f32(sin(float(t) * th) / s)
+    th = acos(f64(d))
+    s = sin(th)
+    wa = f32(sin((1.0 - f64(t)) * th) / s)
+    wb = f32(sin(f64(t) * th) / s)
     a * wa + b * wb

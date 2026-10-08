@@ -7,23 +7,23 @@
 # Vertex fields become vertex attributes (in declaration order), Params fields become
 # uniforms, Varying fields (after the first) are interpolated between the stages.
 
-use util
-use lex
-use ast
-use types
-use check
-use expr
+use 'util.jot'
+use 'lex.jot'
+use 'ast.jot'
+use 'types.jot'
+use 'check.jot'
+use 'expr.jot'
 
-gl_out: [str]
+gl_out: str[]
 gl_done_fns: {int: bool} = {}
 gl_done_structs: {int: bool} = {}
-gl_decls: [str]          # struct and function definitions, in dependency order
+gl_decls: str[]          # struct and function definitions, in dependency order
 
-fn gl_err(pos: int, msg: str): fatal(pos, "in shader code: {msg}")
+gl_err = (pos: int, msg: str): fatal(pos, "in shader code: {msg}")
 
-fn gl_type(t0: int, pos: int) -> str:
-    t := prune(t0)
-    k := types[t].kind
+gl_type = (t0: int, pos: int) -> str:
+    t = prune(t0)
+    k = types[t].kind
     if k == .float_: return "float"
     if k == .int_: return "int"
     if k == .bool_: return "bool"
@@ -32,7 +32,7 @@ fn gl_type(t0: int, pos: int) -> str:
         if types[t].sign: return "ivec{types[t].bits}"
         return "vec{types[t].bits}"
     if k == .struct_:
-        si := int(types[t].st)
+        si = int(types[t].st)
         if structs[si].name == "Texture": return "sampler2D"
         gl_struct(t, pos)
         return "S_{sanitize(structs[si].name)}_{si}"
@@ -40,21 +40,21 @@ fn gl_type(t0: int, pos: int) -> str:
     gl_err(pos, "type {type_str(t)} cannot be used in shaders (use numbers, bools, vectors, matrices, structs and Texture)")
     ""
 
-fn gl_struct(t: int, pos: int):
-    si := int(types[t].st)
+gl_struct = (t: int, pos: int):
+    si = int(types[t].st)
     if gl_done_structs.get(si) != none: return
     gl_done_structs[si] = true
     check_struct_fields(si)
-    s := "struct S_{sanitize(structs[si].name)}_{si} \{\n"
-    for i in 0..int(structs[si].nfields):
-        f := int(structs[si].fields) + i
+    s = "struct S_{sanitize(structs[si].name)}_{si} \{\n"
+    loop i in [0..int(structs[si].nfields)):
+        f = int(structs[si].fields) + i
         s += "    {gl_type(int(fields[f].type), pos)} {name_of(int(fields[f].name))}_;\n"
     gl_decls.push(s + "};\n")
 
-fn gl_local(l: int) -> str: "l_{sanitize(name_of(int(locals[l].name)))}_{l}"
+gl_local = (l: int) -> str: "l_{sanitize(name_of(int(locals[l].name)))}_{l}"
 
-fn gl_float(x: float) -> str:
-    s := "{x}"
+gl_float = (x: f64) -> str:
+    s = "{x}"
     if find(s, ".") < 0 and find(s, "e") < 0 and find(s, "n") < 0: s += ".0"
     s
 
@@ -67,42 +67,42 @@ builtin_map: {str: str} = {
     "sign": "sign", "sinf": "sin", "cosf": "cos", "sample": "texture", "exp2": "exp2", "log2": "log2",
 }
 
-fn gl_fn_name(f: int) -> str: "f_{sanitize(name_of(int(nodes[int(fns[f].decl)].name)))}_{f}"
+gl_fn_name = (f: int) -> str: "f_{sanitize(name_of(int(nodes[int(fns[f].decl)].name)))}_{f}"
 
 # translate a function and everything it calls
-fn gl_function(f: int):
+gl_function = (f: int):
     if gl_done_fns.get(f) != none: return
     gl_done_fns[f] = true
-    decl := int(fns[f].decl)
+    decl = int(fns[f].decl)
     if decl == 0 or nodes[decl].kind != .fn_: gl_err(0, "only named functions can be used in shaders")
-    ret := gl_type(int(fns[f].ret), nodes[decl].pos)
-    sig := "{ret} {gl_fn_name(f)}("
-    for i, l in fns[f].params:
+    ret = gl_type(int(fns[f].ret), nodes[decl].pos)
+    sig = "{ret} {gl_fn_name(f)}("
+    loop i in 0.. and l in fns[f].params:
         if i > 0: sig += ", "
         if int(locals[l].flags) & LF_MUTPARAM != 0: sig += "inout "
         sig += "{gl_type(int(locals[l].type), locals[l].pos)} {gl_local(l)}"
     sig += ")"
-    saved := gl_out
+    saved = gl_out
     gl_out = []
-    body := int(fns[f].body)
-    want := tkind(int(fns[f].ret)) != .void_
+    body = int(fns[f].body)
+    want = tkind(int(fns[f].ret)) != .void_
     gl_block(body, 1, want)
-    lines_ := gl_out
+    lines_ = gl_out
     gl_out = saved
     gl_decls.push("{sig} \{\n{join(lines_, "")}}\n")
 
-fn ind(n: int) -> str: repeat("    ", n)
+ind = (n: int) -> str: repeat("    ", n)
 
-fn gl_block(b: int, depth: int, ret_value: bool):
-    n := nkids(b)
-    for i in 0..n:
-        s := kid(b, i)
+gl_block = (b: int, depth: int, ret_value: bool):
+    n = nkids(b)
+    loop i in [0..n):
+        s = kid(b, i)
         if i == n - 1 and ret_value and nodes[b].aux != 0:
             gl_out.push("{ind(depth)}return {gl_expr(int(nodes[s].a))};\n")
             continue
         gl_stmt(s, depth)
 
-fn gl_assign_op(op: int) -> str:
+gl_assign_op = (op: int) -> str:
     match op as Tok:
         assign: "="
         pluseq: "+="
@@ -111,20 +111,20 @@ fn gl_assign_op(op: int) -> str:
         slasheq: "/="
         _: "="
 
-fn gl_stmt(s: int, depth: int):
-    k := nodes[s].kind
-    pre := ind(depth)
+gl_stmt = (s: int, depth: int):
+    k = nodes[s].kind
+    pre = ind(depth)
     if k == .vardecl:
         if nodes[s].nlist > 0: gl_err(nodes[s].pos, "tuple destructuring is not supported in shaders")
-        l := int(nodes[s].sym)
-        t := gl_type(int(locals[l].type), nodes[s].pos)
+        l = int(nodes[s].sym)
+        t = gl_type(int(locals[l].type), nodes[s].pos)
         if nodes[s].b != 0: gl_out.push("{pre}{t} {gl_local(l)} = {gl_expr(int(nodes[s].b))};\n")
         else: gl_out.push("{pre}{t} {gl_local(l)} = {gl_zero(int(locals[l].type), nodes[s].pos)};\n")
     else if k == .assign:
         if nodes[s].aux != 0: gl_err(nodes[s].pos, "unsupported assignment in shader")
         gl_out.push("{pre}{gl_expr(int(nodes[s].a))} {gl_assign_op(int(nodes[s].op))} {gl_expr(int(nodes[s].b))};\n")
     else if k == .exprstmt:
-        e := int(nodes[s].a)
+        e = int(nodes[s].a)
         if nodes[e].kind == .if_ or nodes[e].kind == .match_:
             gl_stmt_if(e, depth)
             return
@@ -139,10 +139,10 @@ fn gl_stmt(s: int, depth: int):
         gl_out.push("{pre}}\n")
     else if k == .for_:
         if nodes[s].aux != 0: gl_err(nodes[s].pos, "only `for i in a..b` loops are supported in shaders")
-        l := int(nodes[s].sym)
-        it := int(nodes[s].a)
-        v := gl_local(l)
-        cmp := "<"
+        l = int(nodes[s].sym)
+        it = int(nodes[s].a)
+        v = gl_local(l)
+        cmp = "<"
         if has_flag(it, NF_INCLUSIVE): cmp = "<="
         gl_out.push("{pre}for (int {v} = {gl_expr(int(nodes[it].a))}; {v} {cmp} {gl_expr(int(nodes[it].b))}; {v}++) \{\n")
         gl_block(int(nodes[s].b), depth + 1, false)
@@ -150,13 +150,13 @@ fn gl_stmt(s: int, depth: int):
     else if k == .break_: gl_out.push("{pre}break;\n")
     else if k == .continue_: gl_out.push("{pre}continue;\n")
     else if k == .block:
-        for i in 0..nkids(s): gl_stmt(kid(s, i), depth)
+        loop i in [0..nkids(s)): gl_stmt(kid(s, i), depth)
     else if k == .const_: pass
     else: gl_err(nodes[s].pos, "unsupported statement in shader")
 
-fn gl_stmt_if(e: int, depth: int):
+gl_stmt_if = (e: int, depth: int):
     if nodes[e].kind != .if_: gl_err(nodes[e].pos, "match is not supported in shaders")
-    pre := ind(depth)
+    pre = ind(depth)
     gl_out.push("{pre}if ({gl_expr(int(nodes[e].a))}) \{\n")
     gl_block(int(nodes[e].b), depth + 1, false)
     if nodes[e].c != 0:
@@ -164,9 +164,9 @@ fn gl_stmt_if(e: int, depth: int):
         gl_block(int(nodes[e].c), depth + 1, false)
     gl_out.push("{pre}}\n")
 
-fn gl_zero(t0: int, pos: int) -> str:
-    t := prune(t0)
-    k := types[t].kind
+gl_zero = (t0: int, pos: int) -> str:
+    t = prune(t0)
+    k = types[t].kind
     if k == .float_: return "0.0"
     if k == .int_: return "0"
     if k == .bool_: return "false"
@@ -174,14 +174,14 @@ fn gl_zero(t0: int, pos: int) -> str:
         if t == T_MAT4: return "mat4(0.0)"
         return "{gl_type(t, pos)}(0)"
     if k == .struct_:
-        si := int(types[t].st)
-        parts: [str]
-        for i in 0..int(structs[si].nfields): parts.push(gl_zero(int(fields[int(structs[si].fields) + i].type), pos))
+        si = int(types[t].st)
+        parts: str[]
+        loop i in [0..int(structs[si].nfields)): parts.push(gl_zero(int(fields[int(structs[si].fields) + i].type), pos))
         return "{gl_type(t, pos)}({join(parts, ", ")})"
     gl_err(pos, "cannot zero-initialize {type_str(t)} in a shader")
     ""
 
-fn gl_binop(op: Tok) -> str:
+gl_binop = (op: Tok) -> str:
     match op:
         plus: "+"
         minus: "-"
@@ -201,11 +201,11 @@ fn gl_binop(op: Tok) -> str:
         shr: ">>"
         _: "?"
 
-fn gl_expr(e: int) -> str:
-    k := nodes[e].kind
-    t := prune(ntype(e))
+gl_expr = (e: int) -> str:
+    k = nodes[e].kind
+    t = prune(ntype(e))
     if k == .int_lit:
-        if types[t].kind == .float_: return gl_float(float(nodes[e].ival))
+        if types[t].kind == .float_: return gl_float(f64(nodes[e].ival))
         return "{nodes[e].ival}"
     if k == .float_lit: return gl_float(nodes[e].fval)
     if k == .bool_lit:
@@ -213,22 +213,22 @@ fn gl_expr(e: int) -> str:
         return "false"
     if k == .ident:
         if nodes[e].aux != i32(int(SK.local)): gl_err(nodes[e].pos, "shaders can only use local variables, parameters and constants")
-        l := int(nodes[e].sym)
+        l = int(nodes[e].sym)
         if int(locals[l].flags) & LF_ALIAS != 0: return gl_expr(int(locals[l].alias))
         return gl_local(l)
     if k == .field:
-        a := int(nodes[e].a)
+        a = int(nodes[e].a)
         if nodes[e].aux == -4: return "{gl_expr(a)}.{name_of(int(nodes[e].name))}"
         if nodes[e].aux < 0: gl_err(nodes[e].pos, "unsupported field access in shader")
         return "{gl_expr(a)}.{name_of(int(nodes[e].name))}_"
     if k == .index:
-        bt := prune(ntype(int(nodes[e].a)))
+        bt = prune(ntype(int(nodes[e].a)))
         if types[bt].kind != .vec: gl_err(nodes[e].pos, "only vectors and matrices can be indexed in shaders")
         return "{gl_expr(int(nodes[e].a))}[{gl_expr(int(nodes[e].b))}]"
     if k == .binary:
-        a := int(nodes[e].a)
-        b := int(nodes[e].b)
-        op := nodes[e].op as Tok
+        a = int(nodes[e].a)
+        b = int(nodes[e].b)
+        op = nodes[e].op as Tok
         if op == .percent and (is_float(ntype(a)) or is_vec(ntype(a))): return "mod({gl_expr(a)}, {gl_expr(b)})"
         return "({gl_expr(a)} {gl_binop(op)} {gl_expr(b)})"
     if k == .unary:
@@ -238,45 +238,45 @@ fn gl_expr(e: int) -> str:
     if k == .and_: return "({gl_expr(int(nodes[e].a))} && {gl_expr(int(nodes[e].b))})"
     if k == .or_: return "({gl_expr(int(nodes[e].a))} || {gl_expr(int(nodes[e].b))})"
     if k == .conv:
-        cv := nodes[e].aux as CV
-        a := gl_expr(int(nodes[e].a))
+        cv = nodes[e].aux as CV
+        a = gl_expr(int(nodes[e].a))
         if cv == .int2float: return "float({a})"
         if cv == .float2int: return "int({a})"
         if cv == .int_ and types[t].kind == .int_: return a
         if cv == .float_ or cv == .none_: return a
         gl_err(nodes[e].pos, "unsupported conversion in shader")
     if k == .if_:
-        b := int(nodes[e].b)
-        c := int(nodes[e].c)
+        b = int(nodes[e].b)
+        c = int(nodes[e].c)
         if nkids(b) != 1 or nkids(c) != 1 or nodes[b].aux == 0 or nodes[c].aux == 0: gl_err(nodes[e].pos, "if expressions in shaders must be single expressions: `if c: a else: b`")
         return "({gl_expr(int(nodes[e].a))} ? {gl_expr(block_value(b))} : {gl_expr(block_value(c))})"
     if k == .intrinsic:
-        id := nodes[e].aux as IN
+        id = nodes[e].aux as IN
         if id == .vec_ctor:
-            parts: [str]
-            for i in 0..nkids(e): parts.push(gl_expr(kid(e, i)))
+            parts: str[]
+            loop i in [0..nkids(e)): parts.push(gl_expr(kid(e, i)))
             if t == T_MAT4 and nkids(e) == 0: return "mat4(1.0)"
             return "{gl_type(t, nodes[e].pos)}({join(parts, ", ")})"
         if id == .sqrt: return "sqrt({gl_expr(kid(e, 0))})"
         gl_err(nodes[e].pos, "this operation is not available in shaders")
     if k == .call:
-        aux := int(nodes[e].aux)
+        aux = int(nodes[e].aux)
         if aux == 2:
-            si := int(types[t].st)
-            parts: [str]
-            for i in 0..int(structs[si].nfields):
-                a := kid(e, i)
+            si = int(types[t].st)
+            parts: str[]
+            loop i in [0..int(structs[si].nfields)):
+                a = kid(e, i)
                 if a == 0: parts.push(gl_zero(int(fields[int(structs[si].fields) + i].type), nodes[e].pos))
                 else: parts.push(gl_expr(a))
             return "{gl_type(t, nodes[e].pos)}({join(parts, ", ")})"
         if aux != 0: gl_err(nodes[e].pos, "function values cannot be called in shaders")
-        f := int(nodes[e].sym)
-        decl := int(fns[f].decl)
-        nm := name_of(int(nodes[decl].name))
-        args: [str]
-        for i in 0..nkids(e): args.push(gl_expr(kid(e, i)))
+        f = int(nodes[e].sym)
+        decl = int(fns[f].decl)
+        nm = name_of(int(nodes[decl].name))
+        args: str[]
+        loop i in [0..nkids(e)): args.push(gl_expr(kid(e, i)))
         if modules[int(nodes[decl].mod)].is_prelude:
-            if g := builtin_map.get(nm): return "{g}({join(args, ", ")})"
+            if let g = builtin_map.get(nm): return "{g}({join(args, ", ")})"
             # prelude helpers written in Jot (e.g. vector math) are translated like user code
         gl_function(f)
         return "{gl_fn_name(f)}({join(args, ", ")})"
@@ -284,25 +284,25 @@ fn gl_expr(e: int) -> str:
     ""
 
 # ---------------- stage wrappers ----------------
-fn gl_struct_fields(t: int) -> [(str, int)]:
-    si := int(types[prune(t)].st)
+gl_struct_fields = (t: int) -> (str, int)[]:
+    si = int(types[prune(t)].st)
     check_struct_fields(si)
-    out: [(str, int)]
-    for i in 0..int(structs[si].nfields):
-        f := int(structs[si].fields) + i
+    out: (str, int)[]
+    loop i in [0..int(structs[si].nfields)):
+        f = int(structs[si].fields) + i
         out.push((name_of(int(fields[f].name)), int(fields[f].type)))
     out
 
-fn gl_attrib_comps(t: int, pos: int) -> int:
-    tt := prune(t)
+gl_attrib_comps = (t: int, pos: int) -> int:
+    tt = prune(t)
     if types[tt].kind == .float_ and int(types[tt].bits) == 32: return 1
     if types[tt].kind == .vec and tt != T_MAT4 and not types[tt].sign: return int(types[tt].bits)
     gl_err(pos, "vertex attributes must be f32, vec2, vec3 or vec4 (found {type_str(tt)})")
     0
 
-fn uniform_kind(t0: int, pos: int) -> str:
-    t := prune(t0)
-    k := types[t].kind
+uniform_kind = (t0: int, pos: int) -> str:
+    t = prune(t0)
+    k = types[t].kind
     if k == .float_:
         if int(types[t].bits) == 32: return "f"
         return "d"
@@ -317,99 +317,99 @@ fn uniform_kind(t0: int, pos: int) -> str:
     ""
 
 # returns (vertex source, fragment source, layout description)
-fn glsl_build(vsf: int, fsf: int) -> (str, str, str):
+glsl_build = (vsf: int, fsf: int) -> (str, str, str):
     gl_decls = []
     gl_done_fns = {}
     gl_done_structs = {}
-    vpos := nodes[int(fns[vsf].decl)].pos
-    vtype_ := int(fns[vsf].ptypes[0])
-    np := fns[vsf].ptypes.len()
-    itype := 0
+    vpos = nodes[int(fns[vsf].decl)].pos
+    vtype_ = int(fns[vsf].ptypes[0])
+    np = fns[vsf].ptypes.len()
+    itype = 0
     if np == 3: itype = int(fns[vsf].ptypes[1])
-    utype := int(fns[vsf].ptypes[np - 1])
-    otype := int(fns[vsf].ret)
+    utype = int(fns[vsf].ptypes[np - 1])
+    otype = int(fns[vsf].ret)
     gl_function(vsf)
-    vdecls := gl_decls
+    vdecls = gl_decls
     gl_decls = []
     gl_done_fns = {}
     gl_done_structs = {}
     gl_function(fsf)
-    fdecls := gl_decls
-    head := "#version 300 es\nprecision highp float;\nprecision highp int;\n"
+    fdecls = gl_decls
+    head = "#version 300 es\nprecision highp float;\nprecision highp int;\n"
     # uniforms
-    ufields := gl_struct_fields(utype)
-    usi := int(types[prune(utype)].st)
+    ufields = gl_struct_fields(utype)
+    usi = int(types[prune(utype)].st)
     layout(utype)
-    udesc := "U{tsize(utype)}"
-    ustruct := gl_type(utype, vpos)
-    for i, f in ufields:
-        fo := int(fields[int(structs[usi].fields) + i].offset)
+    udesc = "U{tsize(utype)}"
+    ustruct = gl_type(utype, vpos)
+    loop i in 0.. and f in ufields:
+        fo = int(fields[int(structs[usi].fields) + i].offset)
         udesc += ";{f.0},{uniform_kind(f.1, vpos)},{fo}"
     # vertex attributes
-    vfields := gl_struct_fields(vtype_)
-    vsi := int(types[prune(vtype_)].st)
+    vfields = gl_struct_fields(vtype_)
+    vsi = int(types[prune(vtype_)].st)
     layout(vtype_)
-    adesc := "A{tsize(vtype_)}"
-    vs := head
-    for i, f in vfields:
-        c := gl_attrib_comps(f.1, vpos)
-        ty := "float"
+    adesc = "A{tsize(vtype_)}"
+    vs = head
+    loop i in 0.. and f in vfields:
+        c = gl_attrib_comps(f.1, vpos)
+        ty = "float"
         if c > 1: ty = "vec{c}"
         vs += "layout(location={i}) in {ty} a_{f.0};\n"
         adesc += ";{f.0},{c},{int(fields[int(structs[vsi].fields) + i].offset)}"
-    idesc := ""
-    ifields: [(str, int)]
+    idesc = ""
+    ifields: (str, int)[]
     if itype != 0:
         ifields = gl_struct_fields(itype)
-        isi := int(types[prune(itype)].st)
+        isi = int(types[prune(itype)].st)
         layout(itype)
         idesc = "|I{tsize(itype)}"
-        loc := vfields.len()
-        for i, f in ifields:
-            off := int(fields[int(structs[isi].fields) + i].offset)
+        loc = vfields.len()
+        loop i in 0.. and f in ifields:
+            off = int(fields[int(structs[isi].fields) + i].offset)
             if prune(f.1) == T_MAT4:
                 vs += "layout(location={loc}) in mat4 i_{f.0};\n"
-                for col in 0..4: idesc += ";{f.0},4,{off + 16 * col}"
+                loop col in [0..4): idesc += ";{f.0},4,{off + 16 * col}"
                 loc += 4
             else:
-                c := gl_attrib_comps(f.1, vpos)
-                ty := "float"
+                c = gl_attrib_comps(f.1, vpos)
+                ty = "float"
                 if c > 1: ty = "vec{c}"
                 vs += "layout(location={loc}) in {ty} i_{f.0};\n"
                 idesc += ";{f.0},{c},{off}"
                 loc += 1
-    ofields := gl_struct_fields(otype)
+    ofields = gl_struct_fields(otype)
     if ofields.len() == 0 or prune(ofields[0].1) != T_VEC4: gl_err(vpos, "the vertex shader must return a struct whose first field is the clip position (vec4)")
     vs += "uniform {ustruct} u;\n"
-    for i, f in ofields:
+    loop i in 0.. and f in ofields:
         if i == 0: continue
-        q := ""
+        q = ""
         if types[prune(f.1)].kind == .int_ or (types[prune(f.1)].kind == .vec and types[prune(f.1)].sign): q = "flat "
         vs += "{q}out {gl_type(f.1, vpos)} v_{f.0};\n"
     vs += join(vdecls, "")
-    vin: [str]
-    for f in vfields: vin.push("a_{f.0}")
+    vin: str[]
+    loop f in vfields: vin.push("a_{f.0}")
     vs += "void main() \{\n    {gl_type(vtype_, vpos)} vin = {gl_type(vtype_, vpos)}({join(vin, ", ")});\n"
     if itype != 0:
-        iin: [str]
-        for f in ifields: iin.push("i_{f.0}")
+        iin: str[]
+        loop f in ifields: iin.push("i_{f.0}")
         vs += "    {gl_type(itype, vpos)} iin = {gl_type(itype, vpos)}({join(iin, ", ")});\n"
         vs += "    {gl_type(otype, vpos)} o = {gl_fn_name(vsf)}(vin, iin, u);\n    gl_Position = o.{ofields[0].0}_;\n"
     else:
         vs += "    {gl_type(otype, vpos)} o = {gl_fn_name(vsf)}(vin, u);\n    gl_Position = o.{ofields[0].0}_;\n"
-    for i, f in ofields:
+    loop i in 0.. and f in ofields:
         if i > 0: vs += "    v_{f.0} = o.{f.0}_;\n"
     vs += "}\n"
-    fs := head + "uniform {ustruct} u;\n"
-    for i, f in ofields:
+    fs = head + "uniform {ustruct} u;\n"
+    loop i in 0.. and f in ofields:
         if i == 0: continue
-        q := ""
+        q = ""
         if types[prune(f.1)].kind == .int_ or (types[prune(f.1)].kind == .vec and types[prune(f.1)].sign): q = "flat "
         fs += "{q}in {gl_type(f.1, vpos)} v_{f.0};\n"
     fs += "out vec4 frag_color;\n"
     fs += join(fdecls, "")
-    fin: [str] = ["gl_FragCoord"]
-    for i, f in ofields:
+    fin: str[] = ["gl_FragCoord"]
+    loop i in 0.. and f in ofields:
         if i > 0: fin.push("v_{f.0}")
     fs += "void main() \{\n    {gl_type(otype, vpos)} i = {gl_type(otype, vpos)}({join(fin, ", ")});\n    frag_color = {gl_fn_name(fsf)}(i, u);\n}\n"
     # the uniform struct definition must precede `uniform S u;` in both stages
@@ -418,23 +418,23 @@ fn glsl_build(vsf: int, fsf: int) -> (str, str, str):
     (vs, fs, "{adesc}|{udesc}{idesc}")
 
 # move every struct definition above the first `uniform` declaration
-fn __hoist_struct(src: str, ustruct: str) -> str:
-    parts := split(src, "\n")
-    structs_: [str]
-    rest: [str]
-    in_struct := false
-    for p in parts:
+__hoist_struct = (src: str, ustruct: str) -> str:
+    parts = split(src, "\n")
+    structs_: str[]
+    rest: str[]
+    in_struct = false
+    loop p in parts:
         if starts_with(p, "struct "): in_struct = true
         if in_struct: structs_.push(p)
         else: rest.push(p)
         if in_struct and p == "};": in_struct = false
-    out: [str]
-    placed := false
-    for p in rest:
+    out: str[]
+    placed = false
+    loop p in rest:
         if not placed and (starts_with(p, "uniform ") or starts_with(p, "layout(") or starts_with(p, "out ") or starts_with(p, "in ") or starts_with(p, "flat ")):
-            for s in structs_: out.push(s)
+            loop s in structs_: out.push(s)
             placed = true
         out.push(p)
     if not placed:
-        for s in structs_: out.push(s)
+        loop s in structs_: out.push(s)
     join(out, "\n")

@@ -1,49 +1,49 @@
 # closures and partial application
-fn add(a: int, b: int) -> int: a + b
-inc := add(1, _)
+add = (a: int, b: int) -> int: a + b
+inc = add(1, _)
 print(inc(41))
-double := fn(x: int): x * 2
+double = (x: int): x * 2
 print([1, 2, 3].map(double))
-base := 100
-offset := fn(x: int): x + base
+base = 100
+offset = (x: int): x + base
 print(offset(5))
-fn make_counter_text(prefix: str) -> fn(int) -> str:
-    fn(n: int): "{prefix}{n}"
-label := make_counter_text("item-")
+make_counter_text = (prefix: str) -> (int) -> str:
+    (n: int): "{prefix}{n}"
+label = make_counter_text("item-")
 print(label(3), label(4))
-fn twice(f, x): f(f(x))
+twice = (f, x): f(f(x))
 print(twice(inc, 5), twice(double, 5))
-fn apply_all(fs: [fn(int) -> int], x: int) -> [int]:
-    out: [int]
-    for f in fs: out.push(f(x))
+apply_all = (fs: ((int) -> int)[], x: int) -> int[]:
+    out: int[]
+    loop f in fs: out.push(f(x))
     out
 print(apply_all([inc, double, offset, add(10, _)], 1))
-scale := fn(k: float, x: float): k * x
-half := scale(0.5, _)
+scale = (k: f64, x: f64): k * x
+half = scale(0.5, _)
 print(half(9.0))
-words := ["pear", "fig", "banana"]
-words.sort_by(fn(w: str): len(w))
+words = ["pear", "fig", "banana"]
+words.sort_by((w: str): len(w))
 print(words)
-print(words.reduce(0, fn(acc: int, w: str): acc + len(w)))
-print(words.any(fn(w: str): w == "fig"), words.all(fn(w: str): len(w) > 3))
+print(words.reduce(0, (acc: int, w: str): acc + len(w)))
+print(words.any((w: str): w == "fig"), words.all((w: str): len(w) > 3))
 
 # generics
-fn first_or[T](xs: [T], d: T) -> T:
+first_or[T] = (xs: T[], d: T) -> T:
     if xs.len() == 0: return d
     xs[0]
-print(first_or([3, 4], 0), first_or(["a"], "z"), first_or([] as [int], 7))
+print(first_or([3, 4], 0), first_or(["a"], "z"), first_or([] as int[], 7))
 
 struct Stack[T]:
-    items: [T]
-fn push[T](s: mut Stack[T], x: T): s.items.push(x)
-fn pop[T](s: mut Stack[T]) -> T: s.items.pop()
-st := Stack[str]()
+    items: T[]
+push[T] = (s: mut Stack[T], x: T): s.items.push(x)
+pop[T] = (s: mut Stack[T]) -> T: s.items.pop()
+st = Stack[str]()
 st.push("a")
 st.push("b")
 print(st.pop(), st.items)
 
 # default and named arguments
-fn greet(name: str, greeting: str = "hello", punct: str = "!") -> str: "{greeting}, {name}{punct}"
+greet = (name: str, greeting: str = "hello", punct: str = "!") -> str: "{greeting}, {name}{punct}"
 print(greet("ann"), greet("bob", punct = "?"), greet(greeting = "hi", name = "cy"))
 
 # maps
@@ -53,42 +53,42 @@ m["two"] = 2
 m["three"] = 3
 print(m["two"], m.len(), "two" in m, "four" in m)
 m["two"] = 22
-for k, v in m: print(k, v)
+loop k, v in m: print(k, v)
 print(m.get("four") ?? -1)
 m.remove("one")
 print(m)
-ages := {"ann": 31, "bob": 25}
+ages = {"ann": 31, "bob": 25}
 print(ages)
 counts: {int: int} = {}
-for x in [1, 2, 2, 3, 3, 3]: counts[x] = counts.get(x, 0) + 1
+loop x in [1, 2, 2, 3, 3, 3]: counts[x] = counts.get(x, 0) + 1
 print(counts)
 
 # globals and recursion
-calls := 0
-fn track(n: int) -> int:
+calls = 0
+track = (n: int) -> int:
     calls += 1
     if n <= 1: return 1
     n * track(n - 1)
 print(track(10), calls)
 
 # defer and while-let
-fn work() -> int:
+work = () -> int:
     defer print("deferred")
     print("working")
     42
 print(work())
-queue := [1, 2, 3]
-fn next_item() -> int?:
+queue = [1, 2, 3]
+next_item = () -> int?:
     if queue.len() == 0: return none
     queue.pop()
-while v := next_item(): print("got", v)
+loop let v = next_item(): print("got", v)
 
 # for mut
-nums := [1, 2, 3]
-for mut n in nums: n *= 10
+nums = [1, 2, 3]
+loop mut n in nums: n *= 10
 print(nums)
 struct P:
     x: int
-ps := [P(1), P(2)]
-for mut p in ps: p.x += 100
+ps = [P(1), P(2)]
+loop mut p in ps: p.x += 100
 print(ps)

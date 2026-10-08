@@ -8,12 +8,12 @@ struct O:
     pos: vec4
     id: i32
     c: f32
-fn vs(v: V, u: U) -> O: O(u.mvp * vec4(v.pos, 1), i32(v.tag), v.pos.x * 0.5 + 0.5)
-fn fs(i: O, u: U) -> vec4:
+vs = (v: V, u: U) -> O: O(u.mvp * vec4(v.pos, 1), i32(v.tag), v.pos.x * 0.5 + 0.5)
+fs = (i: O, u: U) -> vec4:
     if i.id == 7: return vec4(i.c, 1, 0, 1)
     vec4(1, 0, 0, 1)
-sh := make_shader(shader(vs, fs))
-m := mesh([V(vec3(-1, -1, 0.5), 1), V(vec3(1, -1, 0.5), 2), V(vec3(-1, 1, 0.5), 7)])
-fn draw():
+sh = make_shader(shader(vs, fs))
+m = mesh([V(vec3(-1, -1, 0.5), 1), V(vec3(1, -1, 0.5), 2), V(vec3(-1, 1, 0.5), 7)])
+draw = ():
     clear()
     draw(sh, m, U(mat4()))

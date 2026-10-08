@@ -1,29 +1,29 @@
 # float vector arithmetic (packed SSE on x86): every operator, width and scalar position
 # requires: jot (vector types are not in the C bootstrap compiler)
-a2 := vec2(1.5, -2)
-b2 := vec2(4, 0.5)
-a3 := vec3(1, 2, 3)
-b3 := vec3(-4, 5, 0.25)
-a4 := vec4(1, 2, 3, 4)
-b4 := vec4(8, -6, 0.5, 2)
+a2 = vec2(1.5, -2)
+b2 = vec2(4, 0.5)
+a3 = vec3(1, 2, 3)
+b3 = vec3(-4, 5, 0.25)
+a4 = vec4(1, 2, 3, 4)
+b4 = vec4(8, -6, 0.5, 2)
 s: f32 = 2.5
 print(a2 + b2, a2 - b2, a2 * b2, a2 / b2)
 print(a3 + b3, a3 - b3, a3 * b3, a3 / b3)
 print(a4 + b4, a4 - b4, a4 * b4, a4 / b4)
 print(a2 * s, s * a2, a3 / s, s / a3, a4 - s, s - a4, a4 + 1.0, 2.0 * a3)
 # results written over an operand
-c := a4
+c = a4
 c = c * c + c
 print(c)
 # vec3 lanes stored in arrays: neighbours must stay untouched
-arr := [vec3(1, 1, 1), vec3(2, 2, 2), vec3(3, 3, 3)]
+arr = [vec3(1, 1, 1), vec3(2, 2, 2), vec3(3, 3, 3)]
 arr[1] = arr[1] * 10.0 + arr[0]
 print(arr)
-mats := [vec2(1, 2); 3]
-for i in 0..3: mats[i] = mats[i] * f32(i) - vec2(0.5, 0.5)
+mats = fill(vec2(1, 2), 3)
+loop i in [0..3): mats[i] = mats[i] * f32(i) - vec2(0.5, 0.5)
 print(mats)
 # compound assignment and chained expressions
-p := vec3(0, 0, 0)
-v := vec3(1, 2, 3)
-for i in 0..4: p += v * 0.5
+p = vec3(0, 0, 0)
+v = vec3(1, 2, 3)
+loop i in [0..4): p += v * 0.5
 print(p, length(p - v), dot(a3 * 2.0, b3), normalize(a3 + b3))

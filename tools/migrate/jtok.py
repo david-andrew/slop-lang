@@ -64,10 +64,8 @@ def tokenize(src):
             i = k
         elif c == "'":
             j = i + 1
-            if j < n and src[j] == "\\":
-                j += 2
-                while j < n and src[j] != "'": j += 1
-            else:
+            while j < n and src[j] != "'":
+                if src[j] == "\\": j += 1
                 j += 1
             toks.append(["char", src[i:j + 1]])
             i = j + 1

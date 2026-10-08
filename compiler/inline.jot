@@ -3,42 +3,42 @@
 # vregs and frame slots, and `ret` turned into a branch out of a wrapping block), and the
 # caller is optimized again.
 
-use ir
-use opt
+use 'ir.jot'
+use 'opt.jot'
 
 const INLINE_MAX = 24       # callee size limit, in IR instructions
 
-rel_fns: [IrFn]             # lowered functions, in lowering order
-rel_by_index: [int]         # lfunc index -> position in rel_fns (-1: not collected)
+rel_fns: IrFn[]             # lowered functions, in lowering order
+rel_by_index: int[]         # lfunc index -> position in rel_fns (-1: not collected)
 
-fn rel_collect():
-    while rel_by_index.len() <= ir.fn_index: rel_by_index.push(-1)
+rel_collect = ():
+    loop rel_by_index.len() <= ir.fn_index: rel_by_index.push(-1)
     rel_by_index[ir.fn_index] = rel_fns.len()
     rel_fns.push(ir)
 
-fn inlinable(f: IrFn) -> bool:
+inlinable = (f: IrFn) -> bool:
     if f.cabi or len(f.export_name) > 0 or f.code.len() > INLINE_MAX: return false
-    for ins in f.code:
+    loop ins in f.code:
         if ins.op == .call and ins.imm == f.fn_index: return false     # recursive
         if ins.op == .intr and ins.imm >= 2: return false             # setjmp-like intrinsics
     true
 
-fn defines_value(op: Op) -> bool:
+defines_value = (op: Op) -> bool:
     match op:
         nop, block, loop, end, else_, br, brif, brtable, if_, ret, trap, store, copy, zero, memcpy, memset, zeroslots, assume, vop: false
         _: true
 
 # copy an argument list (vregs renamed) into the caller's args; returns its start
-fn remap_args(callee: IrFn, start: int, n: int, vm: [int]) -> int:
-    s := ir.args.len()
-    for k in 0..n: ir.args.push(i32(vm[int(callee.args[start + k])]))
+remap_args = (callee: IrFn, start: int, n: int, vm: int[]) -> int:
+    s = ir.args.len()
+    loop k in [0..n): ir.args.push(i32(vm[int(callee.args[start + k])]))
     s
 
 # rename the vregs and slots used by a callee instruction
-fn remap(c0: Ins, callee: IrFn, vm: [int], sm: [int]) -> Ins:
-    c := c0
-    a := int(c.a)
-    bb := int(c.b)
+remap = (c0: Ins, callee: IrFn, vm: int[], sm: int[]) -> Ins:
+    c = c0
+    a = int(c.a)
+    bb = int(c.b)
     match c.op:
         nop, block, loop, end, else_, br, trap, iconst, fconst, gaddr, daddr, faddr: pass
         slot: c.a = i32(sm[a])
@@ -49,8 +49,8 @@ fn remap(c0: Ins, callee: IrFn, vm: [int], sm: [int]) -> Ins:
         if_, brif, zero, assume: c.a = i32(vm[a])
         brtable:
             c.a = i32(vm[a])
-            s := ir.args.len()
-            for k in 0..bb: ir.args.push(callee.args[int(c.c) + k])
+            s = ir.args.len()
+            loop k in [0..bb): ir.args.push(callee.args[int(c.c) + k])
             c.c = i32(s)
         ret:
             if a >= 0: c.a = i32(vm[a])
@@ -63,9 +63,9 @@ fn remap(c0: Ins, callee: IrFn, vm: [int], sm: [int]) -> Ins:
             c.b = i32(vm[bb])
             c.c = i32(vm[int(c.c)])
         zeroslots:
-            s := ir.args.len()
-            for k in 0..bb:
-                item := int(callee.args[a + k])
+            s = ir.args.len()
+            loop k in [0..bb):
+                item = int(callee.args[a + k])
                 if item & 1 == 1: ir.args.push(i32((vm[item >> 1] << 1) | 1))
                 else: ir.args.push(i32(sm[item >> 1] << 1))
             c.a = i32(s)
@@ -81,21 +81,21 @@ fn remap(c0: Ins, callee: IrFn, vm: [int], sm: [int]) -> Ins:
     c
 
 # splice callee's body in place of `call` (appending to out)
-fn inline_call(call: Ins, callee: IrFn, out: mut [Ins]):
-    vm := [0; callee.vtypes.len()]
-    for v in 0..callee.vtypes.len():
+inline_call = (call: Ins, callee: IrFn, out: mut Ins[]):
+    vm = fill(0, callee.vtypes.len())
+    loop v in [0..callee.vtypes.len()):
         if int(callee.vtypes[v]) == VK: vm[v] = k_vreg(callee.kval[v])
         else: vm[v] = vreg(int(callee.vtypes[v]))
-    sm := [0; callee.slot_size.len()]
-    for s in 0..callee.slot_size.len(): sm[s] = new_slot(int(callee.slot_size[s]), int(callee.slot_align[s]))
-    for k in 0..int(call.b):
-        p := vm[k]
+    sm = fill(0, callee.slot_size.len())
+    loop s in [0..callee.slot_size.len()): sm[s] = new_slot(int(callee.slot_size[s]), int(callee.slot_align[s]))
+    loop k in [0..int(call.b)):
+        p = vm[k]
         out.push(Ins(.mov, i32(vtype(p)), i32(p), ir.args[int(call.a) + k], 0, 0, 0))
     if callee.raw_mem: ir.raw_mem = true
     out.push(Ins(.block, 0, 0, 0, 0, 0, 0))
-    depth := 0
-    for ci in callee.code:
-        op := ci.op
+    depth = 0
+    loop ci in callee.code:
+        op = ci.op
         if op == .ret:
             if ci.a >= 0 and call.dst >= 0:
                 out.push(Ins(.mov, i32(vtype(int(call.dst))), call.dst, i32(vm[int(ci.a)]), 0, 0, 0))
@@ -107,21 +107,21 @@ fn inline_call(call: Ins, callee: IrFn, out: mut [Ins]):
     out.push(Ins(.end, 0, 0, 0, 0, 0, 0))
 
 # inline small callees into the current function (ir); returns true if anything changed
-fn inline_into(self_pos: int, snap: [IrFn], can: [bool]) -> bool:
-    any := false
-    for ins in ir.code:
+inline_into = (self_pos: int, snap: IrFn[], can: bool[]) -> bool:
+    any = false
+    loop ins in ir.code:
         if ins.op == .call and ins.c != 1 and ins.imm < rel_by_index.len():
-            j := rel_by_index[int(ins.imm)]
+            j = rel_by_index[int(ins.imm)]
             if j >= 0 and j != self_pos and can[j] and int(ins.b) == snap[j].nparams:
                 any = true
                 break
     if not any: return false
-    out: [Ins]
+    out: Ins[]
     out.reserve(ir.code.len() * 2)
-    old := ir.code
-    for ins in old:
+    old = ir.code
+    loop ins in old:
         if ins.op == .call and ins.c != 1 and ins.imm < rel_by_index.len():
-            j := rel_by_index[int(ins.imm)]
+            j = rel_by_index[int(ins.imm)]
             if j >= 0 and j != self_pos and can[j] and int(ins.b) == snap[j].nparams:
                 inline_call(ins, snap[j], out)
                 continue

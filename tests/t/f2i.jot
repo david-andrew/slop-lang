@@ -1,9 +1,9 @@
 # float to int conversion saturates (NaN -> 0) identically on every target
 # requires: jot (the C bootstrap compiler does not saturate)
-fn conv(x: float) -> int: int(x)
-fn conv32(x: f32) -> int: int(x)
-fn main():
-    inf := 1.0 / 0.0
-    nan := 0.0 / 0.0
-    for x in [0.0, -0.5, 2.9, -2.9, 1e18, 9.3e18, -9.3e18, inf, -inf, nan, -9223372036854775808.0]: print(x, conv(x))
+conv = (x: f64) -> int: int(x)
+conv32 = (x: f32) -> int: int(x)
+main = ():
+    inf = 1.0 / 0.0
+    nan = 0.0 / 0.0
+    loop x in [0.0, -0.5, 2.9, -2.9, 1e18, 9.3e18, -9.3e18, inf, -inf, nan, -9223372036854775808.0]: print(x, conv(x))
     print(conv32(f32(1e30)), conv32(f32(-1e30)), conv32(f32(nan)), conv32(f32(123.75)))

@@ -1,24 +1,24 @@
 # a temporary made for one branch of `and`/`or` must not clear the variable it came from
-fn show(n: int, ok: [int], seen: mut [bool]) -> bool:
+show = (n: int, ok: int[], seen: mut bool[]) -> bool:
     print("show {n} ok {ok}")
     false
-fn walk(n: int, ok: [int], seen: mut [bool]) -> bool:
+walk = (n: int, ok: int[], seen: mut bool[]) -> bool:
     print("visit {n} ok {ok}")
     if n == 5:
-        inner := ok
+        inner = ok
         inner.push(99)
         return walk(8, ok, seen) or walk(2, inner, seen)
     false
-s := [false; 10]
+s = fill(false, 10)
 print(walk(5, [7], s))
-fn u1(seen: mut [bool]) -> bool:
-    inner := [5, 6]
-    r := show(8, [1], seen) or show(2, inner, seen)
+u1 = (seen: mut bool[]) -> bool:
+    inner = [5, 6]
+    r = show(8, [1], seen) or show(2, inner, seen)
     print(inner)
     r
 print(u1(s))
-fn u2(seen: mut [bool]) -> bool:
-    inner := "text"
-    words: [str] = [inner]
+u2 = (seen: mut bool[]) -> bool:
+    inner = "text"
+    words: str[] = [inner]
     return false or show(len(words[0]), [len(inner)], seen)
 print(u2(s))

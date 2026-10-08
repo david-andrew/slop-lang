@@ -1,11 +1,11 @@
 # Semantic analysis: modules, scopes, declarations, function instances, statements.
 
-use util
-use lex
-use ast
-use parse
-use types
-use expr
+use 'util.jot'
+use 'lex.jot'
+use 'ast.jot'
+use 'parse.jot'
+use 'types.jot'
+use 'expr.jot'
 
 enum SK: none_, local, global, fns, struct_, enum_, const_, module, type_, builtin
 
@@ -21,11 +21,11 @@ struct Module:
     file: i32
     dir: str
     names: {int: int}
-    uses: [int]
-    decls: [int]
+    uses: int[]
+    decls: int[]
     is_prelude: bool
     is_main: bool
-    inits: [int]
+    inits: int[]
     init_fn: i32
 
 const LF_PARAM = 1
@@ -72,20 +72,20 @@ const FK_INIT = 4
 struct FnInst:
     decl: i32
     body: i32
-    targs: [int]
-    ptypes: [int]
-    params: [int]
+    targs: int[]
+    ptypes: int[]
+    params: int[]
     ret: i32
     sym: str
     state: i32
     kind: i32
     has_env: bool
-    caps: [Capture]
+    caps: Capture[]
     env_size: i32
     mod: i32
     partial: i32
     target: i32
-    locals: [int]
+    locals: int[]
     fntype: i32
     cabi: bool
     export_name: str
@@ -96,14 +96,14 @@ struct FnInst:
 struct FnSig:
     ntp: i32
     nexplicit: i32
-    params: [int]
+    params: int[]
     ret: i32
     mutmask: i32
     generic: bool
     done: bool
 
 struct DeclInfo:
-    insts: [int]
+    insts: int[]
     sig: FnSig
 
 struct FnCtx:
@@ -115,112 +115,112 @@ struct FnCtx:
     mod: i32
     floor: i32
 
-syms: [Sym] = [Sym()]
-modules: [Module]
+syms: Sym[] = [Sym()]
+modules: Module[]
 universe: {int: int} = {}
 prelude: {int: int} = {}
-locals: [Local] = [Local()]
-globals: [Global] = [Global()]
-fns: [FnInst] = [FnInst()]
-decl_infos: [DeclInfo] = [DeclInfo()]
-ctxs: [FnCtx]
-cx := -1
-sc_names: [int]
-sc_syms: [int]
-inst_counter := 0
-lib_dir := ""
-target_wasm := false
-main_fn := 0
-test_mode := false        # `jot test`: run the main file's test blocks instead of main()
-test_decls: [int]
-update_fn := 0
-draw_fn := 0
-init_fns: [int]
-build_node := 0
-global_ids: [int]
+locals: Local[] = [Local()]
+globals: Global[] = [Global()]
+fns: FnInst[] = [FnInst()]
+decl_infos: DeclInfo[] = [DeclInfo()]
+ctxs: FnCtx[]
+cx = -1
+sc_names: int[]
+sc_syms: int[]
+inst_counter = 0
+lib_dir = ""
+target_wasm = false
+main_fn = 0
+test_mode = false        # `jot test`: run the main file's test blocks instead of main()
+test_decls: int[]
+update_fn = 0
+draw_fn = 0
+init_fns: int[]
+build_node = 0
+global_ids: int[]
 
-fn new_sym(name: int, kind: SK, r: int, decl: int) -> int:
+new_sym = (name: int, kind: SK, r: int, decl: int) -> int:
     syms.push(Sym(i32(name), kind, i32(r), i32(decl), 0))
     syms.len() - 1
 
-fn scope_add_module(m: int, name: int, kind: SK, r: int, decl: int) -> int:
+scope_add_module = (m: int, name: int, kind: SK, r: int, decl: int) -> int:
     # (look the name up in place: holding a copy of the table would make the insert below copy it)
     found: int? = none
     if modules[m].is_prelude: found = prelude.get(name)
     else: found = modules[m].names.get(name)
-    if ex := found:
+    if let ex = found:
         if syms[ex].kind == .fns and kind == .fns:
-            s := new_sym(name, kind, r, decl)
-            e := ex
-            while syms[e].next != 0: e = int(syms[e].next)
+            s = new_sym(name, kind, r, decl)
+            e = ex
+            loop syms[e].next != 0: e = int(syms[e].next)
             syms[e].next = i32(s)
             return ex
         if decl != 0 and syms[ex].decl != 0:
             fatal(nodes[decl].pos, "'{name_of(name)}' is already defined at {pos_str(nodes[int(syms[ex].decl)].pos)}")
-    s := new_sym(name, kind, r, decl)
+    s = new_sym(name, kind, r, decl)
     if modules[m].is_prelude: prelude[name] = s
     else: modules[m].names[name] = s
     s
 
-fn push_scope_sym(name: int, sym: int):
+push_scope_sym = (name: int, sym: int):
     sc_names.push(name)
     sc_syms.push(sym)
 
-fn scope_mark() -> int: sc_names.len()
-fn scope_reset(mark: int):
+scope_mark = () -> int: sc_names.len()
+scope_reset = (mark: int):
     sc_names.truncate(mark)
     sc_syms.truncate(mark)
 
-fn module_lookup(m: int, name: int) -> int:
+module_lookup = (m: int, name: int) -> int:
     if m >= 0:
         if modules[m].is_prelude:
-            if s := prelude.get(name): return s
+            if let s = prelude.get(name): return s
         else:
-            if s := modules[m].names.get(name): return s
-            for u in modules[m].uses:
+            if let s = modules[m].names.get(name): return s
+            loop u in modules[m].uses:
                 if modules[u].is_prelude:
-                    if s := prelude.get(name): return s
+                    if let s = prelude.get(name): return s
                 else:
-                    if s := modules[u].names.get(name): return s
-    if s := prelude.get(name): return s
-    if s := universe.get(name): return s
+                    if let s = modules[u].names.get(name): return s
+    if let s = prelude.get(name): return s
+    if let s = universe.get(name): return s
     0
 
 # look up a name from the current context
-fn lookup(name: int) -> int:
-    floor := 0
-    m := -1
+lookup = (name: int) -> int:
+    floor = 0
+    m = -1
     if cx >= 0:
         floor = int(ctxs[cx].floor)
         m = int(ctxs[cx].mod)
-    i := sc_names.len() - 1
-    while i >= floor:
+    i = sc_names.len() - 1
+    loop i >= floor:
         if sc_names[i] == name: return sc_syms[i]
         i -= 1
     module_lookup(m, name)
 
 # ---------------- "did you mean" ----------------
 # edit distance where swapping two neighbors counts once (optimal string alignment)
-fn edit_distance(a: str, b: str, limit: int) -> int:
-    n := len(a)
-    m := len(b)
+edit_distance = (a: str, b: str, limit: int) -> int:
+    n = len(a)
+    m = len(b)
     if abs(n - m) > limit: return limit + 1
-    pp := [0; m + 1]
-    prev := [0; m + 1]
-    cur := [0; m + 1]
-    for j in 0..m + 1: prev[j] = j
-    for i in 1..n + 1:
+    pp = fill(0, m + 1)
+    prev = fill(0, m + 1)
+    cur = fill(0, m + 1)
+    loop j in [0..m + 1): prev[j] = j
+    loop i in [1..n + 1):
         cur[0] = i
-        best := i
-        for j in 1..m + 1:
-            c := 1
+        best = i
+        loop j in [1..m + 1):
+            c = 1
             if fold_case(a[i - 1]) == fold_case(b[j - 1]): c = 0
-            v := min(min(prev[j] + 1, cur[j - 1] + 1), prev[j - 1] + c)
+            v = min(min(prev[j] + 1, cur[j - 1] + 1), prev[j - 1] + c)
             if i > 1 and j > 1 and fold_case(a[i - 1]) == fold_case(b[j - 2]) and fold_case(a[i - 2]) == fold_case(b[j - 1]): v = min(v, pp[j - 2] + 1)
             cur[j] = v
             if v < best: best = v
         if best > limit: return limit + 1
-        tmp := pp
+        tmp = pp
         pp = prev
         prev = cur
         cur = tmp
@@ -228,115 +228,146 @@ fn edit_distance(a: str, b: str, limit: int) -> int:
 
 # the closest of the candidate names (" (did you mean 'x'?)"), or ""; ties go to the longest
 # common prefix, and a short name that starts the misspelling (len / lenght) counts as close
-fn suggestion(name: str, candidates: [int]) -> str:
-    limit := 1
+suggestion = (name: str, candidates: int[]) -> str:
+    limit = 1
     if len(name) > 4: limit = 2
-    best := ""
-    bs := 1000000
-    for c in candidates:
-        cn := name_of(c)
+    best = ""
+    bs = 1000000
+    loop c in candidates:
+        cn = name_of(c)
         if cn == name or len(cn) == 0 or cn[0] == '_': continue
-        d := edit_distance(name, cn, limit)
-        pre := 0
-        while pre < len(cn) and pre < len(name) and fold_case(cn[pre]) == fold_case(name[pre]): pre += 1
+        d = edit_distance(name, cn, limit)
+        pre = 0
+        loop pre < len(cn) and pre < len(name) and fold_case(cn[pre]) == fold_case(name[pre]): pre += 1
         if d > limit and pre == len(cn) and pre >= 3: d = limit
         if d > limit: continue
-        score := d * 100 - pre
+        score = d * 100 - pre
         if score < bs:
             bs = score
             best = cn
     if len(best) > 0: return " (did you mean '{best}'?)"
     ""
 
-fn fold_case(c: u8) -> u8:
+fold_case = (c: u8) -> u8:
     if c >= 'A' and c <= 'Z': return c + 32
     c
 
 # names visible from the current scope: locals, the module, the standard library, built-ins
-fn visible_names() -> [int]:
-    out := sc_names
-    for k, v in modules[cur_mod()].names: out.push(k)
-    for k, v in prelude: out.push(k)
-    for k, v in universe: out.push(k)
+visible_names = () -> int[]:
+    out = sc_names
+    loop k, v in modules[cur_mod()].names: out.push(k)
+    loop k, v in prelude: out.push(k)
+    loop k, v in universe: out.push(k)
     out
 
-fn type_names() -> [int]:
-    out: [int]
-    for tbl in [modules[cur_mod()].names, prelude, universe]:
-        for k, s in tbl:
-            sk := syms[s].kind
+type_names = () -> int[]:
+    out: int[]
+    loop tbl in [modules[cur_mod()].names, prelude, universe]:
+        loop k, s in tbl:
+            sk = syms[s].kind
             if sk == .type_ or sk == .struct_ or sk == .enum_: out.push(k)
     out
 
 # functions that could be called as recv.f(...): their first parameter has the receiver's kind
-fn method_names(recv: int) -> [int]:
-    out: [int]
-    rt := prune(recv)
-    for tbl in [modules[cur_mod()].names, prelude]:
-        for k, s0 in tbl:
-            s := s0
-            while s != 0:
+method_names = (recv: int) -> int[]:
+    out: int[]
+    rt = prune(recv)
+    loop tbl in [modules[cur_mod()].names, prelude]:
+        loop k, s0 in tbl:
+            s = s0
+            loop s != 0:
                 if syms[s].kind == .fns and syms[s].decl != 0 and nkids(int(syms[s].decl)) > 0:
-                    sig := fn_sig(int(syms[s].decl))
+                    sig = fn_sig(int(syms[s].decl))
                     if sig.params.len() > 0:
-                        p0 := prune(sig.params[0])
+                        p0 = prune(sig.params[0])
                         if types[p0].kind != .var and (types[p0].kind == types[rt].kind or type_eq(p0, rt)):
                             out.push(k)
                             break
                 s = int(syms[s].next)
     out
 
-fn cur_mod() -> int:
+cur_mod = () -> int:
     if cx >= 0: return int(ctxs[cx].mod)
     0
 
 # ---------------- modules ----------------
-fn find_module(path: str) -> int:
-    for i, m in modules:
+find_module = (path: str) -> int:
+    loop i in 0.. and m in modules:
         if files[int(m.file)].path == path: return i
     -1
 
-fn load_module(path: str, is_prelude: bool, from: int) -> int:
-    ex := find_module(path)
+load_module = (path: str, is_prelude: bool, from: int) -> int:
+    ex = find_module(path)
     if ex >= 0: return ex
-    src := read_file(path)
+    src = read_file(path)
     if src == none: fatal(from, "cannot read '{path}'")
-    d := path
-    slash := rfind(path, "/")
-    if slash >= 0: d = path[..slash]
+    d = path
+    slash = rfind(path, "/")
+    if slash >= 0: d = path[..slash)
     files.push(SrcFile(path, d, src!))
-    fi := files.len() - 1
-    base := path
+    fi = files.len() - 1
+    base = path
     if slash >= 0: base = path[slash + 1..]
-    if ends_with(base, ".jot"): base = base[..len(base) - 4]
-    m := Module(name = i32(intern(base)), file = i32(fi), dir = d, is_prelude = is_prelude)
+    if ends_with(base, ".jot"): base = base[..len(base) - 4)
+    m = Module(name = i32(intern(base)), file = i32(fi), dir = d, is_prelude = is_prelude)
     modules.push(m)
-    mi := modules.len() - 1
-    decls := parse_file(fi)
+    mi = modules.len() - 1
+    decls = parse_file(fi)
     modules[mi].decls = decls
     mi
 
-fn eval_when_toplevel(m: int, w: int):
-    saved := cx
+eval_when_toplevel = (m: int, w: int):
+    saved = cx
     ctxs.push(FnCtx(0, -1, i32(T_VOID), false, 0, i32(m), i32(sc_names.len())))
     cx = ctxs.len() - 1
-    cond := const_eval_bool(int(nodes[w].a))
+    cond = const_eval_bool(int(nodes[w].a))
     ctxs.pop()
     cx = saved
-    blk := int(nodes[w].c)
+    blk = int(nodes[w].c)
     if cond: blk = int(nodes[w].b)
     if blk == 0: return
     register_decls(m, kids(blk))
 
-fn register_decls(m: int, decls: [int]):
-    for d in decls:
+# `x = value` where no variable x exists yet is a declaration
+assign_declares = (s: int, visible: (int) -> bool) -> bool:
+    if nodes[s].kind != .assign or nodes[s].op != i32(int(Tok.assign)): return false
+    lhs = int(nodes[s].a)
+    lk = nodes[lhs].kind
+    if lk == .ident: return not visible(int(nodes[lhs].name))
+    if lk != .tuple: return false
+    any = false
+    loop i in [0..nkids(lhs)):
+        c = kid(lhs, i)
+        ck = nodes[c].kind
+        if ck == .hole: continue
+        if ck != .ident: return false
+        if visible(int(nodes[c].name)): return false
+        any = true
+    any
+
+assign_to_decl = (s: int):
+    lhs = int(nodes[s].a)
+    nodes[s].kind = .vardecl
+    nodes[s].a = 0
+    if nodes[lhs].kind == .ident:
+        nodes[s].name = nodes[lhs].name
+    else:
+        nodes[s].list = nodes[lhs].list
+        nodes[s].nlist = nodes[lhs].nlist
+
+register_decls = (m: int, decls: int[]):
+    loop d in decls:
         nodes[d].mod = i32(m)
-        k := nodes[d].kind
-        nm := int(nodes[d].name)
+        if assign_declares(d, (nm: int) -> bool:
+            if let s = modules[m].names.get(nm): return syms[s].kind == .global
+            false
+        ): assign_to_decl(d)
+        k = nodes[d].kind
+        nm = int(nodes[d].name)
         if k == .fn_:
             scope_add_module(m, nm, .fns, 0, d)
             if nodes[d].c != 0:
-                for ai in 0..nkids(int(nodes[d].c)):
+                loop ai in [0..nkids(int(nodes[d].c))):
                     if name_of(int(nodes[kid(int(nodes[d].c), ai)].name)) == "export": export_decls.push(d)
         else if k == .struct_: scope_add_module(m, nm, .struct_, d, d)
         else if k == .enum_: scope_add_module(m, nm, .enum_, d, d)
@@ -344,11 +375,18 @@ fn register_decls(m: int, decls: [int]):
             globals.push(Global(name = i32(nm), decl = i32(d), mod = i32(m), is_const = true))
             scope_add_module(m, nm, .const_, globals.len() - 1, d)
         else if k == .import_:
-            rel := name_of(int(nodes[d].sval))
-            path := "{modules[m].dir}/{rel}.jot"
-            if not file_exists(path): path = "{lib_dir}/{rel}.jot"
-            if not file_exists(path): fatal(nodes[d].pos, "cannot find module '{rel}'")
-            im := load_module(path, false, nodes[d].pos)
+            rel = name_of(int(nodes[d].sval))
+            path = "{modules[m].dir}/{rel}.jot"
+            if nodes[d].aux2 == 1:
+                # use 'file.jot': relative to the importing file
+                path = rel
+                if not starts_with(rel, "/"): path = "{modules[m].dir}/{rel}"
+                if len(modules[m].dir) == 0: path = rel
+                if not file_exists(path): fatal(nodes[d].pos, "cannot find '{rel}' (looked for {path})")
+            else:
+                if not file_exists(path): path = "{lib_dir}/{rel}.jot"
+                if not file_exists(path): fatal(nodes[d].pos, "cannot find module '{rel}'")
+            im = load_module(path, false, nodes[d].pos)
             if nodes[d].aux == 1: modules[m].uses.push(im)
             else: scope_add_module(m, nm, .module, im, d)
         else if k == .when_: eval_when_toplevel(m, d)
@@ -358,15 +396,15 @@ fn register_decls(m: int, decls: [int]):
             if test_mode and modules[m].is_main: test_decls.push(d)
         else if k == .vardecl:
             if nodes[d].nlist > 0:
-                for i in 0..nkids(d):
-                    id := kid(d, i)
+                loop i in [0..nkids(d)):
+                    id = kid(d, i)
                     if nodes[id].kind == .hole: continue
-                    g := new_global(int(nodes[id].name), d, m)
+                    g = new_global(int(nodes[id].name), d, m)
                     nodes[id].sym = i32(g)
                     add_flag(id, NF_GLOBAL)
                     scope_add_module(m, int(nodes[id].name), .global, g, id)
             else:
-                g := new_global(nm, d, m)
+                g = new_global(nm, d, m)
                 nodes[d].sym = i32(g)
                 scope_add_module(m, nm, .global, g, d)
             add_flag(d, NF_GLOBAL)
@@ -375,70 +413,80 @@ fn register_decls(m: int, decls: [int]):
             if modules[m].is_prelude: fatal(nodes[d].pos, "statements are not allowed at the top level of library modules")
             modules[m].inits.push(d)
 
-fn new_global(name: int, decl: int, m: int) -> int:
+migrate_info = false          # JOT_MIGRATE=1: report facts the syntax converter needs
+
+# is there a variable of this name in scope (assigning to it changes it)?
+var_visible = (nm: int) -> bool:
+    s = lookup(nm)
+    if s == 0: return false
+    k = syms[s].kind
+    k == .local or k == .global
+
+new_global = (name: int, decl: int, m: int) -> int:
     inst_counter += 1
     globals.push(Global(name = i32(name), decl = i32(decl), mod = i32(m), sym = "g_{name_of(name)}_{inst_counter}"))
-    g := globals.len() - 1
+    g = globals.len() - 1
     global_ids.push(g)
     g
 
 # ---------------- type resolution ----------------
-fn resolve_type(tn: int) -> int:
-    k := nodes[tn].kind
+resolve_type = (tn: int) -> int:
+    if nodes[tn].kind == .tname and nodes[tn].aux == -7: return int(nodes[tn].ival)
+    k = nodes[tn].kind
     if k == .tname:
-        nm := int(nodes[tn].name)
-        s := 0
+        nm = int(nodes[tn].name)
+        s = 0
         if nodes[tn].sval != 0:
-            ms := lookup(int(nodes[tn].sval))
+            ms = lookup(int(nodes[tn].sval))
             if ms == 0 or syms[ms].kind != .module: fatal(nodes[tn].pos, "unknown module '{name_of(int(nodes[tn].sval))}'")
             s = module_lookup(int(syms[ms].ref), nm)
         else: s = lookup(nm)
         if s == 0: fatal(nodes[tn].pos, "unknown type '{name_of(nm)}'{suggestion(name_of(nm), type_names())}")
-        sk := syms[s].kind
+        sk = syms[s].kind
         if sk == .type_:
             if nodes[tn].nlist > 0: fatal(nodes[tn].pos, "type '{name_of(nm)}' takes no type arguments")
             return int(syms[s].ref)
         if sk == .struct_ or sk == .enum_:
-            d := int(syms[s].ref)
-            ntp := nkids2(d)
+            d = int(syms[s].ref)
+            ntp = nkids2(d)
             if nkids(tn) != ntp: fatal(nodes[tn].pos, "type '{name_of(nm)}' expects {ntp} type argument(s), got {nkids(tn)}")
-            targs: [int]
-            for i in 0..ntp: targs.push(resolve_type(kid(tn, i)))
+            targs: int[]
+            loop i in [0..ntp): targs.push(resolve_type(kid(tn, i)))
             return get_struct_inst(d, targs)
         fatal(nodes[tn].pos, "'{name_of(nm)}' is not a type")
     if k == .tarray:
         if nodes[tn].b != 0: fatal(nodes[tn].pos, "fixed-size arrays are not supported yet")
         return mk_array(resolve_type(int(nodes[tn].a)))
     if k == .tmap:
-        s := prelude.get(intern("Map")) ?? 0
+        s = prelude.get(intern("Map")) ?? 0
         if s == 0: fatal(nodes[tn].pos, "Map type is not available")
         return get_struct_inst(int(syms[s].ref), [resolve_type(int(nodes[tn].a)), resolve_type(int(nodes[tn].b))])
     if k == .ttuple:
-        el: [int]
-        for i in 0..nkids(tn): el.push(resolve_type(kid(tn, i)))
+        el: int[]
+        loop i in [0..nkids(tn)): el.push(resolve_type(kid(tn, i)))
         if el.len() == 0: return T_VOID
         return mk_tuple(el)
     if k == .topt: return mk_opt(resolve_type(int(nodes[tn].a)))
     if k == .tptr: return mk_ptr(resolve_type(int(nodes[tn].a)))
     if k == .tfn:
-        ps: [int]
-        mm := 0
-        for i in 0..nkids(tn):
+        ps: int[]
+        mm = 0
+        loop i in [0..nkids(tn)):
             ps.push(resolve_type(kid(tn, i)))
             if has_flag(kid(tn, i), NF_MUT): mm |= 1 << i
-        ret := T_VOID
+        ret = T_VOID
         if nodes[tn].a != 0: ret = resolve_type(int(nodes[tn].a))
         if has_flag(tn, NF_CABI): return mk_cfn(ps, ret)
         return mk_fn(ps, ret, mm)
     fatal(nodes[tn].pos, "invalid type")
     0
 
-fn subst(t0: int, targs: [int]) -> int:
-    t := prune(t0)
+subst = (t0: int, targs: int[]) -> int:
+    t = prune(t0)
     if t == 0 or not has_var(t): return t
-    k := types[t].kind
+    k = types[t].kind
     if k == .param:
-        id := int(types[t].id)
+        id = int(types[t].id)
         if id < targs.len() and targs[id] != 0: return targs[id]
         return t
     if k == .var: return t
@@ -446,63 +494,63 @@ fn subst(t0: int, targs: [int]) -> int:
     if k == .ptr: return mk_ptr(subst(int(types[t].elem), targs))
     if k == .opt: return mk_opt(subst(int(types[t].elem), targs))
     if k == .fn_ or k == .tuple or k == .cfn:
-        a: [int]
-        for i in 0..int(types[t].nargs): a.push(subst(targ(t, i), targs))
+        a: int[]
+        loop i in [0..int(types[t].nargs)): a.push(subst(targ(t, i), targs))
         if k == .tuple: return mk_tuple(a)
         if k == .cfn: return mk_cfn(a, subst(int(types[t].elem), targs))
         return mk_fn(a, subst(int(types[t].elem), targs), int(types[t].mutmask))
     if k == .struct_ or k == .enum_:
-        si := int(types[t].st)
-        a: [int]
-        for i in 0..int(structs[si].ntargs): a.push(subst(struct_targ(si, i), targs))
+        si = int(types[t].st)
+        a: int[]
+        loop i in [0..int(structs[si].ntargs)): a.push(subst(struct_targ(si, i), targs))
         return get_struct_inst(int(structs[si].decl), a)
     t
 
-fn push_type_params(decl: int, targs: [int]):
-    for i in 0..nkids2(decl):
+push_type_params = (decl: int, targs: int[]):
+    loop i in [0..nkids2(decl)):
         if i < targs.len(): push_scope_sym(int(nodes[kid2(decl, i)].name), new_sym(int(nodes[kid2(decl, i)].name), .type_, targs[i], 0))
 
-fn check_struct_fields(si: int):
+check_struct_fields = (si: int):
     if structs[si].resolved: return
     structs[si].resolved = true
-    d := int(structs[si].decl)
-    targs: [int]
-    for i in 0..int(structs[si].ntargs): targs.push(struct_targ(si, i))
-    saved := cx
+    d = int(structs[si].decl)
+    targs: int[]
+    loop i in [0..int(structs[si].ntargs)): targs.push(struct_targ(si, i))
+    saved = cx
     ctxs.push(FnCtx(i32(new_inst(FK_INIT, int(nodes[d].mod), "fielddef")), -1, i32(T_VOID), false, 0, nodes[d].mod, i32(sc_names.len())))
     cx = ctxs.len() - 1
-    mark := scope_mark()
+    mark = scope_mark()
     push_type_params(d, targs)
     if nodes[d].kind == .struct_:
-        n := nkids(d)
+        n = nkids(d)
         structs[si].fields = i32(fields.len())
         structs[si].nfields = i32(n)
-        for i in 0..n: fields.push(Field())
-        for i in 0..n:
-            f := kid(d, i)
-            fi := int(structs[si].fields) + i
+        loop i in [0..n): fields.push(Field())
+        loop i in [0..n):
+            f = kid(d, i)
+            fi = int(structs[si].fields) + i
             fields[fi].name = nodes[f].name
             fields[fi].defval = nodes[f].b
             if nodes[f].a != 0: fields[fi].type = i32(resolve_type(int(nodes[f].a)))
             else if nodes[f].b != 0:
-                cl := clone(int(nodes[f].b))
-                t := check_expr(cl, 0)
+                cl = clone(int(nodes[f].b))
+                t = check_expr(cl, 0)
                 if has_flag(cl, NF_LITERAL):
                     if nodes[cl].kind == .float_lit: t = T_FLOAT
                     else: t = T_INT
                 fields[fi].type = i32(zonk(t))
             else: fatal(nodes[f].pos, "field needs a type")
-            for k in 0..i:
+            loop k in [0..i):
                 if fields[int(structs[si].fields) + k].name == nodes[f].name: fatal(nodes[f].pos, "duplicate field '{name_of(int(nodes[f].name))}'")
     else:
-        nv := nkids(d)
+        nv = nkids(d)
         structs[si].variants = i32(variants.len())
         structs[si].nvariants = i32(nv)
-        for v in 0..nv: variants.push(Variant())
-        next_val := 0
-        for v in 0..nv:
-            vn := kid(d, v)
-            vi := int(structs[si].variants) + v
+        loop v in [0..nv): variants.push(Variant())
+        next_val = 0
+        loop v in [0..nv):
+            vn = kid(d, v)
+            vi = int(structs[si].variants) + v
             variants[vi].name = nodes[vn].name
             variants[vi].tag = i32(v)
             if nodes[vn].a != 0:
@@ -510,50 +558,50 @@ fn check_struct_fields(si: int):
                 next_val = nodes[int(nodes[vn].a)].ival
             variants[vi].value = next_val
             next_val += 1
-            nf := nkids(vn)
+            nf = nkids(vn)
             variants[vi].fields = i32(fields.len())
             variants[vi].nfields = i32(nf)
-            for i in 0..nf: fields.push(Field())
-            for i in 0..nf:
-                fn_ := kid(vn, i)
-                fi := int(variants[vi].fields) + i
+            loop i in [0..nf): fields.push(Field())
+            loop i in [0..nf):
+                fn_ = kid(vn, i)
+                fi = int(variants[vi].fields) + i
                 fields[fi].name = nodes[fn_].name
                 fields[fi].type = i32(resolve_type(int(nodes[fn_].a)))
-            for k in 0..v:
+            loop k in [0..v):
                 if variants[int(structs[si].variants) + k].name == nodes[vn].name: fatal(nodes[vn].pos, "duplicate variant '{name_of(int(nodes[vn].name))}'")
     scope_reset(mark)
     ctxs.pop()
     cx = saved
 
-fn module_of_type(t0: int) -> int:
-    t := prune(t0)
-    k := types[t].kind
+module_of_type = (t0: int) -> int:
+    t = prune(t0)
+    k = types[t].kind
     if (k == .struct_ or k == .enum_) and types[t].st != 0 or (k == .struct_ or k == .enum_): return int(nodes[int(structs[int(types[t].st)].decl)].mod)
     -1
 
 # ---------------- functions ----------------
-fn decl_info(decl: int) -> int:
+decl_info = (decl: int) -> int:
     if nodes[decl].sym == 0:
         decl_infos.push(DeclInfo())
         nodes[decl].sym = i32(decl_infos.len() - 1)
     int(nodes[decl].sym)
 
-fn fn_sig(decl: int) -> FnSig:
-    di := decl_info(decl)
+fn_sig = (decl: int) -> FnSig:
+    di = decl_info(decl)
     if decl_infos[di].sig.done: return decl_infos[di].sig
-    sig := FnSig(done = true)
+    sig = FnSig(done = true)
     sig.nexplicit = i32(nkids2(decl))
-    saved := cx
+    saved = cx
     ctxs.push(FnCtx(0, -1, i32(T_VOID), false, 0, nodes[decl].mod, i32(sc_names.len())))
     cx = ctxs.len() - 1
-    mark := scope_mark()
-    ntp := nkids2(decl)
-    for i in 0..ntp:
-        nm := int(nodes[kid2(decl, i)].name)
+    mark = scope_mark()
+    ntp = nkids2(decl)
+    loop i in [0..ntp):
+        nm = int(nodes[kid2(decl, i)].name)
         push_scope_sym(nm, new_sym(nm, .type_, mk_param(i), 0))
-    mm := 0
-    for i in 0..nkids(decl):
-        p := kid(decl, i)
+    mm = 0
+    loop i in [0..nkids(decl)):
+        p = kid(decl, i)
         if nodes[p].a != 0: sig.params.push(resolve_type(int(nodes[p].a)))
         else:
             sig.params.push(mk_param(ntp))
@@ -569,60 +617,60 @@ fn fn_sig(decl: int) -> FnSig:
     decl_infos[di].sig = sig
     sig
 
-fn sanitize(s: str) -> str:
-    b: [u8]
-    for c in s:
+sanitize = (s: str) -> str:
+    b: u8[]
+    loop c in s:
         if is_alnum(c): b.push(c)
         else: b.push('X')
         if b.len() > 40: break
     str_from_bytes(b)
 
-fn new_inst(kind: int, m: int, base: str) -> int:
+new_inst = (kind: int, m: int, base: str) -> int:
     inst_counter += 1
     fns.push(FnInst(kind = i32(kind), mod = i32(m), sym = "f_{base}_{inst_counter}"))
     fns.len() - 1
 
-fn has_value_return(n: int) -> bool:
+has_value_return = (n: int) -> bool:
     if n == 0: return false
-    k := nodes[n].kind
+    k = nodes[n].kind
     if k == .return_: return nodes[n].a != 0
     if k == .lambda: return false
     if has_value_return(int(nodes[n].a)) or has_value_return(int(nodes[n].b)): return true
     if k != .for_ and has_value_return(int(nodes[n].c)): return true
-    for i in 0..nkids(n):
+    loop i in [0..nkids(n)):
         if has_value_return(kid(n, i)): return true
     false
 
-fn syntactic_void(body: int) -> bool:
+syntactic_void = (body: int) -> bool:
     if body == 0 or nkids(body) == 0: return true
     if has_value_return(body): return false
-    last := kid(body, nkids(body) - 1)
-    k := nodes[last].kind
+    last = kid(body, nkids(body) - 1)
+    k = nodes[last].kind
     if k == .exprstmt: return false
     if k == .if_ or k == .iflet: return nodes[last].c == 0
     true
 
-fn get_fn_inst(decl: int, targs: [int], use_pos: int) -> int:
-    di := decl_info(decl)
-    sig := fn_sig(decl)
-    for f in decl_infos[di].insts:
-        same := true
-        for k in 0..targs.len():
+get_fn_inst = (decl: int, targs: int[], use_pos: int) -> int:
+    di = decl_info(decl)
+    sig = fn_sig(decl)
+    loop f in decl_infos[di].insts:
+        same = true
+        loop k in [0..targs.len()):
             if not type_eq(fns[f].targs[k], targs[k]):
                 same = false
                 break
         if same:
             ensure_ret(f, use_pos)
             return f
-    f := new_inst(FK_NORMAL, int(nodes[decl].mod), sanitize(name_of(int(nodes[decl].name))))
+    f = new_inst(FK_NORMAL, int(nodes[decl].mod), sanitize(name_of(int(nodes[decl].name))))
     fns[f].decl = i32(decl)
-    zt: [int]
-    for t in targs:
-        z := zonk(t)
+    zt: int[]
+    loop t in targs:
+        z = zonk(t)
         if has_var(prune(z)): fatal(use_pos, "cannot infer the type of an argument to '{name_of(int(nodes[decl].name))}' ({type_str(z)}); add a type annotation")
         zt.push(z)
     fns[f].targs = zt
-    for i in 0..nkids(decl): fns[f].ptypes.push(subst(sig.params[i], zt))
+    loop i in [0..nkids(decl)): fns[f].ptypes.push(subst(sig.params[i], zt))
     if sig.ret != 0: fns[f].ret = i32(subst(int(sig.ret), zt))
     else if nodes[decl].b != 0 and syntactic_void(int(nodes[decl].b)): fns[f].ret = i32(T_VOID)
     if sig.generic: fns[f].body = i32(clone(int(nodes[decl].b)))
@@ -630,10 +678,10 @@ fn get_fn_inst(decl: int, targs: [int], use_pos: int) -> int:
     if has_flag(decl, NF_EXTERN) and fns[f].ret == 0: fns[f].ret = i32(T_VOID)
     # attributes
     if nodes[decl].c != 0:
-        ab := int(nodes[decl].c)
-        for i in 0..nkids(ab):
-            at := kid(ab, i)
-            an := name_of(int(nodes[at].name))
+        ab = int(nodes[decl].c)
+        loop i in [0..nkids(ab)):
+            at = kid(ab, i)
+            an = name_of(int(nodes[at].name))
             if an == "cabi": fns[f].cabi = true
             else if an == "lib":
                 if nodes[at].a == 0 or nodes[int(nodes[at].a)].kind != .str_lit: fatal(nodes[at].pos, "@lib needs a library name, e.g. @lib(\"libGL.so.1\")")
@@ -649,7 +697,7 @@ fn get_fn_inst(decl: int, targs: [int], use_pos: int) -> int:
     ensure_ret(f, use_pos)
     f
 
-fn ensure_ret(f: int, use_pos: int):
+ensure_ret = (f: int, use_pos: int):
     if fns[f].ret != 0: return
     if fns[f].state == 1 and fns[f].decl != 0 and not has_value_return(int(nodes[int(fns[f].decl)].b)):
         fns[f].ret = i32(T_VOID)
@@ -658,52 +706,52 @@ fn ensure_ret(f: int, use_pos: int):
     if fns[f].state == 1: fatal(use_pos, "recursive function '{name_of(int(nodes[int(fns[f].decl)].name))}' needs an explicit return type (add `-> Type`)")
     check_fn_body(f)
 
-fn new_local(name: int, t: int, pos: int) -> int:
-    inst := int(ctxs[cx].inst)
+new_local = (name: int, t: int, pos: int) -> int:
+    inst = int(ctxs[cx].inst)
     locals.push(Local(name = i32(name), type = i32(t), owner = i32(inst), pos = pos))
-    l := locals.len() - 1
+    l = locals.len() - 1
     fns[inst].locals.push(l)
     if name != 0 and name_of(name) != "_": push_scope_sym(name, new_sym(name, .local, l, 0))
     l
 
-fn ctx_for_inst(inst: int) -> int:
-    c := cx
-    while c >= 0:
+ctx_for_inst = (inst: int) -> int:
+    c = cx
+    loop c >= 0:
         if int(ctxs[c].inst) == inst: return c
         c = int(ctxs[c].parent)
     -1
 
-fn capture_in(c: int, l: int) -> int:
-    inst := int(ctxs[c].inst)
+capture_in = (c: int, l: int) -> int:
+    inst = int(ctxs[c].inst)
     if int(locals[l].owner) == inst or ctxs[c].parent < 0: return l
-    outer := capture_in(int(ctxs[c].parent), l)
-    for cap in fns[inst].caps:
+    outer = capture_in(int(ctxs[c].parent), l)
+    loop cap in fns[inst].caps:
         if int(cap.outer) == outer: return int(cap.inner)
     locals.push(Local(name = locals[l].name, type = locals[l].type, owner = i32(inst), flags = i32(LF_CAPTURE), pos = locals[l].pos))
-    inner := locals.len() - 1
+    inner = locals.len() - 1
     fns[inst].caps.push(Capture(i32(outer), i32(inner)))
     fns[inst].locals.push(inner)
     inner
 
-fn capture_local(l: int) -> int: capture_in(cx, l)
+capture_local = (l: int) -> int: capture_in(cx, l)
 
-module_ctx: [int]
+module_ctx: int[]
 
-fn ensure_global(g: int, use_pos: int):
+ensure_global = (g: int, use_pos: int):
     if globals[g].state == 2: return
     if globals[g].state == 1: fatal(use_pos, "global '{name_of(int(globals[g].name))}' is used in its own initializer")
     globals[g].state = 1
-    saved := cx
-    m := int(globals[g].mod)
+    saved = cx
+    m = int(globals[g].mod)
     cx = module_ctx[m]
-    saved_floor := ctxs[cx].floor
+    saved_floor = ctxs[cx].floor
     ctxs[cx].floor = i32(sc_names.len())
-    d := int(globals[g].decl)
+    d = int(globals[g].decl)
     if globals[g].is_const:
-        t := 0
+        t = 0
         if nodes[d].a != 0: t = resolve_type(int(nodes[d].a))
-        cl := clone(int(nodes[d].b))
-        et := check_expr(cl, t)
+        cl = clone(int(nodes[d].b))
+        et = check_expr(cl, t)
         cl = last_checked
         if t != 0: cl = coerce(cl, t)
         else if has_flag(cl, NF_LITERAL):
@@ -714,22 +762,22 @@ fn ensure_global(g: int, use_pos: int):
         globals[g].init = nodes[d].b      # unchecked original: each use checks a fresh copy
     else if nodes[d].nlist > 0:
         if not has_flag(d, NF_CHECKED):
-            t := prune(check_expr(int(nodes[d].b), 0))
+            t = prune(check_expr(int(nodes[d].b), 0))
             nodes[d].b = i32(last_checked)
             if types[t].kind != .tuple or int(types[t].nargs) != nkids(d): fatal(nodes[d].pos, "expected a tuple with {nkids(d)} elements, found {type_str(t)}")
-            for k in 0..nkids(d):
-                id := kid(d, k)
+            loop k in [0..nkids(d)):
+                id = kid(d, k)
                 if nodes[id].kind == .hole: continue
-                gg := int(nodes[id].sym)
+                gg = int(nodes[id].sym)
                 globals[gg].type = i32(zonk(targ(t, k)))
                 globals[gg].state = 2
             add_flag(d, NF_CHECKED)
             nodes[d].type = i32(t)
     else:
-        t := 0
+        t = 0
         if nodes[d].a != 0: t = resolve_type(int(nodes[d].a))
         if nodes[d].b != 0:
-            et := check_expr(int(nodes[d].b), t)
+            et = check_expr(int(nodes[d].b), t)
             nodes[d].b = i32(last_checked)
             if t != 0: nodes[d].b = i32(coerce(int(nodes[d].b), t))
             else:
@@ -748,22 +796,22 @@ fn ensure_global(g: int, use_pos: int):
     cx = saved
 
 # ---------------- statements ----------------
-fn stmt_terminates(s: int) -> bool:
+stmt_terminates = (s: int) -> bool:
     if s == 0: return false
-    k := nodes[s].kind
+    k = nodes[s].kind
     if k == .return_ or k == .break_ or k == .continue_: return true
     if k == .block: return nkids(s) > 0 and stmt_terminates(kid(s, nkids(s) - 1))
     if k == .if_: return nodes[s].c != 0 and stmt_terminates(int(nodes[s].b)) and stmt_terminates(int(nodes[s].c))
     if k == .exprstmt:
-        e := int(nodes[s].a)
+        e = int(nodes[s].a)
         if int(nodes[e].type) == T_NEVER: return true
         if nodes[e].kind == .match_:
-            all := true
-            wild := false
-            for i in 0..nkids(e):
-                arm := kid(e, i)
+            all = true
+            wild = false
+            loop i in [0..nkids(e)):
+                arm = kid(e, i)
                 if not stmt_terminates(int(nodes[arm].b)): all = false
-                for j in 0..nkids(arm):
+                loop j in [0..nkids(arm)):
                     if nodes[kid(arm, j)].kind == .pwild: wild = true
             return all and (wild or nodes[e].aux2 != 0)
         if nodes[e].kind == .if_: return nodes[e].c != 0 and stmt_terminates(int(nodes[e].b)) and stmt_terminates(int(nodes[e].c))
@@ -771,54 +819,54 @@ fn stmt_terminates(s: int) -> bool:
     if k == .while_: return nodes[int(nodes[s].a)].kind == .bool_lit and nodes[int(nodes[s].a)].ival != 0 and not has_break(int(nodes[s].b))
     false
 
-fn has_break(n: int) -> bool:
+has_break = (n: int) -> bool:
     if n == 0: return false
-    k := nodes[n].kind
+    k = nodes[n].kind
     if k == .break_: return true
     if k == .while_ or k == .for_ or k == .lambda: return false
     if has_break(int(nodes[n].a)) or has_break(int(nodes[n].b)): return true
     if k != .for_ and has_break(int(nodes[n].c)): return true
-    for i in 0..nkids(n):
+    loop i in [0..nkids(n)):
         if has_break(kid(n, i)): return true
     false
 
-fn value_capable(s: int) -> bool:
-    k := nodes[s].kind
+value_capable = (s: int) -> bool:
+    k = nodes[s].kind
     if k == .exprstmt: return true
     if (k == .if_ or k == .iflet) and nodes[s].c != 0: return true
     false
 
-fn expand_when(out: mut [int], s: int):
+expand_when = (out: mut int[], s: int):
     if nodes[s].kind != .when_:
         out.push(s)
         return
-    blk := int(nodes[s].c)
+    blk = int(nodes[s].c)
     if const_eval_bool(int(nodes[s].a)): blk = int(nodes[s].b)
     if blk == 0: return
-    for i in 0..nkids(blk): expand_when(out, kid(blk, i))
+    loop i in [0..nkids(blk)): expand_when(out, kid(blk, i))
 
-fn check_block(b: int, expected: int, want_value: bool) -> int:
-    has_when := false
-    for i in 0..nkids(b):
+check_block = (b: int, expected: int, want_value: bool) -> int:
+    has_when = false
+    loop i in [0..nkids(b)):
         if nodes[kid(b, i)].kind == .when_: has_when = true
     if has_when:
-        nl: [int]
-        for i in 0..nkids(b): expand_when(nl, kid(b, i))
+        nl: int[]
+        loop i in [0..nkids(b)): expand_when(nl, kid(b, i))
         set_list(b, nl)
-    mark := scope_mark()
-    result := T_VOID
+    mark = scope_mark()
+    result = T_VOID
     nodes[b].aux = 0
-    n := nkids(b)
-    for i in 0..n:
-        s := kid(b, i)
+    n = nkids(b)
+    loop i in [0..n):
+        s = kid(b, i)
         if i == n - 1 and want_value and value_capable(s):
             if nodes[s].kind == .if_ or nodes[s].kind == .iflet:
-                es := mk(.exprstmt, nodes[s].pos)
+                es = mk(.exprstmt, nodes[s].pos)
                 nodes[es].a = i32(s)
                 clear_flag(s, NF_STMT)
                 set_kid(b, i, es)
                 s = es
-            e := int(nodes[s].a)
+            e = int(nodes[s].a)
             if nodes[e].kind == .match_: clear_flag(e, NF_STMT)
             result = check_expr(e, expected)
             nodes[s].a = i32(last_checked)
@@ -833,55 +881,63 @@ fn check_block(b: int, expected: int, want_value: bool) -> int:
     result
 
 # the value expression of a value block
-fn block_value(b: int) -> int: int(nodes[kid(b, nkids(b) - 1)].a)
-fn set_block_value(b: int, e: int): nodes[kid(b, nkids(b) - 1)].a = i32(e)
+block_value = (b: int) -> int: int(nodes[kid(b, nkids(b) - 1)].a)
+set_block_value = (b: int, e: int): nodes[kid(b, nkids(b) - 1)].a = i32(e)
 
-fn check_for(s: int):
-    mark := scope_mark()
-    it := int(nodes[s].a)
-    is_mut := has_flag(s, NF_MUT)
-    nv := nkids(s)
-    n1 := int(nodes[kid(s, 0)].name)
-    n2 := 0
+check_for = (s: int):
+    mark = scope_mark()
+    it = int(nodes[s].a)
+    is_mut = has_flag(s, NF_MUT)
+    nv = nkids(s)
+    n1 = int(nodes[kid(s, 0)].name)
+    n2 = 0
     if nv > 1: n2 = int(nodes[kid(s, 1)].name)
-    pos := nodes[s].pos
+    pos = nodes[s].pos
     if nodes[it].kind == .range:
-        if nodes[it].a == 0 or nodes[it].b == 0: fatal(nodes[it].pos, "for loop range needs both bounds")
-        t := check_expr(int(nodes[it].a), 0)
+        if nodes[it].a == 0: fatal(nodes[it].pos, "a loop range needs a start")
+        t = check_expr(int(nodes[it].a), 0)
         nodes[it].a = i32(last_checked)
-        check_expr(int(nodes[it].b), 0)
-        nodes[it].b = i32(last_checked)
-        la := has_flag(int(nodes[it].a), NF_LITERAL)
-        lb := has_flag(int(nodes[it].b), NF_LITERAL)
-        if la and not lb: t = int(nodes[int(nodes[it].b)].type)
-        if la and lb: t = T_INT
+        la = has_flag(int(nodes[it].a), NF_LITERAL)
+        lb = true
+        if nodes[it].b != 0:
+            check_expr(int(nodes[it].b), 0)
+            nodes[it].b = i32(last_checked)
+            lb = has_flag(int(nodes[it].b), NF_LITERAL)
+            if la and not lb: t = int(nodes[int(nodes[it].b)].type)
+        if has_flag(it, NF_STEP):
+            check_expr(int(nodes[it].c), 0)
+            nodes[it].c = i32(last_checked)
+            if la and lb and not has_flag(int(nodes[it].c), NF_LITERAL): t = int(nodes[int(nodes[it].c)].type)
+        if la and lb and (not has_flag(it, NF_STEP) or has_flag(int(nodes[it].c), NF_LITERAL)): t = T_INT
         if not is_int(t): fatal(nodes[it].pos, "range bounds must be integers, found {type_str(t)}")
         nodes[it].a = i32(coerce(int(nodes[it].a), t))
-        nodes[it].b = i32(coerce(int(nodes[it].b), t))
+        if nodes[it].b != 0: nodes[it].b = i32(coerce(int(nodes[it].b), t))
+        if has_flag(it, NF_STEP): nodes[it].c = i32(coerce(int(nodes[it].c), t))
         if nv != 1: fatal(pos, "a range loop has one loop variable")
         if is_mut: fatal(pos, "'for mut' needs an array")
-        l := new_local(n1, t, pos)
+        l = new_local(n1, t, pos)
         nodes[s].sym = i32(l)
         nodes[s].aux = 0
     else:
-        t := prune(check_expr(it, 0))
+        t = prune(check_expr(it, 0))
         it = last_checked
         nodes[s].a = i32(it)
-        k := types[t].kind
+        k = types[t].kind
         if k == .range:
-            l := new_local(n1, T_INT, pos)
+            l = new_local(n1, T_INT, pos)
             nodes[s].sym = i32(l)
             nodes[s].aux = 4
         else if k == .array or k == .str_:
-            et := T_U8
+            et = T_U8
             if k == .array: et = int(types[t].elem)
-            idxname := 0
+            if nv == 2 and migrate_info: eprint("MIGRATE enumerate {pos_str(pos)}")
+            idxname = 0
             if nv == 2: idxname = n1
-            idx := new_local(idxname, T_INT, pos)
-            snap := new_local(0, t, pos)
-            elname := n1
+            idx = new_local(idxname, T_INT, pos)
+            snap = new_local(0, t, pos)
+            elname = n1
             if nv == 2: elname = n2
-            el := 0
+            el = 0
             if is_mut:
                 if k == .str_: fatal(pos, "strings are immutable; 'for mut' needs an array")
                 cp_inner += 1                  # only the elements change, not the array's length
@@ -889,8 +945,8 @@ fn check_for(s: int):
                 cp_inner -= 1
                 el = new_local(elname, et, pos)
                 locals[el].flags = i32(int(locals[el].flags) | LF_ALIAS)
-                ix := mk(.index, pos)
-                base := clone(it)
+                ix = mk(.index, pos)
+                base = clone(it)
                 check_expr(base, 0)
                 nodes[ix].a = i32(last_checked)
                 nodes[ix].b = i32(mk_ident_local(idx, pos))
@@ -906,24 +962,24 @@ fn check_for(s: int):
             nodes[s].c = i32(idx)
             nodes[s].d = i32(snap)
         else if k == .struct_ and structs[int(types[t].st)].name == "Map":
-            si := int(types[t].st)
+            si = int(types[t].st)
             check_struct_fields(si)
-            kt := int(fields[int(structs[si].fields)].type)
-            vt := int(fields[int(structs[si].fields) + 1].type)
-            idx := new_local(0, T_INT, pos)
-            snap := new_local(0, t, pos)
-            kl := new_local(n1, telem(kt), pos)
+            kt = int(fields[int(structs[si].fields)].type)
+            vt = int(fields[int(structs[si].fields) + 1].type)
+            idx = new_local(0, T_INT, pos)
+            snap = new_local(0, t, pos)
+            kl = new_local(n1, telem(kt), pos)
             locals[kl].flags = i32(int(locals[kl].flags) | LF_BYREF)
-            vl := 0
+            vl = 0
             if nv == 2:
                 if is_mut:
                     check_place(it, true)
                     vl = new_local(n2, telem(vt), pos)
                     locals[vl].flags = i32(int(locals[vl].flags) | LF_ALIAS)
-                    f := mk(.field, pos)
+                    f = mk(.field, pos)
                     nodes[f].a = i32(clone(it))
                     nodes[f].name = i32(intern("vals"))
-                    ix := mk(.index, pos)
+                    ix = mk(.index, pos)
                     nodes[ix].a = i32(f)
                     nodes[ix].b = i32(mk_ident_local(idx, pos))
                     check_expr(ix, 0)
@@ -945,8 +1001,8 @@ fn check_for(s: int):
 
 const ASSIGN_OPS = 0
 
-fn compound_op(op: int) -> int:
-    k := op as Tok
+compound_op = (op: int) -> int:
+    k = op as Tok
     match k:
         pluseq: int(Tok.plus)
         minuseq: int(Tok.minus)
@@ -961,53 +1017,53 @@ fn compound_op(op: int) -> int:
         _: 0
 
 # returns the (possibly replaced) statement node
-fn check_assign(s: int) -> int:
-    lhs := int(nodes[s].a)
-    op := int(nodes[s].op)
+check_assign = (s: int) -> int:
+    lhs = int(nodes[s].a)
+    op = int(nodes[s].op)
     if nodes[lhs].kind == .tuple:
         if op != int(Tok.assign): fatal(nodes[s].pos, "compound assignment to a tuple")
-        t := prune(check_expr(int(nodes[s].b), 0))
+        t = prune(check_expr(int(nodes[s].b), 0))
         nodes[s].b = i32(last_checked)
         if types[t].kind != .tuple or int(types[t].nargs) != nkids(lhs): fatal(nodes[s].pos, "expected a tuple with {nkids(lhs)} elements, found {type_str(t)}")
-        for i in 0..nkids(lhs):
-            tp := kid(lhs, i)
+        loop i in [0..nkids(lhs)):
+            tp = kid(lhs, i)
             if nodes[tp].kind == .hole: continue
-            tt := check_expr(tp, 0)
+            tt = check_expr(tp, 0)
             set_kid(lhs, i, last_checked)
             check_place(last_checked, false)
             if not can_coerce(0, targ(t, i), tt) and not type_eq(targ(t, i), tt): fatal(nodes[tp].pos, "cannot assign {type_str(targ(t, i))} to {type_str(tt)}")
         nodes[s].aux = 1
         return s
     if nodes[lhs].kind == .index:
-        bt := prune(check_expr(int(nodes[lhs].a), 0))
+        bt = prune(check_expr(int(nodes[lhs].a), 0))
         nodes[lhs].a = i32(last_checked)
         if types[bt].kind == .struct_:
-            call := mk(.call, nodes[s].pos)
-            callee := mk(.ident, nodes[s].pos)
+            call = mk(.call, nodes[s].pos)
+            callee = mk(.ident, nodes[s].pos)
             nodes[callee].name = i32(intern("[]="))
             nodes[call].a = i32(callee)
-            recv := int(nodes[lhs].a)
+            recv = int(nodes[lhs].a)
             add_flag(recv, NF_MUT)
-            val := int(nodes[s].b)
+            val = int(nodes[s].b)
             if op != int(Tok.assign):
-                get := mk(.index, nodes[s].pos)
-                ga := clone(recv)
+                get = mk(.index, nodes[s].pos)
+                ga = clone(recv)
                 clear_flag(ga, NF_MUT)
                 nodes[ga].type = 0
                 nodes[get].a = i32(ga)
                 nodes[get].b = i32(clone(int(nodes[lhs].b)))
-                bin := mk(.binary, nodes[s].pos)
+                bin = mk(.binary, nodes[s].pos)
                 nodes[bin].op = i32(compound_op(op))
                 nodes[bin].a = i32(get)
                 nodes[bin].b = i32(val)
                 val = bin
             set_list(call, [recv, int(nodes[lhs].b), val])
             clear_flag(recv, NF_CHECKED)
-            es := mk(.exprstmt, nodes[s].pos)
+            es = mk(.exprstmt, nodes[s].pos)
             check_expr(call, 0)
             nodes[es].a = i32(last_checked)
             return es
-    lt := check_expr(lhs, 0)
+    lt = check_expr(lhs, 0)
     lhs = last_checked
     nodes[s].a = i32(lhs)
     check_place(lhs, false)
@@ -1015,13 +1071,13 @@ fn check_assign(s: int) -> int:
         check_expr(int(nodes[s].b), lt)
         nodes[s].b = i32(coerce(last_checked, lt))
         return s
-    l := prune(lt)
+    l = prune(lt)
     if types[l].kind == .str_ and op == int(Tok.pluseq):
         check_expr(int(nodes[s].b), T_STR)
         nodes[s].b = i32(coerce(last_checked, T_STR))
         nodes[s].aux = 2
         return s
-    bop := compound_op(op)
+    bop = compound_op(op)
     if types[l].kind == .ptr:
         check_expr(int(nodes[s].b), T_INT)
         nodes[s].b = i32(coerce(last_checked, T_INT))
@@ -1029,7 +1085,7 @@ fn check_assign(s: int) -> int:
         return s
     if not is_numeric(l) and types[l].kind != .bool_:
         # operator overload: x = x op y
-        bin := mk(.binary, nodes[s].pos)
+        bin = mk(.binary, nodes[s].pos)
         nodes[bin].op = i32(bop)
         nodes[bin].a = i32(clone(lhs))
         nodes[bin].b = nodes[s].b
@@ -1037,10 +1093,10 @@ fn check_assign(s: int) -> int:
         nodes[s].b = i32(coerce(last_checked, lt))
         nodes[s].op = i32(int(Tok.assign))
         return s
-    is_shift := bop == int(Tok.shl) or bop == int(Tok.shr)
-    hint := l
+    is_shift = bop == int(Tok.shl) or bop == int(Tok.shr)
+    hint = l
     if is_int(l) and is_shift: hint = 0
-    rt := check_expr(int(nodes[s].b), hint)
+    rt = check_expr(int(nodes[s].b), hint)
     nodes[s].b = i32(last_checked)
     if is_shift:
         if not is_int(rt): fatal(nodes[int(nodes[s].b)].pos, "shift amount must be an integer")
@@ -1050,19 +1106,19 @@ fn check_assign(s: int) -> int:
         nodes[s].b = i32(coerce(int(nodes[s].b), l))
     s
 
-fn check_vardecl(s: int):
+check_vardecl = (s: int):
     if nodes[s].nlist > 0:
         if has_flag(s, NF_GLOBAL):
-            for i in 0..nkids(s):
+            loop i in [0..nkids(s)):
                 if nodes[kid(s, i)].kind != .hole:
                     ensure_global(int(nodes[kid(s, i)].sym), nodes[s].pos)
                     break
             return
-        t := prune(check_expr(int(nodes[s].b), 0))
+        t = prune(check_expr(int(nodes[s].b), 0))
         nodes[s].b = i32(last_checked)
         if types[t].kind != .tuple or int(types[t].nargs) != nkids(s): fatal(nodes[s].pos, "expected a tuple with {nkids(s)} elements, found {type_str(t)}")
-        for i in 0..nkids(s):
-            id := kid(s, i)
+        loop i in [0..nkids(s)):
+            id = kid(s, i)
             if nodes[id].kind == .hole: continue
             nodes[id].sym = i32(new_local(int(nodes[id].name), targ(t, i), nodes[id].pos))
         nodes[s].type = i32(t)
@@ -1070,11 +1126,11 @@ fn check_vardecl(s: int):
     if has_flag(s, NF_GLOBAL):
         ensure_global(int(nodes[s].sym), nodes[s].pos)
         return
-    t := 0
+    t = 0
     if nodes[s].a != 0: t = resolve_type(int(nodes[s].a))
-    nm := name_of(int(nodes[s].name))
+    nm = name_of(int(nodes[s].name))
     if nodes[s].b != 0:
-        et := check_expr(int(nodes[s].b), t)
+        et = check_expr(int(nodes[s].b), t)
         nodes[s].b = i32(last_checked)
         if t != 0: nodes[s].b = i32(coerce(int(nodes[s].b), t))
         else:
@@ -1084,20 +1140,20 @@ fn check_vardecl(s: int):
                 nodes[s].b = i32(coerce(int(nodes[s].b), t))
             if tkind(t) == .none_lit: fatal(nodes[s].pos, "cannot infer the type of '{nm}' from 'none'; add a type: {nm}: T? = none")
     if t == 0: fatal(nodes[s].pos, "variable needs a type or a value")
-    tk := tkind(t)
+    tk = tkind(t)
     if tk == .void_: fatal(nodes[s].pos, "cannot assign a value with no type (void) to '{nm}'")
     if tk == .typeval or tk == .module: fatal(nodes[s].pos, "'{nm}' cannot hold a type or module")
     nodes[s].sym = i32(new_local(int(nodes[s].name), t, nodes[s].pos))
 
-fn check_stmt(s: int):
-    k := nodes[s].kind
+check_stmt = (s: int):
+    k = nodes[s].kind
     if k == .vardecl: check_vardecl(s)
     else if k == .const_:
-        g := Global(name = nodes[s].name, decl = 0, mod = i32(cur_mod()), is_const = true, state = 2)
-        t := 0
+        g = Global(name = nodes[s].name, decl = 0, mod = i32(cur_mod()), is_const = true, state = 2)
+        t = 0
         if nodes[s].a != 0: t = resolve_type(int(nodes[s].a))
-        cl := clone(int(nodes[s].b))
-        et := check_expr(cl, t)
+        cl = clone(int(nodes[s].b))
+        et = check_expr(cl, t)
         cl = last_checked
         if t != 0: cl = coerce(cl, t)
         else if has_flag(cl, NF_LITERAL): t = lit_default(cl)
@@ -1108,13 +1164,16 @@ fn check_stmt(s: int):
         push_scope_sym(int(nodes[s].name), new_sym(int(nodes[s].name), .const_, globals.len() - 1, 0))
         nodes[s].kind = .block
         nodes[s].nlist = 0
+    else if k == .assign and assign_declares(s, var_visible):
+        assign_to_decl(s)
+        check_vardecl(s)
     else if k == .assign:
-        r := check_assign(s)
+        r = check_assign(s)
         if r != s:
             nodes[s] = nodes[r]
     else if k == .exprstmt:
         if has_flag(s, NF_CHECKED): return
-        e := int(nodes[s].a)
+        e = int(nodes[s].a)
         if nodes[e].kind == .match_: add_flag(e, NF_STMT)
         check_expr(e, 0)
         nodes[s].a = i32(last_checked)
@@ -1123,9 +1182,9 @@ fn check_stmt(s: int):
         check_expr(s, 0)
         if last_checked != s: nodes[s] = nodes[last_checked]
     else if k == .while_:
-        mark := scope_mark()
+        mark = scope_mark()
         if nodes[s].aux == 1:
-            t := prune(check_expr(int(nodes[s].a), 0))
+            t = prune(check_expr(int(nodes[s].a), 0))
             nodes[s].a = i32(last_checked)
             if types[t].kind != .opt: fatal(nodes[int(nodes[s].a)].pos, "'while x := value' needs an optional value, found {type_str(t)}")
             nodes[s].sym = i32(new_local(int(nodes[s].name), int(types[t].elem), nodes[s].pos))
@@ -1138,43 +1197,43 @@ fn check_stmt(s: int):
         scope_reset(mark)
     else if k == .for_: check_for(s)
     else if k == .return_:
-        inst := int(ctxs[cx].inst)
+        inst = int(ctxs[cx].inst)
         if fns[inst].kind == FK_INIT and ctxs[cx].parent < 0: fatal(nodes[s].pos, "'return' outside of a function")
-        ret := int(ctxs[cx].ret)
+        ret = int(ctxs[cx].ret)
         if nodes[s].a != 0:
             if ctxs[cx].infer_ret and tkind(ret) == .var:
-                t := check_expr(int(nodes[s].a), 0)
+                t = check_expr(int(nodes[s].a), 0)
                 nodes[s].a = i32(last_checked)
                 if has_flag(int(nodes[s].a), NF_LITERAL):
                     t = lit_default(int(nodes[s].a))
                     nodes[s].a = i32(coerce(int(nodes[s].a), t))
                 unify(ret, t)
             else:
-                rt := prune(ret)
+                rt = prune(ret)
                 if tkind(rt) == .void_: fatal(nodes[s].pos, "this function does not return a value")
                 check_expr(int(nodes[s].a), rt)
                 nodes[s].a = i32(coerce(last_checked, rt))
         else:
-            rt := prune(ret)
+            rt = prune(ret)
             if tkind(rt) == .var: unify(rt, T_VOID)
             else if tkind(rt) != .void_: fatal(nodes[s].pos, "missing return value (function returns {type_str(rt)})")
     else if k == .break_ or k == .continue_:
         if ctxs[cx].loop_depth == 0:
-            w := "continue"
+            w = "continue"
             if k == .break_: w = "break"
             fatal(nodes[s].pos, "'{w}' outside of a loop")
     else if k == .defer_:
-        d := int(nodes[s].a)
+        d = int(nodes[s].a)
         if nodes[d].kind == .block: check_block(d, 0, false)
         else: check_stmt(d)
     else if k == .when_:
-        blk := int(nodes[s].c)
+        blk = int(nodes[s].c)
         if const_eval_bool(int(nodes[s].a)): blk = int(nodes[s].b)
         if blk == 0:
             nodes[s].kind = .block
             nodes[s].nlist = 0
             return
-        for i in 0..nkids(blk): check_stmt(kid(blk, i))
+        loop i in [0..nkids(blk)): check_stmt(kid(blk, i))
         nodes[s].kind = .block
         nodes[s].list = nodes[blk].list
         nodes[s].nlist = nodes[blk].nlist
@@ -1184,20 +1243,20 @@ fn check_stmt(s: int):
     else if k == .test_ or k == .build_: pass
     else: fatal(nodes[s].pos, "invalid statement")
 
-fn check_fn_body(f: int):
+check_fn_body = (f: int):
     if fns[f].state != 0: return
     fns[f].state = 1
-    decl := int(fns[f].decl)
-    saved := cx
+    decl = int(fns[f].decl)
+    saved = cx
     ctxs.push(FnCtx(i32(f), -1, 0, false, 0, fns[f].mod, i32(sc_names.len())))
     cx = ctxs.len() - 1
-    mark := scope_mark()
+    mark = scope_mark()
     if decl != 0 and nodes[decl].kind == .fn_:
         push_type_params(decl, fns[f].targs)
-        for i in 0..fns[f].ptypes.len():
-            p := kid(decl, i)
-            l := new_local(int(nodes[p].name), fns[f].ptypes[i], nodes[p].pos)
-            fl := LF_PARAM
+        loop i in [0..fns[f].ptypes.len()):
+            p = kid(decl, i)
+            l = new_local(int(nodes[p].name), fns[f].ptypes[i], nodes[p].pos)
+            fl = LF_PARAM
             if has_flag(p, NF_MUT): fl |= LF_MUTPARAM
             locals[l].flags = i32(fl)
             fns[f].params.push(l)
@@ -1211,22 +1270,22 @@ fn check_fn_body(f: int):
     else:
         ctxs[cx].ret = i32(mk_var())
         ctxs[cx].infer_ret = true
-    body := int(fns[f].body)
+    body = int(fns[f].body)
     if fns[f].kind == FK_INIT:
-        for i in 0..nkids(body): check_stmt(kid(body, i))
+        loop i in [0..nkids(body)): check_stmt(kid(body, i))
         fns[f].ret = i32(T_VOID)
     else:
-        infer := ctxs[cx].infer_ret
-        want := infer or tkind(int(ctxs[cx].ret)) != .void_
-        exp := 0
+        infer = ctxs[cx].infer_ret
+        want = infer or tkind(int(ctxs[cx].ret)) != .void_
+        exp = 0
         if not infer: exp = int(ctxs[cx].ret)
-        bt := check_block(body, exp, want)
-        r := prune(int(ctxs[cx].ret))
-        n := nkids(body)
+        bt = check_block(body, exp, want)
+        r = prune(int(ctxs[cx].ret))
+        n = nkids(body)
         if infer:
             if types[r].kind == .var:
                 if nodes[body].aux != 0:
-                    v := block_value(body)
+                    v = block_value(body)
                     if has_flag(v, NF_LITERAL):
                         bt = lit_default(v)
                         set_block_value(body, coerce(v, bt))
@@ -1241,11 +1300,11 @@ fn check_fn_body(f: int):
         else if want:
             if nodes[body].aux != 0: set_block_value(body, coerce(block_value(body), r))
             else if bt != T_NEVER and not (n > 0 and stmt_terminates(kid(body, n - 1))):
-                p := nodes[body].pos
+                p = nodes[body].pos
                 if decl != 0: p = nodes[decl].pos
                 fatal(p, "missing return value: function returns {type_str(r)}")
     zonk_tree(body)
-    for l in fns[f].locals:
+    loop l in fns[f].locals:
         locals[l].type = i32(zonk(int(locals[l].type)))
         if has_var(prune(int(locals[l].type))): fatal(locals[l].pos, "cannot infer the type of '{name_of(int(locals[l].name))}' ({type_str(int(locals[l].type))}); add a type annotation")
     fns[f].state = 2
@@ -1253,20 +1312,20 @@ fn check_fn_body(f: int):
     ctxs.pop()
     cx = saved
 
-fn check_lambda_body(f: int, lam: int, ret_hint: int):
+check_lambda_body = (f: int, lam: int, ret_hint: int):
     fns[f].state = 1
-    parent := cx
+    parent = cx
     ctxs.push(FnCtx(i32(f), i32(parent), 0, false, 0, ctxs[parent].mod, ctxs[parent].floor))
     cx = ctxs.len() - 1
-    mark := scope_mark()
-    for i in 0..fns[f].ptypes.len():
-        p := kid(lam, i)
-        l := new_local(int(nodes[p].name), fns[f].ptypes[i], nodes[p].pos)
-        fl := LF_PARAM
+    mark = scope_mark()
+    loop i in [0..fns[f].ptypes.len()):
+        p = kid(lam, i)
+        l = new_local(int(nodes[p].name), fns[f].ptypes[i], nodes[p].pos)
+        fl = LF_PARAM
         if has_flag(p, NF_MUT): fl |= LF_MUTPARAM
         locals[l].flags = i32(fl)
         fns[f].params.push(l)
-    declared := 0
+    declared = 0
     if nodes[lam].a != 0: declared = resolve_type(int(nodes[lam].a))
     if declared != 0: ctxs[cx].ret = i32(declared)
     else if ret_hint != 0 and not has_var(prune(ret_hint)): ctxs[cx].ret = i32(ret_hint)
@@ -1274,17 +1333,17 @@ fn check_lambda_body(f: int, lam: int, ret_hint: int):
         if ret_hint != 0: ctxs[cx].ret = i32(ret_hint)
         else: ctxs[cx].ret = i32(mk_var())
         ctxs[cx].infer_ret = true
-    body := int(fns[f].body)
-    infer := ctxs[cx].infer_ret
-    want := infer or tkind(int(ctxs[cx].ret)) != .void_
-    exp := 0
+    body = int(fns[f].body)
+    infer = ctxs[cx].infer_ret
+    want = infer or tkind(int(ctxs[cx].ret)) != .void_
+    exp = 0
     if not infer: exp = int(ctxs[cx].ret)
-    bt := check_block(body, exp, want)
-    r := prune(int(ctxs[cx].ret))
+    bt = check_block(body, exp, want)
+    r = prune(int(ctxs[cx].ret))
     if infer:
         if types[r].kind == .var:
             if nodes[body].aux != 0:
-                v := block_value(body)
+                v = block_value(body)
                 if has_flag(v, NF_LITERAL):
                     bt = lit_default(v)
                     set_block_value(body, coerce(v, bt))
@@ -1303,18 +1362,18 @@ fn check_lambda_body(f: int, lam: int, ret_hint: int):
     ctxs.pop()
     cx = parent
 
-fn zonk_tree(n: int):
+zonk_tree = (n: int):
     if n == 0: return
     if nodes[n].type != 0: nodes[n].type = i32(zonk(int(nodes[n].type)))
-    k := nodes[n].kind
+    k = nodes[n].kind
     if k == .lambda: return
     zonk_tree(int(nodes[n].a))
     zonk_tree(int(nodes[n].b))
     if k != .for_:
         zonk_tree(int(nodes[n].c))
         if k != .partial: zonk_tree(int(nodes[n].d))
-    for i in 0..nkids(n): zonk_tree(kid(n, i))
-    for i in 0..nkids2(n): zonk_tree(kid2(n, i))
+    loop i in [0..nkids(n)): zonk_tree(kid(n, i))
+    loop i in [0..nkids2(n)): zonk_tree(kid2(n, i))
 
 # ---------------- compile-time evaluation ----------------
 struct CVal:
@@ -1322,39 +1381,39 @@ struct CVal:
     i: int
     s: str
 
-fn ceval(e: int) -> CVal:
-    k := nodes[e].kind
+ceval = (e: int) -> CVal:
+    k = nodes[e].kind
     if k == .bool_lit or k == .int_lit: return CVal(false, nodes[e].ival, "")
     if k == .str_lit: return CVal(true, 0, name_of(int(nodes[e].sval)))
     if k == .ident:
-        s := lookup(int(nodes[e].name))
+        s = lookup(int(nodes[e].name))
         if s == 0 or syms[s].kind != .const_: fatal(nodes[e].pos, "'{name_of(int(nodes[e].name))}' is not a compile-time constant")
-        g := int(syms[s].ref)
+        g = int(syms[s].ref)
         if globals[g].init != 0 and globals[g].decl == 0: return ceval(int(globals[g].init))
         return ceval(int(nodes[int(globals[g].decl)].b))
     if k == .not_:
-        v := ceval(int(nodes[e].a))
-        r := 0
+        v = ceval(int(nodes[e].a))
+        r = 0
         if v.i == 0: r = 1
         return CVal(false, r, "")
     if k == .and_:
-        a := ceval(int(nodes[e].a))
+        a = ceval(int(nodes[e].a))
         if a.i == 0: return a
         return ceval(int(nodes[e].b))
     if k == .or_:
-        a := ceval(int(nodes[e].a))
+        a = ceval(int(nodes[e].a))
         if a.i != 0: return a
         return ceval(int(nodes[e].b))
     if k == .binary:
-        a := ceval(int(nodes[e].a))
-        b := ceval(int(nodes[e].b))
-        op := nodes[e].op as Tok
+        a = ceval(int(nodes[e].a))
+        b = ceval(int(nodes[e].b))
+        op = nodes[e].op as Tok
         if a.is_str or b.is_str:
-            eq := a.is_str == b.is_str and a.s == b.s
+            eq = a.is_str == b.is_str and a.s == b.s
             if op == .eq: return CVal(false, int(eq), "")
             if op == .ne: return CVal(false, int(not eq), "")
             fatal(nodes[e].pos, "invalid operator on strings in compile-time expression")
-        r := 0
+        r = 0
         if op == .eq: r = int(a.i == b.i)
         else if op == .ne: r = int(a.i != b.i)
         else if op == .lt: r = int(a.i < b.i)
@@ -1368,200 +1427,200 @@ fn ceval(e: int) -> CVal:
     fatal(nodes[e].pos, "expression is not a compile-time constant")
     CVal(false, 0, "")
 
-fn const_eval_bool(e: int) -> bool: ceval(e).i != 0
+const_eval_bool = (e: int) -> bool: ceval(e).i != 0
 
-fn build_option(key: str) -> int:
+build_option = (key: str) -> int:
     if build_node == 0: return 0
-    b := int(nodes[build_node].b)
-    for i in 0..nkids(b):
-        s := kid(b, i)
+    b = int(nodes[build_node].b)
+    loop i in [0..nkids(b)):
+        s = kid(b, i)
         if nodes[s].kind == .assign and nodes[int(nodes[s].a)].kind == .ident and name_of(int(nodes[int(nodes[s].a)].name)) == key: return int(nodes[s].b)
     0
 
 # ---------------- program ----------------
-runtime_names := ["__alloc", "__free", "__panic", "__panic_bounds", "__panic_unwrap", "__free_obj", "__arr_clone", "__arr_push_slot",
+runtime_names = ["__alloc", "__free", "__panic", "__panic_bounds", "__panic_unwrap", "__free_obj", "__arr_clone", "__arr_push_slot",
     "__arr_reserve", "__arr_insert_slot", "__arr_remove_slot", "__arr_slice", "__arr_concat", "__str_concat", "__str_eq",
     "__str_cmp", "__str_slice", "__str_append", "__buf_finish", "__buf_append_str", "__arr_resize", "__arr_repeat",
     "__print_str", "__str_from_bytes", "__assert_fail", "__hash_bytes", "__str_hash", "__div_zero", "__rc_inc", "__rc_dec",
     "__arr_extend", "__rc_dec_test"]
-optional_runtime := ["__mat4_mul", "__mat4_mul_vec4", "__fmt_i32", "__fmt_f32", "__ffi_resolve"]
+optional_runtime = ["__mat4_mul", "__mat4_mul_vec4", "__fmt_i32", "__fmt_f32", "__ffi_resolve"]
 runtime_insts: {str: int} = {}
 
-fn runtime_fn(name: str) -> int:
-    if f := runtime_insts.get(name): return f
-    s := prelude.get(intern(name)) ?? 0
+runtime_fn = (name: str) -> int:
+    if let f = runtime_insts.get(name): return f
+    s = prelude.get(intern(name)) ?? 0
     if s == 0 or syms[s].kind != .fns: ice("missing runtime function {name}")
-    f := get_fn_inst(int(syms[s].decl), [], nodes[int(syms[s].decl)].pos)
+    f = get_fn_inst(int(syms[s].decl), [], nodes[int(syms[s].decl)].pos)
     runtime_insts[name] = f
     f
 
-fn add_universe():
-    tys := [("int", T_INT), ("i8", T_I8), ("i16", T_I16), ("i32", T_I32), ("i64", T_INT), ("u8", T_U8), ("byte", T_U8),
-        ("u16", T_U16), ("u32", T_U32), ("u64", T_U64), ("float", T_FLOAT), ("f64", T_FLOAT), ("f32", T_F32),
+add_universe = ():
+    tys = [("int", T_INT), ("i8", T_I8), ("i16", T_I16), ("i32", T_I32), ("i64", T_INT), ("u8", T_U8), ("byte", T_U8),
+        ("u16", T_U16), ("u32", T_U32), ("u64", T_U64), ("f64", T_FLOAT), ("f32", T_F32),
         ("bool", T_BOOL), ("str", T_STR), ("void", T_VOID), ("vec2", T_VEC2), ("vec3", T_VEC3), ("vec4", T_VEC4),
         ("mat4", T_MAT4), ("ivec2", T_IVEC2)]
-    for t in tys:
-        nm := intern(t.0)
+    loop t in tys:
+        nm = intern(t.0)
         universe[nm] = new_sym(nm, .type_, t.1, 0)
-    tv := mk(.str_lit, 0)
-    tgt := "native"
+    tv = mk(.str_lit, 0)
+    tgt = "native"
     if target_wasm: tgt = "wasm"
     nodes[tv].sval = i32(intern(tgt))
-    tr := mk(.bool_lit, 0)
+    tr = mk(.bool_lit, 0)
     nodes[tr].ival = 1
-    fl := mk(.bool_lit, 0)
-    consts := [("TARGET", tv, T_STR), ("DEBUG", tr, T_BOOL), ("BOOTSTRAP", fl, T_BOOL)]
-    for c in consts:
-        nm := intern(c.0)
+    fl = mk(.bool_lit, 0)
+    consts = [("TARGET", tv, T_STR), ("DEBUG", tr, T_BOOL), ("BOOTSTRAP", fl, T_BOOL)]
+    loop c in consts:
+        nm = intern(c.0)
         globals.push(Global(name = i32(nm), is_const = true, init = i32(c.1), state = 2, type = i32(c.2)))
         universe[nm] = new_sym(nm, .const_, globals.len() - 1, 0)
     register_intrinsics()
 
-fn load_prelude():
+load_prelude = ():
     # all .jot files in lib/core, lib/std and lib/game are loaded into the shared prelude scope
     # (lib/core must stay compilable by the C bootstrap compiler; lib/std need not)
-    for sub in ["core", "std", "game"]:
-        names_ := list_dir("{lib_dir}/{sub}")
+    loop sub in ["core", "std", "game"]:
+        names_ = list_dir("{lib_dir}/{sub}")
         names_.sort()
-        for n in names_:
+        loop n in names_:
             if ends_with(n, ".jot"): load_module("{lib_dir}/{sub}/{n}", true, -1)
 
-dfs_state: [bool]
-skip_main := false
-export_decls: [int]
-export_fns: [int]
-fn order_modules(m: int, out: mut [int]):
+dfs_state: bool[]
+skip_main = false
+export_decls: int[]
+export_fns: int[]
+order_modules = (m: int, out: mut int[]):
     if dfs_state[m]: return
     dfs_state[m] = true
-    for d in modules[m].decls:
+    loop d in modules[m].decls:
         if nodes[d].kind == .import_:
             if nodes[d].aux == 1:
-                for u in modules[m].uses: order_modules(u, out)
-            else if s := modules[m].names.get(int(nodes[d].name)):
+                loop u in modules[m].uses: order_modules(u, out)
+            else if let s = modules[m].names.get(int(nodes[d].name)):
                 if syms[s].kind == .module: order_modules(int(syms[s].ref), out)
     out.push(m)
 
 # statement calling a prelude function with the given argument nodes
-fn synth_call(name: str, args: [int], pos: int) -> int:
-    c := mk(.call, pos)
-    id := mk(.ident, pos)
+synth_call = (name: str, args: int[], pos: int) -> int:
+    c = mk(.call, pos)
+    id = mk(.ident, pos)
     nodes[id].name = i32(intern(name))
     nodes[c].a = i32(id)
     set_list(c, args)
-    st := mk(.exprstmt, pos)
+    st = mk(.exprstmt, pos)
     nodes[st].a = i32(c)
     st
 
-fn synth_str(s: str, pos: int) -> int:
-    n := mk(.str_lit, pos)
+synth_str = (s: str, pos: int) -> int:
+    n = mk(.str_lit, pos)
     nodes[n].sval = i32(intern(s))
     n
 
-fn check_program(main_path: str):
+check_program = (main_path: str):
     add_universe()
     load_prelude()
-    mainm := load_module(main_path, false, -1)
+    mainm = load_module(main_path, false, -1)
     if stop_after == "lex" or stop_after == "parse": exit(0)
     modules[mainm].is_main = true
-    i := 0
-    while i < modules.len():
+    i = 0
+    loop i < modules.len():
         register_decls(i, modules[i].decls)
         i += 1
     # programs with update()/draw() run the game loop after main()
-    has_upd := modules[mainm].names.get(intern("update")) != none
-    has_drw := modules[mainm].names.get(intern("draw")) != none
+    has_upd = modules[mainm].names.get(intern("update")) != none
+    has_drw = modules[mainm].names.get(intern("draw")) != none
     if test_mode:
         # top-level code runs first (it may set up globals), then each test in order
         skip_main = true
-        for d in test_decls:
-            nm := name_of(int(nodes[d].sval))
-            if len(nm) >= 2 and nm[0] == '"': nm = nm[1..len(nm) - 1]
+        loop d in test_decls:
+            nm = name_of(int(nodes[d].sval))
+            if len(nm) >= 2 and nm[0] == '"': nm = nm[1..len(nm) - 1)
             modules[mainm].inits.push(synth_call("__test_begin", [synth_str(nm, nodes[d].pos)], nodes[d].pos))
             modules[mainm].inits.push(int(nodes[d].b))
             modules[mainm].inits.push(synth_call("__test_end", [], nodes[d].pos))
-        cnt := mk(.int_lit, 0)
+        cnt = mk(.int_lit, 0)
         nodes[cnt].ival = test_decls.len()
         modules[mainm].inits.push(synth_call("__test_done", [cnt], 0))
     else if has_upd or has_drw:
-        if s := modules[mainm].names.get(intern("main")):
-            mc := mk(.call, 0)
-            mid := mk(.ident, 0)
+        if let s = modules[mainm].names.get(intern("main")):
+            mc = mk(.call, 0)
+            mid = mk(.ident, 0)
             nodes[mid].name = i32(intern("main"))
             nodes[mc].a = i32(mid)
-            st := mk(.exprstmt, 0)
+            st = mk(.exprstmt, 0)
             nodes[st].a = i32(mc)
             modules[mainm].inits.push(st)
             skip_main = true
-        gc := mk(.call, 0)
-        gid := mk(.ident, 0)
+        gc = mk(.call, 0)
+        gid = mk(.ident, 0)
         nodes[gid].name = i32(intern("__game_run"))
         nodes[gc].a = i32(gid)
-        ua := mk(.ident, 0)
+        ua = mk(.ident, 0)
         if has_upd: nodes[ua].name = i32(intern("update"))
         else: nodes[ua].name = i32(intern("__no_update"))
-        da := mk(.ident, 0)
+        da = mk(.ident, 0)
         if has_drw: nodes[da].name = i32(intern("draw"))
         else: nodes[da].name = i32(intern("__no_draw"))
         set_list(gc, [ua, da])
-        st2 := mk(.exprstmt, 0)
+        st2 = mk(.exprstmt, 0)
         nodes[st2].a = i32(gc)
         modules[mainm].inits.push(st2)
-    prelude_init := new_inst(FK_INIT, 0, "init_prelude")
+    prelude_init = new_inst(FK_INIT, 0, "init_prelude")
     fns[prelude_init].body = i32(mk(.block, 0))
     fns[prelude_init].ret = i32(T_VOID)
     fns[prelude_init].state = 2
     module_ctx = []
-    for mi in 0..modules.len():
-        inst := prelude_init
+    loop mi in [0..modules.len()):
+        inst = prelude_init
         if not modules[mi].is_prelude:
             inst = new_inst(FK_INIT, mi, "init_{sanitize(name_of(int(modules[mi].name)))}")
-            b := mk(.block, mkpos(int(modules[mi].file), 0))
+            b = mk(.block, mkpos(int(modules[mi].file), 0))
             set_list(b, modules[mi].inits)
             fns[inst].body = i32(b)
         modules[mi].init_fn = i32(inst)
         ctxs.push(FnCtx(i32(inst), -1, i32(T_VOID), false, 0, i32(mi), 0))
         module_ctx.push(ctxs.len() - 1)
-    dfs_state = [false; modules.len()]
-    order: [int]
+    dfs_state = fill(false, modules.len())
+    order: int[]
     order_modules(mainm, order)
     init_fns = [prelude_init]
-    for m in order:
+    loop m in order:
         if not modules[m].is_prelude: init_fns.push(int(modules[m].init_fn))
     cx = -1
-    if s := modules[mainm].names.get(intern("main")):
+    if let s = modules[mainm].names.get(intern("main")):
         if syms[s].kind == .fns and not skip_main: main_fn = get_fn_inst(int(syms[s].decl), [], 0)
-    if s := modules[mainm].names.get(intern("update")):
+    if let s = modules[mainm].names.get(intern("update")):
         if syms[s].kind == .fns: update_fn = get_fn_inst(int(syms[s].decl), [], 0)
-    if s := modules[mainm].names.get(intern("draw")):
+    if let s = modules[mainm].names.get(intern("draw")):
         if syms[s].kind == .fns: draw_fn = get_fn_inst(int(syms[s].decl), [], 0)
-    for d in export_decls:
+    loop d in export_decls:
         if not modules[int(nodes[d].mod)].is_prelude: export_fns.push(get_fn_inst(d, [], nodes[d].pos))
     # the program's own functions are all checked, called or not (errors should not hide in
     # unused code); only what is reachable is compiled
-    for m in modules:
-        if m.is_prelude: continue
-        for d in m.decls:
+    loop m in modules:
+        if m.is_prelude and not migrate_info: continue
+        loop d in m.decls:
             if nodes[d].kind == .fn_ and not has_flag(d, NF_EXTERN) and not fn_sig(d).generic: get_fn_inst(d, [], nodes[d].pos)
-    for nm in runtime_names: runtime_fn(nm)
-    for nm in optional_runtime:
+    loop nm in runtime_names: runtime_fn(nm)
+    loop nm in optional_runtime:
         if prelude.get(intern(nm)) != none: runtime_fn(nm)
     # check everything reachable; library exports join once their module is in use
-    k := 0
-    exp_added: [bool] = [false; export_decls.len()]
-    while true:
-        while k < fns.len():
+    k = 0
+    exp_added: bool[] = fill(false, export_decls.len())
+    loop true:
+        loop k < fns.len():
             if fns[k].state == 0 and (fns[k].kind == FK_NORMAL or fns[k].kind == FK_INIT) and k != 0:
                 if fns[k].kind == FK_INIT:
-                    m := int(fns[k].mod)
+                    m = int(fns[k].mod)
                     cx = module_ctx[m]
                     fns[k].state = 1
-                    mark := scope_mark()
+                    mark = scope_mark()
                     ctxs[cx].floor = i32(sc_names.len())
-                    body := int(fns[k].body)
-                    for j in 0..nkids(body): check_stmt(kid(body, j))
+                    body = int(fns[k].body)
+                    loop j in [0..nkids(body)): check_stmt(kid(body, j))
                     scope_reset(mark)
                     zonk_tree(body)
-                    for l in fns[k].locals: locals[l].type = i32(zonk(int(locals[l].type)))
+                    loop l in fns[k].locals: locals[l].type = i32(zonk(int(locals[l].type)))
                     fns[k].ret = i32(T_VOID)
                     fns[k].state = 2
                     cx = -1
@@ -1569,10 +1628,10 @@ fn check_program(main_path: str):
             k += 1
 
         used: {int: bool} = {}
-        for fi in 1..fns.len():
+        loop fi in [1..fns.len()):
             if fns[fi].state == 2 and fns[fi].decl != 0: used[int(nodes[int(fns[fi].decl)].mod)] = true
-        more := false
-        for ei, d in export_decls:
+        more = false
+        loop ei in 0.. and d in export_decls:
             if exp_added[ei] or not modules[int(nodes[d].mod)].is_prelude: continue
             if used.get(int(nodes[d].mod)) != none:
                 exp_added[ei] = true
@@ -1580,8 +1639,8 @@ fn check_program(main_path: str):
                 more = true
         if not more: break
     # prelude init: referenced prelude globals in declaration order
-    pl: [int]
-    for g in global_ids:
+    pl: int[]
+    loop g in global_ids:
         if modules[int(globals[g].mod)].is_prelude and globals[g].state == 2: pl.push(int(globals[g].decl))
     set_list(int(fns[prelude_init].body), pl)
     zonk_tree(int(fns[prelude_init].body))

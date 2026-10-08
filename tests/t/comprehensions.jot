@@ -1,14 +1,14 @@
 # requires: jot (list comprehensions)
-fn main():
-    xs := [3, 1, 4, 1, 5, 9, 2, 6]
-    print([x * x for x in xs])
-    print([x for x in xs if x > 2])
-    print([(i, x) for i, x in xs if i % 2 == 0])
-    print([x * 10 + y for x in 0..3 for y in 0..2])
-    names := ["ann", "bo", "cyd"]
-    print([n.upper() for n in names if len(n) > 2])
-    grid := [[r * 3 + c for c in 0..3] for r in 0..3]
+main = ():
+    xs = [3, 1, 4, 1, 5, 9, 2, 6]
+    print([loop x in xs: x * x])
+    print([loop x in xs: if x > 2: x])
+    print([loop i in 0.. and x in xs: if i % 2 == 0: (i, x)])
+    print([loop x in [0..3): loop y in [0..2): x * 10 + y])
+    names = ["ann", "bo", "cyd"]
+    print([loop n in names: if len(n) > 2: n.upper()])
+    grid = [loop r in [0..3): [loop c in [0..3): r * 3 + c]]
     print(grid)
-    print([float(x) / 2.0 for x in 0..4])
-    k := 7
-    print([x + k for x in [1, 2]], [x for x in xs if x > 100])
+    print([loop x in [0..4): f64(x) / 2.0])
+    k = 7
+    print([loop x in [1, 2]: x + k], [loop x in xs: if x > 100: x])

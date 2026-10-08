@@ -2,7 +2,7 @@
 # Integer vregs are always 64-bit; floats are f64 or f32. Aggregates live in frame slots
 # or on the heap and are handled through addresses.
 
-use util
+use 'util.jot'
 
 enum Op:
     nop,
@@ -33,12 +33,12 @@ const M_FLOAT = 32
 const M_INDEX = 128
 const M_HDR = 64          # access to an object header word (refcount / length / capacity)
 
-fn mem_index(ins: Ins) -> int:
+mem_index = (ins: Ins) -> int:
     if int(ins.c) & M_INDEX == 0: return -1
     if ins.op == .store: return int(ins.dst)
     int(ins.b)
 
-fn mem_scale(ins: Ins) -> int: (int(ins.c) >> 8) & 3
+mem_scale = (ins: Ins) -> int: (int(ins.c) >> 8) & 3
 
 # facts for the optimizer (Op.assume)
 const A_RC1 = 1       # the array/string object a (if not null) has refcount 1
@@ -56,176 +56,176 @@ struct IrFn:
     name: str
     nparams: int
     ret: int          # VI/VF/VS or -1 for none
-    vtypes: [i8]
-    slot_size: [i32]
-    slot_align: [i32]
-    code: [Ins]
-    args: [i32]
+    vtypes: i8[]
+    slot_size: i32[]
+    slot_align: i32[]
+    code: Ins[]
+    args: i32[]
     cabi: bool
     export_name: str
     fn_index: int
     raw_mem: bool     # dereferences raw pointers (disables type-based alias reasoning)
-    kval: [int]       # values of VK vregs (indexed by vreg; may be shorter than vtypes)
+    kval: int[]       # values of VK vregs (indexed by vreg; may be shorter than vtypes)
 
 # current function being built
 ir: IrFn
 
-fn ir_begin(name: str, fn_index: int):
+ir_begin = (name: str, fn_index: int):
     ir = IrFn(name = name, ret = -1, fn_index = fn_index)
     kc_fn += 1
 
-fn vreg(ty: int) -> int:
+vreg = (ty: int) -> int:
     ir.vtypes.push(i8(ty))
     ir.vtypes.len() - 1
 
-fn vtype(v: int) -> int:
-    t := int(ir.vtypes[v])
+vtype = (v: int) -> int:
+    t = int(ir.vtypes[v])
     if t == VK: return VI
     t
 
-fn is_kv(v: int) -> bool: int(ir.vtypes[v]) == VK
-fn kv_of(v: int) -> int: ir.kval[v]
+is_kv = (v: int) -> bool: int(ir.vtypes[v]) == VK
+kv_of = (v: int) -> int: ir.kval[v]
 
 # per-function cache of constant vregs (direct mapped; constants are immutable, so sharing is safe)
-kc_val: [int] = [0; 256]
-kc_reg: [int] = [0; 256]
-kc_fn := 0
-kc_epoch: [int] = [0; 256]
+kc_val: int[] = fill(0, 256)
+kc_reg: int[] = fill(0, 256)
+kc_fn = 0
+kc_epoch: int[] = fill(0, 256)
 
 # a constant vreg (32-bit values only: backends use them as immediates)
-fn k_vreg(v: int) -> int:
-    slot := (v ^ (v >> 8)) & 255
+k_vreg = (v: int) -> int:
+    slot = ((v xor (v >> 8))) & 255
     if kc_epoch[slot] == kc_fn and kc_val[slot] == v: return kc_reg[slot]
-    d := k_vreg_new(v)
+    d = k_vreg_new(v)
     kc_epoch[slot] = kc_fn
     kc_val[slot] = v
     kc_reg[slot] = d
     d
 
-fn k_vreg_new(v: int) -> int:
-    d := ir.vtypes.len()
+k_vreg_new = (v: int) -> int:
+    d = ir.vtypes.len()
     ir.vtypes.push(i8(VK))
-    while ir.kval.len() < d: ir.kval.push(0)
+    loop ir.kval.len() < d: ir.kval.push(0)
     ir.kval.push(v)
     d
 
-fn ir_fits32(v: int) -> bool: v >= -2147483648 and v <= 2147483647
+ir_fits32 = (v: int) -> bool: v >= -2147483648 and v <= 2147483647
 
-fn new_slot(size: int, align: int) -> int:
+new_slot = (size: int, align: int) -> int:
     ir.slot_size.push(i32(size))
-    a := align
+    a = align
     if a < 8: a = 8
     ir.slot_align.push(i32(a))
     ir.slot_size.len() - 1
 
-fn emit(op: Op, ty: int, dst: int, a: int, b: int, c: int, imm: int) -> int:
+emit = (op: Op, ty: int, dst: int, a: int, b: int, c: int, imm: int) -> int:
     ir.code.push(Ins(op, i32(ty), i32(dst), i32(a), i32(b), i32(c), imm))
     ir.code.len() - 1
 
-fn e_iconst(v: int) -> int:
+e_iconst = (v: int) -> int:
     if ir_fits32(v): return k_vreg(v)
-    d := vreg(VI)
+    d = vreg(VI)
     emit(.iconst, VI, d, 0, 0, 0, v)
     d
 
-fn e_fconst(f: float, ty: int) -> int:
-    d := vreg(ty)
-    bits := f as int
+e_fconst = (f: f64, ty: int) -> int:
+    d = vreg(ty)
+    bits = f as int
     if ty == VS: bits = int((f32(f) as i32) as u32)
     emit(.fconst, ty, d, 0, 0, 0, bits)
     d
 
-fn e_bin(op: Op, ty: int, a: int, b: int) -> int:
-    rt := ty
+e_bin = (op: Op, ty: int, a: int, b: int) -> int:
+    rt = ty
     if op == .eq or op == .ne or op == .lts or op == .les or op == .gts or op == .ges or op == .ltu or op == .leu or op == .gtu or op == .geu or op == .feq or op == .fne or op == .flt or op == .fle or op == .fgt or op == .fge: rt = VI
-    d := vreg(rt)
+    d = vreg(rt)
     emit(op, ty, d, a, b, 0, 0)
     d
 
-fn e_un(op: Op, ty: int, a: int) -> int:
-    rt := ty
+e_un = (op: Op, ty: int, a: int) -> int:
+    rt = ty
     if op == .i2f or op == .u2f: rt = ty
-    d := vreg(rt)
+    d = vreg(rt)
     emit(op, ty, d, a, 0, 0, 0)
     d
 
-fn e_mov(dst: int, src: int):
+e_mov = (dst: int, src: int):
     if is_kv(dst): ice("assignment to a constant vreg")
     emit(.mov, vtype(dst), dst, src, 0, 0, 0)
 
-fn e_addi(a: int, k: int) -> int:
+e_addi = (a: int, k: int) -> int:
     if k == 0: return a
     e_bin(.add, VI, a, e_iconst(k))
 
 # load size bytes from [addr + off]; mode = size | M_SIGNED | M_FLOAT
-fn e_load(ty: int, addr: int, off: int, mode: int) -> int:
-    d := vreg(ty)
+e_load = (ty: int, addr: int, off: int, mode: int) -> int:
+    d = vreg(ty)
     emit(.load, ty, d, addr, 0, mode, off)
     d
 
-fn e_store(addr: int, off: int, val: int, mode: int): emit(.store, vtype(val), 0, addr, val, mode, off)
+e_store = (addr: int, off: int, val: int, mode: int): emit(.store, vtype(val), 0, addr, val, mode, off)
 
-fn e_slot(s: int) -> int:
-    d := vreg(VI)
+e_slot = (s: int) -> int:
+    d = vreg(VI)
     emit(.slot, VI, d, s, 0, 0, 0)
     d
 
-fn e_copy(dst: int, src: int, size: int): emit(.copy, VI, 0, dst, src, 0, size)
+e_copy = (dst: int, src: int, size: int): emit(.copy, VI, 0, dst, src, 0, size)
 
 # float vector arithmetic: dst[0..n] = b[0..n] op c[0..n] (f32 lanes); b or c may instead be a
 # scalar f32 vreg used for every lane (VOP_SPLAT_B / VOP_SPLAT_C). op: 0 add, 1 sub, 2 mul, 3 div
 const VOP_SPLAT_B = 0x100
 const VOP_SPLAT_C = 0x200
-fn e_vop(dst: int, bsrc: int, csrc: int, kind: int, n: int, flags: int): emit(.vop, VI, 0, dst, bsrc, csrc, kind | (n << 4) | flags)
-fn e_zero(dst: int, size: int): emit(.zero, VI, 0, dst, 0, 0, size)
+e_vop = (dst: int, bsrc: int, csrc: int, kind: int, n: int, flags: int): emit(.vop, VI, 0, dst, bsrc, csrc, kind | (n << 4) | flags)
+e_zero = (dst: int, size: int): emit(.zero, VI, 0, dst, 0, 0, size)
 
-fn e_call(f: int, args: [int], rt: int) -> int:
-    start := ir.args.len()
-    for a in args: ir.args.push(i32(a))
-    d := -1
+e_call = (f: int, args: int[], rt: int) -> int:
+    start = ir.args.len()
+    loop a in args: ir.args.push(i32(a))
+    d = -1
     if rt >= 0: d = vreg(rt)
     emit(.call, rt, d, i32(start), i32(args.len()), 0, f)
     d
 
-fn e_calli(fp: int, args: [int], rt: int, cabi: bool) -> int:
-    start := ir.args.len()
-    for a in args: ir.args.push(i32(a))
-    d := -1
+e_calli = (fp: int, args: int[], rt: int, cabi: bool) -> int:
+    start = ir.args.len()
+    loop a in args: ir.args.push(i32(a))
+    d = -1
     if rt >= 0: d = vreg(rt)
-    op := Op.calli
+    op = Op.calli
     if cabi: op = .callc
     emit(op, rt, d, i32(start), i32(args.len()), i32(fp), 0)
     d
 
-fn e_block(): emit(.block, 0, 0, 0, 0, 0, 0)
-fn e_loop(): emit(.loop, 0, 0, 0, 0, 0, 0)
-fn e_if(c: int): emit(.if_, 0, 0, c, 0, 0, 0)
-fn e_else(): emit(.else_, 0, 0, 0, 0, 0, 0)
-fn e_end(): emit(.end, 0, 0, 0, 0, 0, 0)
-fn e_br(depth: int): emit(.br, 0, 0, 0, 0, 0, depth)
-fn e_brif(c: int, depth: int): emit(.brif, 0, 0, c, 0, 0, depth)
-fn e_brtable(idx: int, depths: [int], default_depth: int):
-    start := ir.args.len()
-    for d in depths: ir.args.push(i32(d))
+e_block = (): emit(.block, 0, 0, 0, 0, 0, 0)
+e_loop = (): emit(.loop, 0, 0, 0, 0, 0, 0)
+e_if = (c: int): emit(.if_, 0, 0, c, 0, 0, 0)
+e_else = (): emit(.else_, 0, 0, 0, 0, 0, 0)
+e_end = (): emit(.end, 0, 0, 0, 0, 0, 0)
+e_br = (depth: int): emit(.br, 0, 0, 0, 0, 0, depth)
+e_brif = (c: int, depth: int): emit(.brif, 0, 0, c, 0, 0, depth)
+e_brtable = (idx: int, depths: int[], default_depth: int):
+    start = ir.args.len()
+    loop d in depths: ir.args.push(i32(d))
     emit(.brtable, 0, 0, idx, depths.len(), start, default_depth)
-fn e_ret(v: int): emit(.ret, 0, 0, v, 0, 0, 0)
-fn e_trap(): emit(.trap, 0, 0, 0, 0, 0, 0)
+e_ret = (v: int): emit(.ret, 0, 0, v, 0, 0, 0)
+e_trap = (): emit(.trap, 0, 0, 0, 0, 0, 0)
 
-fn op_name(op: Op) -> str: "{op}"
+op_name = (op: Op) -> str: "{op}"
 
-fn dump_ir():
+dump_ir = ():
     print("fn {ir.name} (params {ir.nparams}, ret {ir.ret}):")
-    for i, s in ir.slot_size: print("  slot{i}: size {s} align {ir.slot_align[i]}")
-    ind := 1
-    for ins in ir.code:
+    loop i in 0.. and s in ir.slot_size: print("  slot{i}: size {s} align {ir.slot_align[i]}")
+    ind = 1
+    loop ins in ir.code:
         if ins.op == .end or ins.op == .else_: ind -= 1
-        pad := repeat("  ", ind)
-        line := "{pad}{ins.op}"
+        pad = repeat("  ", ind)
+        line = "{pad}{ins.op}"
         if ins.dst >= 0 and ins.op != .store and ins.op != .br and ins.op != .brif and ins.op != .brtable and ins.op != .block and ins.op != .loop and ins.op != .end and ins.op != .if_ and ins.op != .else_ and ins.op != .ret: line = "{pad}v{ins.dst} = {ins.op}"
         line += " a={ins.a} b={ins.b} c={ins.c} imm={ins.imm} ty={ins.ty}"
         if ins.op == .call or ins.op == .calli or ins.op == .callc or ins.op == .syscall or ins.op == .intr:
-            al := ""
-            for k in 0..int(ins.b): al += " v{ir.args[int(ins.a) + k]}"
+            al = ""
+            loop k in [0..int(ins.b)): al += " v{ir.args[int(ins.a) + k]}"
             line += " args:{al}"
         print(line)
         if ins.op == .block or ins.op == .loop or ins.op == .if_ or ins.op == .else_: ind += 1

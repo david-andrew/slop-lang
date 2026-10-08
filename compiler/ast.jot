@@ -1,7 +1,7 @@
 # Abstract syntax tree. Nodes live in one global array and refer to each other by index.
 # Node 0 is the "no node" sentinel.
 
-use util
+use 'util.jot'
 
 enum NK:
     nil,
@@ -18,7 +18,9 @@ enum NK:
     # type expressions
     tname, tarray, tmap, ttuple, topt, tptr, tfn,
     # patterns
-    pwild, plit, prange, pvariant
+    pwild, plit, prange, pvariant,
+    # added with syntax revision 2
+    tunion, istype, loopx, lhead
 
 # node flags
 const NF_MUT = 1
@@ -32,6 +34,11 @@ const NF_LITERAL = 256
 const NF_GLOBAL = 2048
 const NF_FNREF_ARG = 4096
 const NF_CABI = 8192
+const NF_CHARLIKE = 512       # a one-character string literal (an integer where one is expected)
+const NF_SPREAD = 1024        # array literal element `xs...`
+const NF_BROADCAST = 16384    # f.(x): applied elementwise
+const NF_STEP = 32768         # range `a,b..c`: c holds the second value
+const NF_BARE = 65536         # a range written without brackets (while parsing)
 
 struct Node:
     kind: NK
@@ -49,75 +56,75 @@ struct Node:
     name: i32
     sval: i32
     ival: int
-    fval: float
+    fval: f64
     type: i32
     sym: i32
     aux: i32
     aux2: i32
     mod: i32
 
-nodes: [Node] = [Node()]
-lists: [i32]
+nodes: Node[] = [Node()]
+lists: i32[]
 
-fn mk(kind: NK, pos: int) -> int:
+mk = (kind: NK, pos: int) -> int:
     nodes.push(Node(kind = kind, pos = pos))
     nodes.len() - 1
 
-fn mklist(xs: [int]) -> int:
-    start := lists.len()
-    for x in xs: lists.push(i32(x))
+mklist = (xs: int[]) -> int:
+    start = lists.len()
+    loop x in xs: lists.push(i32(x))
     start
 
-fn set_list(n: int, xs: [int]):
+set_list = (n: int, xs: int[]):
     nodes[n].list = i32(mklist(xs))
     nodes[n].nlist = i32(xs.len())
 
-fn set_list2(n: int, xs: [int]):
+set_list2 = (n: int, xs: int[]):
     nodes[n].list2 = i32(mklist(xs))
     nodes[n].nlist2 = i32(xs.len())
 
-fn kid(n: int, i: int) -> int: int(lists[int(nodes[n].list) + i])
-fn kid2(n: int, i: int) -> int: int(lists[int(nodes[n].list2) + i])
-fn nkids(n: int) -> int: int(nodes[n].nlist)
-fn nkids2(n: int) -> int: int(nodes[n].nlist2)
-fn set_kid(n: int, i: int, v: int): lists[int(nodes[n].list) + i] = i32(v)
-fn set_kid2(n: int, i: int, v: int): lists[int(nodes[n].list2) + i] = i32(v)
+kid = (n: int, i: int) -> int: int(lists[int(nodes[n].list) + i])
+kid2 = (n: int, i: int) -> int: int(lists[int(nodes[n].list2) + i])
+nkids = (n: int) -> int: int(nodes[n].nlist)
+nkids2 = (n: int) -> int: int(nodes[n].nlist2)
+set_kid = (n: int, i: int, v: int): lists[int(nodes[n].list) + i] = i32(v)
+set_kid2 = (n: int, i: int, v: int): lists[int(nodes[n].list2) + i] = i32(v)
 
-fn kids(n: int) -> [int]:
-    out: [int]
-    s := int(nodes[n].list)
-    for i in 0..int(nodes[n].nlist): out.push(int(lists[s + i]))
+kids = (n: int) -> int[]:
+    out: int[]
+    s = int(nodes[n].list)
+    loop i in [0..int(nodes[n].nlist)): out.push(int(lists[s + i]))
     out
 
-fn kids2(n: int) -> [int]:
-    out: [int]
-    s := int(nodes[n].list2)
-    for i in 0..int(nodes[n].nlist2): out.push(int(lists[s + i]))
+kids2 = (n: int) -> int[]:
+    out: int[]
+    s = int(nodes[n].list2)
+    loop i in [0..int(nodes[n].nlist2)): out.push(int(lists[s + i]))
     out
 
-fn has_flag(n: int, f: int) -> bool: int(nodes[n].flags) & f != 0
-fn add_flag(n: int, f: int): nodes[n].flags = i32(int(nodes[n].flags) | f)
-fn clear_flag(n: int, f: int): nodes[n].flags = i32(int(nodes[n].flags) & ~f)
+has_flag = (n: int, f: int) -> bool: int(nodes[n].flags) & f != 0
+add_flag = (n: int, f: int): nodes[n].flags = i32(int(nodes[n].flags) | f)
+clear_flag = (n: int, f: int): nodes[n].flags = i32(int(nodes[n].flags) & ~f)
 
 # deep copy of a subtree (used to instantiate generic functions)
-fn clone(n: int) -> int:
+clone = (n: int) -> int:
     if n == 0: return 0
-    c := nodes.len()
+    c = nodes.len()
     nodes.push(nodes[n])
-    k := nodes[n].kind
+    k = nodes[n].kind
     nodes[c].a = i32(clone(int(nodes[n].a)))
     nodes[c].b = i32(clone(int(nodes[n].b)))
     nodes[c].c = i32(clone(int(nodes[n].c)))
     nodes[c].d = i32(clone(int(nodes[n].d)))
-    nl := int(nodes[n].nlist)
+    nl = int(nodes[n].nlist)
     if nl > 0:
-        xs: [int]
-        for i in 0..nl: xs.push(clone(kid(n, i)))
+        xs: int[]
+        loop i in [0..nl): xs.push(clone(kid(n, i)))
         set_list(c, xs)
-    nl2 := int(nodes[n].nlist2)
+    nl2 = int(nodes[n].nlist2)
     if nl2 > 0:
-        xs: [int]
-        for i in 0..nl2: xs.push(clone(kid2(n, i)))
+        xs: int[]
+        loop i in [0..nl2): xs.push(clone(kid2(n, i)))
         set_list2(c, xs)
     if k != .fn_ and k != .struct_ and k != .enum_: nodes[c].sym = 0
     if k != .conv: nodes[c].type = 0

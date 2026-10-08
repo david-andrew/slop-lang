@@ -1,36 +1,36 @@
 # Operating system access: files, arguments, environment, time.
 
-fn exit(code: int): __exit(code)
+exit = (code: int): __exit(code)
 
 # command line arguments (args()[0] is the program path)
-fn args() -> [str]:
-    out: [str]
+args = () -> str[]:
+    out: str[]
     when TARGET != "wasm":
-        sp := __argv() as *int
-        argc := sp[0]
-        argv := (sp + 1) as **u8
-        for i in 0..argc: out.push(__cstr(argv[i]))
+        sp = __argv() as *int
+        argc = sp[0]
+        argv = (sp + 1) as **u8
+        loop i in [0..argc): out.push(__cstr(argv[i]))
     out
 
-fn __cstr(p: *u8) -> str:
+__cstr = (p: *u8) -> str:
     if p == null: return ""
-    n := 0
-    while p[n] != 0: n += 1
-    q := __str_new(n)
+    n = 0
+    loop p[n] != 0: n += 1
+    q = __str_new(n)
     mem_copy(q + 24, p, n)
     q as str
 
-fn env(name: str) -> str?:
+env = (name: str) -> str?:
     when TARGET != "wasm":
-        sp := __argv() as *int
-        argc := sp[0]
-        envp := (sp + 2 + argc) as **u8
-        i := 0
-        while envp[i] != null:
-            e := envp[i]
-            k := 0
-            ok := true
-            while k < len(name):
+        sp = __argv() as *int
+        argc = sp[0]
+        envp = (sp + 2 + argc) as **u8
+        i = 0
+        loop envp[i] != null:
+            e = envp[i]
+            k = 0
+            ok = true
+            loop k < len(name):
                 if e[k] != name[k]:
                     ok = false
                     break
@@ -39,81 +39,81 @@ fn env(name: str) -> str?:
             i += 1
     none
 
-fn __zstr(s: str) -> str:
+__zstr = (s: str) -> str:
     # strings always carry a NUL terminator, except the empty string
     if len(s) == 0: return "\0"
     s
 
 # read a whole file; none if it cannot be read
-fn read_file(path: str) -> str?:
+read_file = (path: str) -> str?:
     when TARGET == "wasm":
         return none
     else:
-        fd := syscall(2, data(__zstr(path)), 0, 0)
+        fd = syscall(2, data(__zstr(path)), 0, 0)
         if fd < 0: return none
         defer syscall(3, fd)
-        size := syscall(8, fd, 0, 2)
+        size = syscall(8, fd, 0, 2)
         if size < 0: return none
         syscall(8, fd, 0, 0)
-        p := __str_new(size)
-        got := 0
-        while got < size:
-            r := syscall(0, fd, p + 24 + got, size - got)
+        p = __str_new(size)
+        got = 0
+        loop got < size:
+            r = syscall(0, fd, p + 24 + got, size - got)
             if r <= 0: break
             got += r
         (p as *int)[1] = got
         p as str
 
-fn read_bytes(path: str) -> [u8]?:
-    if s := read_file(path): return bytes(s)
+read_bytes = (path: str) -> u8[]?:
+    if let s = read_file(path): return bytes(s)
     none
 
-fn write_file(path: str, contents: str) -> bool:
+write_file = (path: str, contents: str) -> bool:
     when TARGET == "wasm":
         return false
     else:
-        fd := syscall(2, data(__zstr(path)), 0x241, 0x1A4)
+        fd = syscall(2, data(__zstr(path)), 0x241, 0x1A4)
         if fd < 0: return false
         defer syscall(3, fd)
-        off := 0
-        n := len(contents)
-        while off < n:
-            r := syscall(1, fd, data(contents) + off, n - off)
+        off = 0
+        n = len(contents)
+        loop off < n:
+            r = syscall(1, fd, data(contents) + off, n - off)
             if r <= 0: return false
             off += r
         true
 
-fn write_bytes(path: str, b: [u8]) -> bool: write_file(path, str_from_bytes(b))
+write_bytes = (path: str, b: u8[]) -> bool: write_file(path, str_from_bytes(b))
 
-fn file_exists(path: str) -> bool:
+file_exists = (path: str) -> bool:
     when TARGET == "wasm":
         return false
     else:
         syscall(21, data(__zstr(path)), 0) == 0
 
-fn make_executable(path: str) -> bool:
+make_executable = (path: str) -> bool:
     when TARGET == "wasm":
         return false
     else:
         syscall(90, data(__zstr(path)), 0x1ED) == 0
 
-fn delete_file(path: str) -> bool:
+delete_file = (path: str) -> bool:
     when TARGET == "wasm":
         return false
     else:
         syscall(87, data(__zstr(path))) == 0
 
 # seconds since an arbitrary point (monotonic clock)
-fn time() -> float:
+time = () -> f64:
     when TARGET == "wasm":
         return __wasm_now() / 1000.0
     else:
         ts: (int, int)
         syscall(228, 1, &ts)
-        float(ts.0) + float(ts.1) * 1e-9
+        f64(ts.0) + f64(ts.1) * 1e-9
 
 # nanoseconds since an arbitrary point (monotonic clock)
-fn time_ns() -> int:
+time_ns = () -> int:
     when TARGET == "wasm":
         return int(__wasm_now() * 1000000.0)
     else:
@@ -121,31 +121,31 @@ fn time_ns() -> int:
         syscall(228, 1, &ts)
         ts.0 * 1000000000 + ts.1
 
-fn sleep(seconds: float):
+sleep = (seconds: f64):
     when TARGET != "wasm":
-        ts := (int(seconds), int((seconds - floor(seconds)) * 1e9))
+        ts = (int(seconds), int((seconds - floor(seconds)) * 1e9))
         syscall(35, &ts, 0)
 
 # print without a trailing newline
-fn write(s: str): __write_fd(1, data(s), len(s))
-fn eprint(s: str):
+write = (s: str): __write_fd(1, data(s), len(s))
+eprint = (s: str):
     __write_fd(2, data(s), len(s))
     __write_fd(2, data("\n"), 1)
 
 # names of the entries in a directory (excluding . and ..)
-fn list_dir(path: str) -> [str]:
-    out: [str]
+list_dir = (path: str) -> str[]:
+    out: str[]
     when TARGET != "wasm":
-        fd := syscall(2, data(__zstr(path)), 0x10000, 0)
+        fd = syscall(2, data(__zstr(path)), 0x10000, 0)
         if fd < 0: return out
-        buf := __alloc(8192)
-        while true:
-            n := syscall(217, fd, buf, 8192)
+        buf = __alloc(8192)
+        loop true:
+            n = syscall(217, fd, buf, 8192)
             if n <= 0: break
-            off := 0
-            while off < n:
-                reclen := int(((buf + off + 16) as *u16)[0])
-                name := __cstr(buf + off + 19)
+            off = 0
+            loop off < n:
+                reclen = int(((buf + off + 16) as *u16)[0])
+                name = __cstr(buf + off + 19)
                 if name != "." and name != "..": out.push(name)
                 off += reclen
         __free(buf)
@@ -153,58 +153,58 @@ fn list_dir(path: str) -> [str]:
     out
 
 # absolute path of the running executable
-fn exe_path() -> str:
+exe_path = () -> str:
     when TARGET == "wasm":
         return ""
     else:
-        buf := __alloc(4096)
-        n := syscall(89, data("/proc/self/exe"), buf, 4095)
-        s := ""
+        buf = __alloc(4096)
+        n = syscall(89, data("/proc/self/exe"), buf, 4095)
+        s = ""
         if n > 0:
-            q := __str_new(n)
+            q = __str_new(n)
             mem_copy(q + 24, buf, n)
             s = q as str
         __free(buf)
         s
 
 # replace the current process with another program (returns only on failure)
-fn exec(path: str, argv: [str]) -> bool:
+exec = (path: str, argv: str[]) -> bool:
     when TARGET == "wasm":
         return false
     else:
-        ptrs := __alloc(8 * (argv.len() + 1))
-        pp := ptrs as **u8
-        for i, a in argv: pp[i] = data(__zstr(a))
+        ptrs = __alloc(8 * (argv.len() + 1))
+        pp = ptrs as **u8
+        loop i in 0.. and a in argv: pp[i] = data(__zstr(a))
         pp[argv.len()] = null
-        sp := __argv() as *int
-        argc := sp[0]
-        envp := (sp + 2 + argc) as *u8
+        sp = __argv() as *int
+        argc = sp[0]
+        envp = (sp + 2 + argc) as *u8
         syscall(59, data(__zstr(path)), ptrs, envp)
         false
 
-fn chmod(path: str, mode: int) -> bool:
+chmod = (path: str, mode: int) -> bool:
     when TARGET == "wasm":
         return false
     else:
         syscall(90, data(__zstr(path)), mode) == 0
 
-fn mkdir(path: str) -> bool:
+mkdir = (path: str) -> bool:
     when TARGET == "wasm":
         return false
     else:
-        r := syscall(83, data(__zstr(path)), 0x1ED)
+        r = syscall(83, data(__zstr(path)), 0x1ED)
         r == 0 or r == -17
 
 # ---------------- `jot test` support ----------------
-__tests_run := 0
-__test_t0 := 0.0
+__tests_run = 0
+__test_t0 = 0.0
 
-fn __test_begin(name: str):
+__test_begin = (name: str):
     write("test {name} ... ")
     __test_t0 = time()
 
-fn __test_end():
+__test_end = ():
     __tests_run += 1
     print("ok ({(time() - __test_t0) * 1000:.1} ms)")
 
-fn __test_done(n: int): print("{n} tests passed")
+__test_done = (n: int): print("{n} tests passed")

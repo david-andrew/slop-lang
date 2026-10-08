@@ -1,6 +1,6 @@
 # Lexer: source text -> tokens, with INDENT/DEDENT for indentation-based blocks.
 
-use util
+use 'util.jot'
 
 enum Tok:
     eof, newline, indent, dedent, ident, int_lit, float_lit, str_lit,
@@ -11,11 +11,15 @@ enum Tok:
     comma, colon, semi, dot, dotdot, dotdoteq, arrow, decl,
     assign, pluseq, minuseq, stareq, slasheq, percenteq, ampeq, pipeeq, careteq, shleq, shreq,
     plus, minus, star, slash, percent, amp, pipe, caret, tilde, shl, shr,
-    eq, ne, lt, le, gt, ge, question, qq, bang, at, starstar
+    eq, ne, lt, le, gt, ge, question, qq, bang, at, starstar,
+    kw_loop, kw_let, kw_xor, kw_is, ellipsis, dotop
 
 const STRF_RAW = 1
 const STRF_TRIPLE = 2
 const INTF_CHAR = 4
+const TF_SPACE = 8          # whitespace right before the token
+const TF_NL = 16            # a line break before the token (also inside brackets)
+const INTF_UNIT = 32        # a number with a unit suffix (already converted to the base unit)
 
 struct Token:
     kind: Tok
@@ -24,9 +28,9 @@ struct Token:
     start: i32      # byte offset of token text
     len: i32
     ival: int
-    fval: float
+    fval: f64
 
-fn tok_name(k: Tok) -> str:
+tok_name = (k: Tok) -> str:
     match k:
         eof: "end of file"
         newline: "newline"
@@ -48,12 +52,14 @@ fn tok_name(k: Tok) -> str:
         dot: "'.'"
         dotdot: "'..'"
         dotdoteq: "'..='"
+        ellipsis: "'...'"
+        dotop: "dotted operator"
         arrow: "'->'"
         decl: "':='"
         assign: "'='"
         _: "'{tok_text(k)}'"
 
-fn tok_text(k: Tok) -> str:
+tok_text = (k: Tok) -> str:
     match k:
         kw_fn: "fn"
         kw_struct: "struct"
@@ -117,6 +123,10 @@ fn tok_text(k: Tok) -> str:
         bang: "!"
         at: "@"
         starstar: "**"
+        kw_loop: "loop"
+        kw_let: "let"
+        kw_xor: "xor"
+        kw_is: "is"
         _: tok_name(k)
 
 keywords: {str: Tok} = {
@@ -127,81 +137,86 @@ keywords: {str: Tok} = {
     "null": Tok.kw_null, "and": Tok.kw_and, "or": Tok.kw_or, "not": Tok.kw_not, "mut": Tok.kw_mut,
     "when": Tok.kw_when, "defer": Tok.kw_defer, "extern": Tok.kw_extern, "test": Tok.kw_test,
     "build": Tok.kw_build, "use": Tok.kw_use, "pass": Tok.kw_pass,
+    "loop": Tok.kw_loop, "let": Tok.kw_let, "xor": Tok.kw_xor, "is": Tok.kw_is,
 }
 
 # lexer state
-lx_file := 0
-lx_src := ""
+lx_file = 0
+lx_src = ""
 lx_p: *u8 = null
-lx_n := 0
-lx_i := 0
-lx_toks: [Token]
-lx_indents: [int]
-lx_ctx_block: [bool]
-lx_ctx_base: [int]
-lx_line_indent := 0
+lx_n = 0
+lx_i = 0
+lx_toks: Token[]
+lx_indents: int[]
+lx_ctx_block: bool[]
+lx_ctx_base: int[]
+lx_line_indent = 0
 
 # source offset of the text being lexed (non-zero for expressions inside string literals)
-lx_base := 0
+lx_base = 0
 
-fn lx_err(off: int, msg: str): fatal(mkpos(lx_file, lx_base + off), msg)
+lx_err = (off: int, msg: str): fatal(mkpos(lx_file, lx_base + off), msg)
 
-fn lx_emit(kind: Tok, start: int, n: int):
-    lx_toks.push(Token(kind, 0, (lx_file << 40) | (lx_base + start), i32(start), i32(n), 0, 0.0))
+lx_pending = 0           # TF_SPACE / TF_NL for the next token
 
-lx_open: [int]          # positions of open brackets (for error messages)
+lx_emit = (kind: Tok, start: int, n: int):
+    lx_toks.push(Token(kind, i32(lx_pending), (lx_file << 40) | (lx_base + start), i32(start), i32(n), 0, 0.0))
+    lx_pending = 0
+
+lx_open: int[]          # positions of open brackets (for error messages)
+lx_open_tok: int[]      # token indexes of open brackets (each gets its partner's index)
 
 # keyword kinds by interned name id (Tok.ident for other names)
-kw_tok: [Tok]
+kw_tok: Tok[]
 
-fn init_keywords():
-    for k, v in keywords:
-        id := intern(k)
-        while kw_tok.len() <= id: kw_tok.push(.ident)
+init_keywords = ():
+    loop k, v in keywords:
+        id = intern(k)
+        loop kw_tok.len() <= id: kw_tok.push(.ident)
         kw_tok[id] = v
 
-fn lx_last_kind() -> Tok:
+lx_last_kind = () -> Tok:
     if lx_toks.len() == 0: return Tok.newline
     lx_toks[lx_toks.len() - 1].kind
 
-fn lx_emit_newline():
-    k := lx_last_kind()
+lx_emit_newline = ():
+    k = lx_last_kind()
     if k != .newline and k != .indent and k != .dedent: lx_emit(.newline, lx_i, 0)
 
-fn lx_top_block() -> bool: lx_ctx_block[lx_ctx_block.len() - 1]
+lx_top_block = () -> bool: lx_ctx_block[lx_ctx_block.len() - 1]
 
 # handle the start of a line (indentation)
-fn lx_line_start():
-    p := lx_p
-    while true:
-        ind := 0
-        q := lx_i
-        while true:
-            c := p[q]
+lx_line_start = ():
+    p = lx_p
+    loop true:
+        ind = 0
+        q = lx_i
+        loop true:
+            c = p[q]
             if c == ' ': ind += 1
             else if c == '\t': ind = (ind + 4) & ~3
             else if c == '\r': pass
             else: break
             q += 1
-        c := p[q]
+        c = p[q]
         if q >= lx_n:
             lx_i = q
             return
         if c == '\n' or c == '#':
-            while q < lx_n and p[q] != '\n': q += 1
+            loop q < lx_n and p[q] != '\n': q += 1
             if q < lx_n: q += 1
             lx_i = q
             continue
         lx_i = q
         lx_line_indent = ind
         if not lx_top_block(): return
-        base := lx_ctx_base[lx_ctx_base.len() - 1]
-        top := lx_indents[lx_indents.len() - 1]
+        base = lx_ctx_base[lx_ctx_base.len() - 1]
+        top = lx_indents[lx_indents.len() - 1]
         if ind > top:
             lx_indents.push(ind)
             lx_emit(.indent, q, 0)
         else:
-            while lx_indents.len() > base and ind < lx_indents[lx_indents.len() - 1]:
+            loop lx_indents.len() > base and ind < lx_indents[lx_indents.len() - 1]:
                 lx_indents.pop()
                 lx_emit(.dedent, q, 0)
             if lx_indents.len() == base and lx_ctx_block.len() > 1:
@@ -212,11 +227,11 @@ fn lx_line_start():
             if ind != lx_indents[lx_indents.len() - 1]: lx_err(q, "inconsistent indentation")
         return
 
-fn lx_close_block_ctx(at: int):
-    while lx_ctx_block.len() > 1 and lx_top_block():
-        base := lx_ctx_base[lx_ctx_base.len() - 1]
+lx_close_block_ctx = (at: int):
+    loop lx_ctx_block.len() > 1 and lx_top_block():
+        base = lx_ctx_base[lx_ctx_base.len() - 1]
         lx_emit_newline()
-        while lx_indents.len() > base:
+        loop lx_indents.len() > base:
             lx_indents.pop()
             lx_emit(.dedent, at, 0)
         lx_indents.pop()
@@ -224,37 +239,37 @@ fn lx_close_block_ctx(at: int):
         lx_ctx_base.pop()
 
 # `+` or `+=` style operators
-fn op_or_assign(c1: u8, plain: Tok, with_eq: Tok) -> Tok:
+op_or_assign = (c1: u8, plain: Tok, with_eq: Tok) -> Tok:
     if c1 == '=': return with_eq
     plain
 
 # character classes for the lexer's hot loops: 1 = starts an identifier, 2 = continues one
 lx_cls: *u8 = null
 
-fn lx_init_classes():
+lx_init_classes = ():
     lx_cls = __alloc(256)
-    for c in 0..256:
-        k := 0
+    loop c in [0..256):
+        k = 0
         if (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' or c >= 0x80: k = 3
         else if c >= '0' and c <= '9': k = 2
         lx_cls[c] = u8(k)
 
-fn is_ident_start(c: u8) -> bool: (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' or c >= 0x80
-fn is_ident_char(c: u8) -> bool: is_ident_start(c) or (c >= '0' and c <= '9')
+is_ident_start = (c: u8) -> bool: (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' or c >= 0x80
+is_ident_char = (c: u8) -> bool: is_ident_start(c) or (c >= '0' and c <= '9')
 
-fn lx_number():
-    p := lx_p
-    s := lx_i
-    i := s
+lx_number = ():
+    p = lx_p
+    s = lx_i
+    i = s
     v: u64 = 0
     if p[i] == '0' and (p[i + 1] == 'x' or p[i + 1] == 'X' or p[i + 1] == 'b' or p[i + 1] == 'B' or p[i + 1] == 'o' or p[i + 1] == 'O'):
-        b := p[i + 1]
+        b = p[i + 1]
         base: u64 = 8
         if b == 'x' or b == 'X': base = 16
         if b == 'b' or b == 'B': base = 2
         i += 2
-        while true:
-            c := p[i]
+        loop true:
+            c = p[i]
             d: u64 = 99
             if c == '_':
                 i += 1
@@ -268,44 +283,50 @@ fn lx_number():
         lx_i = i
     else:
         # integers are accumulated directly; floats are re-read by to_float
-        while true:
-            c := p[i]
+        loop true:
+            c = p[i]
             if c >= '0' and c <= '9':
                 v = v * 10 + u64(c - '0')
                 i += 1
             else if c == '_': i += 1
             else: break
-        is_float := false
+        is_float = false
         if p[i] == '.' and p[i + 1] >= '0' and p[i + 1] <= '9':
             is_float = true
             i += 1
-            while (p[i] >= '0' and p[i] <= '9') or p[i] == '_': i += 1
+            loop (p[i] >= '0' and p[i] <= '9') or p[i] == '_': i += 1
         if (p[i] == 'e' or p[i] == 'E') and ((p[i + 1] >= '0' and p[i + 1] <= '9') or ((p[i + 1] == '-' or p[i + 1] == '+') and p[i + 2] >= '0' and p[i + 2] <= '9')):
             is_float = true
             i += 1
             if p[i] == '-' or p[i] == '+': i += 1
-            while p[i] >= '0' and p[i] <= '9': i += 1
+            loop p[i] >= '0' and p[i] <= '9': i += 1
         lx_i = i
         if is_float:
+            if is_ident_start(p[i]):
+                lx_unit(s, lx_float(s, i))
+                return
             lx_emit(.float_lit, s, i - s)
             lx_toks[lx_toks.len() - 1].fval = lx_float(s, i)
             return
+    if is_ident_start(p[lx_i]):
+        lx_unit(s, f64(v))
+        return
     if is_ident_char(p[lx_i]): lx_err(lx_i, "invalid character in number literal")
     lx_emit(.int_lit, s, lx_i - s)
     lx_toks[lx_toks.len() - 1].ival = int(v)
 
 # value of the float literal at [s, e): short literals are exact with one operation (Clinger's
 # fast path); anything else goes through the correctly rounded library parser
-fn lx_float(s: int, e: int) -> float:
-    p := lx_p
-    mant := 0
-    nd := 0
-    exp := 0
-    i := s
-    simple := true
-    seen_dot := false
-    while i < e:
-        c := p[i]
+lx_float = (s: int, e: int) -> f64:
+    p = lx_p
+    mant = 0
+    nd = 0
+    exp = 0
+    i = s
+    simple = true
+    seen_dot = false
+    loop i < e:
+        c = p[i]
         if c >= '0' and c <= '9':
             if nd > 0 or c != '0':
                 nd += 1
@@ -315,12 +336,12 @@ fn lx_float(s: int, e: int) -> float:
         else if c == '.': seen_dot = true
         else if c == 'e' or c == 'E':
             i += 1
-            neg := false
+            neg = false
             if p[i] == '-' or p[i] == '+':
                 neg = p[i] == '-'
                 i += 1
-            x := 0
-            while i < e:
+            x = 0
+            loop i < e:
                 if x < 100000: x = x * 10 + int(p[i] - '0')
                 i += 1
             if neg: exp -= x
@@ -328,40 +349,75 @@ fn lx_float(s: int, e: int) -> float:
             break
         i += 1
     if simple and exp >= -22 and exp <= 22:
-        if exp >= 0: return float(mant) * __pow10(exp)
-        return float(mant) / __pow10(-exp)
-    digits: [u8]
-    for k in s..e:
+        if exp >= 0: return f64(mant) * __pow10(exp)
+        return f64(mant) / __pow10(-exp)
+    digits: u8[]
+    loop k in [s..e):
         if p[k] != '_': digits.push(p[k])
     to_float(str_from_bytes(digits)) ?? 0.0
 
-fn hexval(c: u8) -> int:
+# a number with a unit right after it (120ms, 2.5m, 90deg): the value in the base unit
+lx_unit = (s: int, v: f64):
+    p = lx_p
+    us = lx_i
+    i = us
+    loop lx_cls[p[i]] & 2 != 0: i += 1
+    name = lx_src[us..i)
+    f = unit_scale(name)
+    if f == 0.0: lx_err(us, "unknown unit '{name}' (a number cannot be followed directly by a name)")
+    lx_i = i
+    lx_emit(.float_lit, s, i - s)
+    lx_toks[lx_toks.len() - 1].fval = v * f
+    lx_toks[lx_toks.len() - 1].flags = i32(int(lx_toks[lx_toks.len() - 1].flags) | INTF_UNIT)
+
+# how many base units (s, m, kg, rad, N) one of these is; 0 for unknown names
+unit_scale = (u: str) -> f64:
+    match u:
+        "s", "sec", "second", "seconds": 1.0
+        "ms", "millisecond", "milliseconds": 0.001
+        "us", "microsecond", "microseconds": 0.000001
+        "ns", "nanosecond", "nanoseconds": 0.000000001
+        "min", "minute", "minutes": 60.0
+        "h", "hour", "hours": 3600.0
+        "m", "meter", "meters", "metre", "metres": 1.0
+        "cm", "centimeter", "centimeters": 0.01
+        "mm", "millimeter", "millimeters": 0.001
+        "km", "kilometer", "kilometers": 1000.0
+        "kg", "kilogram", "kilograms": 1.0
+        "g", "gram", "grams": 0.001
+        "rad", "radian", "radians": 1.0
+        "deg", "degree", "degrees": 0.017453292519943295
+        "turn", "turns": 6.283185307179586
+        "N", "newton", "newtons": 1.0
+        _: 0.0
+
+hexval = (c: u8) -> int:
     if c >= '0' and c <= '9': return int(c) - 48
     if c >= 'a' and c <= 'f': return int(c) - 87
     if c >= 'A' and c <= 'F': return int(c) - 55
     -1
 
-fn lx_string(raw: bool):
-    p := lx_p
-    s := lx_i
-    triple := p[s] == '"' and p[s + 1] == '"' and p[s + 2] == '"'
-    i := s + 1
+lx_string = (raw: bool):
+    p = lx_p
+    s = lx_i
+    q = p[s]
+    triple = q == '"' and p[s + 1] == '"' and p[s + 2] == '"'
+    i = s + 1
     if triple: i = s + 3
-    start := i
-    depth := 0
-    while true:
-        c := p[i]
+    start = i
+    depth = 0
+    loop true:
+        c = p[i]
         if i >= lx_n: lx_err(s, "unterminated string")
-        if not triple and c == '\n' and depth == 0: lx_err(s, "unterminated string (use \"\"\" for multi-line strings)")
         if depth == 0:
             if c == '\\' and not raw:
                 i += 2
                 continue
             if triple:
                 if c == '"' and p[i + 1] == '"' and p[i + 2] == '"': break
-            else if c == '"': break
-            if not raw and c == '{':
-                if p[i + 1] == '{':
+            else if c == q: break
+            if not raw and c == '{{':
+                if p[i + 1] == '{{':
                     i += 2
                     continue
                 depth = 1
@@ -369,16 +425,17 @@ fn lx_string(raw: bool):
                 continue
             i += 1
         else:
-            if c == '{': depth += 1
-            else if c == '}': depth -= 1
-            else if c == '"':
+            if c == '{{': depth += 1
+            else if c == '}}': depth -= 1
+            else if c == '"' or c == '\'':
                 i += 1
-                while i < lx_n and p[i] != '"':
+                loop i < lx_n and p[i] != c:
                     if p[i] == '\\': i += 1
                     i += 1
             i += 1
-    t := Token(Tok.str_lit, 0, mkpos(lx_file, lx_base + s), i32(start), i32(i - start), 0, 0.0)
-    f := 0
+    t = Token(Tok.str_lit, i32(lx_pending), mkpos(lx_file, lx_base + s), i32(start), i32(i - start), 0, 0.0)
+    lx_pending = 0
+    f = int(t.flags)
     if raw: f |= STRF_RAW
     if triple: f |= STRF_TRIPLE
     t.flags = i32(f)
@@ -386,14 +443,14 @@ fn lx_string(raw: bool):
     if triple: lx_i = i + 3
     else: lx_i = i + 1
 
-fn lx_char():
-    p := lx_p
-    s := lx_i
-    i := s + 1
-    v := 0
+lx_char = ():
+    p = lx_p
+    s = lx_i
+    i = s + 1
+    v = 0
     if p[i] == '\\':
         i += 1
-        c := p[i]
+        c = p[i]
         i += 1
         if c == 'n': v = 10
         else if c == 't': v = 9
@@ -404,24 +461,24 @@ fn lx_char():
         else if c == '"': v = 34
         else if c == 'e': v = 27
         else if c == 'x':
-            h := hexval(p[i])
-            l := hexval(p[i + 1])
+            h = hexval(p[i])
+            l = hexval(p[i + 1])
             if h < 0 or l < 0: lx_err(i, "bad \\x escape")
             v = h * 16 + l
             i += 2
         else: lx_err(i - 1, "unknown escape sequence")
     else:
-        b := int(p[i])
+        b = int(p[i])
         if b < 0x80:
             v = b
             i += 1
         else:
-            n := 1
+            n = 1
             if b >= 0xf0: n = 3
             else if b >= 0xe0: n = 2
             v = b & (0x3f >> n)
             i += 1
-            for k in 0..n:
+            loop k in [0..n):
                 v = (v << 6) | (int(p[i]) & 0x3f)
                 i += 1
     if p[i] != '\'': lx_err(s, "unterminated character literal")
@@ -430,7 +487,7 @@ fn lx_char():
     lx_toks[lx_toks.len() - 1].ival = v
     lx_toks[lx_toks.len() - 1].flags = i32(INTF_CHAR)
 
-fn lex(file: int, src: str) -> [Token]:
+lex = (file: int, src: str) -> Token[]:
     lx_file = file
     lx_src = src
     lx_p = data(src)
@@ -440,41 +497,47 @@ fn lex(file: int, src: str) -> [Token]:
     lx_indents = [0]
     lx_ctx_block = [true]
     lx_open = []
+    lx_open_tok = []
     lx_ctx_base = [1]
+    lx_pending = 0
     if kw_tok.len() == 0: init_keywords()
     if lx_cls == null: lx_init_classes()
     lx_line_start()
-    p := lx_p
-    while lx_i < lx_n:
-        c := p[lx_i]
+    p = lx_p
+    loop lx_i < lx_n:
+        c = p[lx_i]
         if c == ' ' or c == '\t' or c == '\r':
             lx_i += 1
+            lx_pending |= TF_SPACE
             continue
         if c == '\\' and p[lx_i + 1] == '\n':
             lx_i += 2
+            lx_pending |= TF_SPACE
             continue
         if c == '#':
-            while lx_i < lx_n and p[lx_i] != '\n': lx_i += 1
+            loop lx_i < lx_n and p[lx_i] != '\n': lx_i += 1
             continue
         if c == '\n':
             lx_i += 1
             if lx_top_block(): lx_emit_newline()
             lx_line_start()
+            lx_pending |= TF_SPACE | TF_NL
             continue
-        cls := lx_cls
+        cls = lx_cls
         if cls[c] & 1 != 0:
             if c == 'r' and p[lx_i + 1] == '"':
                 lx_i += 1
                 lx_string(true)
                 continue
-            s := lx_i
-            i := s + 1
-            while cls[p[i]] & 2 != 0: i += 1
+            s = lx_i
+            i = s + 1
+            loop cls[p[i]] & 2 != 0: i += 1
             lx_i = i
-            id := intern_sub(src, s, i - s)
-            kind := Tok.ident
+            id = intern_sub(src, s, i - s)
+            kind = Tok.ident
             if id < kw_tok.len(): kind = kw_tok[id]
-            lx_toks.push(Token(kind, 0, (lx_file << 40) | (lx_base + s), i32(s), i32(i - s), id, 0.0))
+            lx_toks.push(Token(kind, i32(lx_pending), (lx_file << 40) | (lx_base + s), i32(s), i32(i - s), id, 0.0))
+            lx_pending = 0
             continue
         if c >= '0' and c <= '9':
             lx_number()
@@ -483,19 +546,19 @@ fn lex(file: int, src: str) -> [Token]:
             lx_string(false)
             continue
         if c == '\'':
-            lx_char()
+            lx_string(false)
             continue
-        c1 := p[lx_i + 1]
-        c2 := p[lx_i + 2]
-        k := Tok.eof
-        n := 1
+        c1 = p[lx_i + 1]
+        c2 = p[lx_i + 2]
+        k = Tok.eof
+        n = 1
         match c:
             '(': k = .lparen
             ')': k = .rparen
             '[': k = .lbrack
             ']': k = .rbrack
-            '{': k = .lbrace
-            '}': k = .rbrace
+            '{{': k = .lbrace
+            '}}': k = .rbrace
             ',': k = .comma
             ';': k = .semi
             '~': k = .tilde
@@ -513,6 +576,14 @@ fn lex(file: int, src: str) -> [Token]:
                     if c2 == '=':
                         k = .dotdoteq
                         n = 3
+                    else if c2 == '.':
+                        k = .ellipsis
+                        n = 3
+                else if c1 == '+' or c1 == '-' or c1 == '*' or c1 == '/' or c1 == '%' or c1 == '^' or c1 == '<' or c1 == '>' or (c1 == '=' and c2 == '=') or (c1 == '!' and c2 == '='):
+                    # dotted (broadcasting) operator: .+ .* .== .<= ...
+                    k = .dotop
+                    n = 2
+                    if c2 == '=' and c1 != '+' and c1 != '-' and c1 != '*' and c1 != '/' and c1 != '%' and c1 != '^': n = 3
             '-':
                 k = .minus
                 if c1 == '>':
@@ -563,37 +634,45 @@ fn lex(file: int, src: str) -> [Token]:
                     n = 2
             _: lx_err(lx_i, "unexpected character '{chr(int(c))}'")
         if k == .pluseq or k == .stareq or k == .slasheq or k == .percenteq or k == .ampeq or k == .pipeeq or k == .careteq or k == .eq or k == .ne: n = 2
+        partner = -1
         if k == .rparen or k == .rbrack or k == .rbrace:
             lx_close_block_ctx(lx_i)
             if lx_ctx_block.len() <= 1: lx_err(lx_i, "unmatched '{chr(int(c))}'")
             lx_ctx_block.pop()
             lx_ctx_base.pop()
             if lx_open.len() > 0: lx_open.pop()
+            if lx_open_tok.len() > 0: partner = lx_open_tok.pop()
         lx_emit(k, lx_i, n)
+        if k == .dotop: lx_toks[lx_toks.len() - 1].ival = int(c1)
+        if partner >= 0:
+            # an opening bracket knows where it closes (its ival), and the closing one where it opened
+            lx_toks[partner].ival = lx_toks.len() - 1
+            lx_toks[lx_toks.len() - 1].ival = partner
         lx_i += n
         if k == .lparen or k == .lbrack or k == .lbrace:
             lx_ctx_block.push(false)
             lx_ctx_base.push(0)
             lx_open.push(lx_i - n)
+            lx_open_tok.push(lx_toks.len() - 1)
         if k == .colon and not lx_top_block():
-            q := lx_i
-            while p[q] == ' ' or p[q] == '\t' or p[q] == '\r': q += 1
+            q = lx_i
+            loop p[q] == ' ' or p[q] == '\t' or p[q] == '\r': q += 1
             if p[q] == '#':
-                while q < lx_n and p[q] != '\n': q += 1
+                loop q < lx_n and p[q] != '\n': q += 1
             if p[q] == '\n':
                 lx_indents.push(lx_line_indent)
                 lx_ctx_block.push(true)
                 lx_ctx_base.push(lx_indents.len())
     lx_close_block_ctx(lx_i)
     if lx_ctx_block.len() > 1:
-        at := lx_i
+        at = lx_i
         if lx_open.len() > 0: at = lx_open[lx_open.len() - 1]
         lx_err(at, "this bracket is never closed")
     lx_emit_newline()
-    while lx_indents.len() > 1:
+    loop lx_indents.len() > 1:
         lx_indents.pop()
         lx_emit(.dedent, lx_i, 0)
     lx_emit(.eof, lx_i, 0)
-    out := lx_toks
+    out = lx_toks
     lx_toks = []
     out

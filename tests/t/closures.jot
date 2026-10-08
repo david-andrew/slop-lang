@@ -1,39 +1,39 @@
 # first-class functions, closures, partial application, generics over functions
-fn apply(f: fn(int) -> int, x: int) -> int: f(x)
-fn twice(f, x): f(f(x))
-fn compose(f: fn(int) -> int, g: fn(int) -> int) -> fn(int) -> int: fn(x: int): g(f(x))
+apply = (f: (int) -> int, x: int) -> int: f(x)
+twice = (f, x): f(f(x))
+compose = (f: (int) -> int, g: (int) -> int) -> (int) -> int: (x: int): g(f(x))
 
-fn make_adder() -> fn(int) -> int:
-    k := 10
-    f := fn(x: int): x + k       # locals are captured by value at creation
+make_adder = () -> (int) -> int:
+    k = 10
+    f = (x: int): x + k       # locals are captured by value at creation
     k = 100
     f
 print(make_adder()(1))
-print(apply(fn(x): x * x, 7))
-print(twice(fn(x: int): x + 3, 1))
-print(twice(fn(s: str): s + "!", "hi"))
-add := fn(a: int, b: int): a + b
-inc := add(1, _)
-dec := add(_, -1)
+print(apply((x): x * x, 7))
+print(twice((x: int): x + 3, 1))
+print(twice((s: str): s + "!", "hi"))
+add = (a: int, b: int): a + b
+inc = add(1, _)
+dec = add(_, -1)
 print(inc(41), dec(43))
-sq_then_inc := compose(fn(x): x * x, inc)
+sq_then_inc = compose((x): x * x, inc)
 print(sq_then_inc(5))
-fs: [fn(int) -> int]
-for i in 0..4: fs.push(fn(x: int): x * i)
-out: [int]
-for f in fs: out.push(f(10))
+fs: ((int) -> int)[]
+loop i in [0..4): fs.push((x: int): x * i)
+out: int[]
+loop f in fs: out.push(f(10))
 print(out)
-nums := [5, 3, 9, 1, 7]
-print(nums.map(fn(x): x * 2))
-print(nums.filter(fn(x): x > 4))
-total := 0
-nums.each(fn(x): print(x))
-names := ["carol", "al", "bob"]
-names.sort_by(fn(s): len(s))
+nums = [5, 3, 9, 1, 7]
+print(nums.map((x): x * 2))
+print(nums.filter((x): x > 4))
+total = 0
+nums.each((x): print(x))
+names = ["carol", "al", "bob"]
+names.sort_by((s): len(s))
 print(names)
 # closure capturing an array and a string (refcounted captures)
-tag := "item"
-xs := [1, 2, 3]
-label := fn(i: int): "{tag}-{xs[i]}"
+tag = "item"
+xs = [1, 2, 3]
+label = (i: int): "{tag}-{xs[i]}"
 xs.push(4)
 print(label(0), label(2), xs.len())

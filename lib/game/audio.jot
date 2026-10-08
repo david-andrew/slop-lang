@@ -4,87 +4,87 @@
 # Web: WebAudio.
 
 struct Sound:
-    samples: [f32]      # interleaved stereo
+    samples: f32[]      # interleaved stereo
 
 struct Voice:
     sound: Sound
-    pos: float
+    pos: f64
     volume: f32
     pan: f32
-    pitch: float
+    pitch: f64
     looping: bool
     id: int
 
 enum Wave: sine, square, triangle, saw, noise
 
 const MIX_RATE = 48000
-__voices: [Voice]
-__voice_id := 0
-__master := 0.8
-__mix_buf: [f32]
-__audio_state := 0       # 0 not started, 1 running, 2 unavailable
+__voices: Voice[]
+__voice_id = 0
+__master = 0.8
+__mix_buf: f32[]
+__audio_state = 0       # 0 not started, 1 running, 2 unavailable
 
-fn frames(s: Sound) -> int: s.samples.len() / 2
-fn duration(s: Sound) -> float: float(frames(s)) / float(MIX_RATE)
+frames = (s: Sound) -> int: s.samples.len() / 2
+duration = (s: Sound) -> f64: f64(frames(s)) / f64(MIX_RATE)
 
 # play a sound; returns a voice id for stop()/set_volume()
-fn play(s: Sound, volume: float = 1.0, pan: float = 0.0, pitch: float = 1.0, looping: bool = false) -> int:
+play = (s: Sound, volume: f64 = 1.0, pan: f64 = 0.0, pitch: f64 = 1.0, looping: bool = false) -> int:
     __audio_start()
     __voice_id += 1
     __voices.push(Voice(s, 0.0, f32(volume), f32(clamp(pan, -1.0, 1.0)), pitch, looping, __voice_id))
     __voice_id
 
-fn stop(id: int):
-    i := 0
-    while i < __voices.len():
+stop = (id: int):
+    i = 0
+    loop i < __voices.len():
         if __voices[i].id == id: __voices.remove(i)
         else: i += 1
 
-fn stop_all(): __voices.clear()
-fn is_playing(id: int) -> bool:
-    for v in __voices:
+stop_all = (): __voices.clear()
+is_playing = (id: int) -> bool:
+    loop v in __voices:
         if v.id == id: return true
     false
-fn set_volume(id: int, volume: float):
-    for mut v in __voices:
+set_volume = (id: int, volume: f64):
+    loop mut v in __voices:
         if v.id == id: v.volume = f32(volume)
-fn set_pitch(id: int, pitch: float):
-    for mut v in __voices:
+set_pitch = (id: int, pitch: f64):
+    loop mut v in __voices:
         if v.id == id: v.pitch = pitch
-fn master_volume(v: float): __master = clamp(v, 0.0, 1.0)
+master_volume = (v: f64): __master = clamp(v, 0.0, 1.0)
 
 # mix n stereo frames into __mix_buf
-fn __mix(n: int):
+__mix = (n: int):
     __mix_buf.resize(n * 2)
-    for k in 0..n * 2: __mix_buf[k] = 0.0
-    out := data(__mix_buf)
-    i := 0
-    while i < __voices.len():
-        v := __voices[i]
-        src := data(v.sound.samples)
-        total := v.sound.samples.len() / 2
+    loop k in [0..n * 2): __mix_buf[k] = 0.0
+    out = data(__mix_buf)
+    i = 0
+    loop i < __voices.len():
+        v = __voices[i]
+        src = data(v.sound.samples)
+        total = v.sound.samples.len() / 2
         if total == 0:
             __voices.remove(i)
             continue
-        gl_ := v.volume * f32(__master) * (1.0 - max(v.pan, 0.0))
-        gr := v.volume * f32(__master) * (1.0 + min(v.pan, 0.0))
-        pos := v.pos
-        step := v.pitch
-        done := false
-        for f in 0..n:
-            ip := int(pos)
+        gl_ = v.volume * f32(__master) * (1.0 - max(v.pan, 0.0))
+        gr = v.volume * f32(__master) * (1.0 + min(v.pan, 0.0))
+        pos = v.pos
+        step = v.pitch
+        done = false
+        loop f in [0..n):
+            ip = int(pos)
             if ip >= total:
                 if v.looping:
-                    pos -= float(total)
+                    pos -= f64(total)
                     ip = int(pos)
                 else:
                     done = true
                     break
-            fr := f32(pos - float(ip))
-            nx := ip + 1
+            fr = f32(pos - f64(ip))
+            nx = ip + 1
             if nx >= total: nx = 0
-            l := src[ip * 2] + (src[nx * 2] - src[ip * 2]) * fr
-            r := src[ip * 2 + 1] + (src[nx * 2 + 1] - src[ip * 2 + 1]) * fr
+            l = src[ip * 2] + (src[nx * 2] - src[ip * 2]) * fr
+            r = src[ip * 2 + 1] + (src[nx * 2 + 1] - src[ip * 2 + 1]) * fr
             out[f * 2] += l * gl_
             out[f * 2 + 1] += r * gr
             pos += step
@@ -93,19 +93,19 @@ fn __mix(n: int):
             __voices[i].pos = pos
             i += 1
     # soft clip
-    for k in 0..n * 2:
-        x := out[k]
-        if x > 1.0 or x < -1.0: out[k] = f32(tanh(float(x)))
+    loop k in [0..n * 2):
+        x = out[k]
+        if x > 1.0 or x < -1.0: out[k] = f32(tanh(f64(x)))
 
-fn tanh(x: float) -> float:
+tanh = (x: f64) -> f64:
     if x > 20.0: return 1.0
     if x < -20.0: return -1.0
-    e := exp(2.0 * x)
+    e = exp(2.0 * x)
     (e - 1.0) / (e + 1.0)
 
 # ---------------- synthesis ----------------
-fn __osc(w: Wave, phase: float) -> float:
-    p := phase - floor(phase)
+__osc = (w: Wave, phase: f64) -> f64:
+    p = phase - floor(phase)
     match w:
         sine: sin(p * TAU)
         square:
@@ -116,122 +116,122 @@ fn __osc(w: Wave, phase: float) -> float:
         noise: random(-1.0, 1.0)
 
 # a single synthesized note: frequency slides from freq to freq * slide over the duration
-fn tone(freq: float, seconds: float, wave: Wave = .sine, volume: float = 0.5, attack: float = 0.005, release: float = 0.1, slide: float = 1.0, vibrato: float = 0.0) -> Sound:
-    n := int(seconds * float(MIX_RATE))
-    s := Sound([f32(0); n * 2])
-    phase := 0.0
-    for i in 0..n:
-        t := float(i) / float(MIX_RATE)
-        u := float(i) / float(max(n, 1))
-        f := freq * pow(slide, u) * (1.0 + vibrato * sin(t * 30.0))
-        phase += f / float(MIX_RATE)
-        env := 1.0
+tone = (freq: f64, seconds: f64, wave: Wave = .sine, volume: f64 = 0.5, attack: f64 = 0.005, release: f64 = 0.1, slide: f64 = 1.0, vibrato: f64 = 0.0) -> Sound:
+    n = int(seconds * f64(MIX_RATE))
+    s = Sound(fill(f32(0), n * 2))
+    phase = 0.0
+    loop i in [0..n):
+        t = f64(i) / f64(MIX_RATE)
+        u = f64(i) / f64(max(n, 1))
+        f = freq * pow(slide, u) * (1.0 + vibrato * sin(t * 30.0))
+        phase += f / f64(MIX_RATE)
+        env = 1.0
         if t < attack: env = t / attack
-        rem := seconds - t
+        rem = seconds - t
         if rem < release: env = env * max(rem / release, 0.0)
-        x := f32(__osc(wave, phase) * env * volume)
+        x = f32(__osc(wave, phase) * env * volume)
         s.samples[i * 2] = x
         s.samples[i * 2 + 1] = x
     s
 
 # mix several sounds into one (useful for chords and layered effects)
-fn mix(sounds: [Sound]) -> Sound:
-    n := 0
-    for s in sounds: n = max(n, s.samples.len())
-    out := Sound([f32(0); n])
-    for s in sounds:
-        for i, x in s.samples: out.samples[i] += x
+mix = (sounds: Sound[]) -> Sound:
+    n = 0
+    loop s in sounds: n = max(n, s.samples.len())
+    out = Sound(fill(f32(0), n))
+    loop s in sounds:
+        loop i in 0.. and x in s.samples: out.samples[i] += x
     out
 
 # sound effect presets
-fn sfx_jump() -> Sound: tone(320.0, 0.18, .square, 0.25, 0.002, 0.08, 2.2)
-fn sfx_coin() -> Sound: mix([tone(988.0, 0.08, .square, 0.2, 0.001, 0.02), __delayed(tone(1319.0, 0.25, .square, 0.2, 0.001, 0.2), 0.07)])
-fn sfx_hit() -> Sound: mix([tone(160.0, 0.15, .noise, 0.4, 0.001, 0.12), tone(110.0, 0.15, .square, 0.3, 0.001, 0.1, 0.5)])
-fn sfx_explosion() -> Sound: tone(90.0, 0.7, .noise, 0.6, 0.002, 0.6, 0.3)
-fn sfx_laser() -> Sound: tone(1400.0, 0.2, .saw, 0.25, 0.001, 0.15, 0.25)
-fn sfx_powerup() -> Sound: tone(300.0, 0.5, .triangle, 0.35, 0.01, 0.2, 4.0, 0.03)
-fn sfx_click() -> Sound: tone(1800.0, 0.03, .square, 0.15, 0.001, 0.02)
-fn sfx_whoosh() -> Sound: tone(400.0, 0.4, .noise, 0.2, 0.15, 0.2, 0.4)
-fn sfx_chime() -> Sound: mix([tone(1046.5, 1.2, .sine, 0.25, 0.002, 1.1), tone(1568.0, 1.0, .sine, 0.15, 0.002, 0.9), tone(2093.0, 0.8, .sine, 0.08, 0.002, 0.7)])
+sfx_jump = () -> Sound: tone(320.0, 0.18, .square, 0.25, 0.002, 0.08, 2.2)
+sfx_coin = () -> Sound: mix([tone(988.0, 0.08, .square, 0.2, 0.001, 0.02), __delayed(tone(1319.0, 0.25, .square, 0.2, 0.001, 0.2), 0.07)])
+sfx_hit = () -> Sound: mix([tone(160.0, 0.15, .noise, 0.4, 0.001, 0.12), tone(110.0, 0.15, .square, 0.3, 0.001, 0.1, 0.5)])
+sfx_explosion = () -> Sound: tone(90.0, 0.7, .noise, 0.6, 0.002, 0.6, 0.3)
+sfx_laser = () -> Sound: tone(1400.0, 0.2, .saw, 0.25, 0.001, 0.15, 0.25)
+sfx_powerup = () -> Sound: tone(300.0, 0.5, .triangle, 0.35, 0.01, 0.2, 4.0, 0.03)
+sfx_click = () -> Sound: tone(1800.0, 0.03, .square, 0.15, 0.001, 0.02)
+sfx_whoosh = () -> Sound: tone(400.0, 0.4, .noise, 0.2, 0.15, 0.2, 0.4)
+sfx_chime = () -> Sound: mix([tone(1046.5, 1.2, .sine, 0.25, 0.002, 1.1), tone(1568.0, 1.0, .sine, 0.15, 0.002, 0.9), tone(2093.0, 0.8, .sine, 0.08, 0.002, 0.7)])
 
-fn __delayed(s: Sound, seconds: float) -> Sound:
-    pad := int(seconds * float(MIX_RATE)) * 2
-    out := Sound([f32(0); pad + s.samples.len()])
-    for i, x in s.samples: out.samples[pad + i] = x
+__delayed = (s: Sound, seconds: f64) -> Sound:
+    pad = int(seconds * f64(MIX_RATE)) * 2
+    out = Sound(fill(f32(0), pad + s.samples.len()))
+    loop i in 0.. and x in s.samples: out.samples[pad + i] = x
     out
 
 # note name ("C4", "F#3", "Bb5") to frequency in Hz
-fn note_freq(name: str) -> float:
+note_freq = (name: str) -> f64:
     if len(name) < 2: return 0.0
-    base := [9, 11, 0, 2, 4, 5, 7]   # A B C D E F G relative to C
-    c := int(name[0])
+    base = [9, 11, 0, 2, 4, 5, 7]   # A B C D E F G relative to C
+    c = int(name[0])
     if c >= 'a': c -= 32
     if c < 'A' or c > 'G': return 0.0
-    semi := base[c - 'A']
-    i := 1
+    semi = base[c - 'A']
+    i = 1
     if name[i] == '#':
         semi += 1
         i += 1
     else if name[i] == 'b':
         semi -= 1
         i += 1
-    octave := to_int(name[i..]) ?? 4
-    midi := (octave + 1) * 12 + semi
-    440.0 * pow(2.0, float(midi - 69) / 12.0)
+    octave = to_int(name[i..]) ?? 4
+    midi = (octave + 1) * 12 + semi
+    440.0 * pow(2.0, f64(midi - 69) / 12.0)
 
 # render a melody: notes separated by spaces, "-" holds the previous note, "." is a rest
-fn melody(notes: str, bpm: float = 120.0, wave: Wave = .triangle, volume: float = 0.3, step: float = 0.5) -> Sound:
-    beat := 60.0 / bpm * step
-    toks := words(notes)
-    total := int(float(toks.len()) * beat * float(MIX_RATE)) + MIX_RATE / 4
-    out := Sound([f32(0); total * 2])
-    i := 0
-    while i < toks.len():
-        t := toks[i]
+melody = (notes: str, bpm: f64 = 120.0, wave: Wave = .triangle, volume: f64 = 0.3, step: f64 = 0.5) -> Sound:
+    beat = 60.0 / bpm * step
+    toks = words(notes)
+    total = int(f64(toks.len()) * beat * f64(MIX_RATE)) + MIX_RATE / 4
+    out = Sound(fill(f32(0), total * 2))
+    i = 0
+    loop i < toks.len():
+        t = toks[i]
         if t == "." or t == "-":
             i += 1
             continue
-        held := 1
-        while i + held < toks.len() and toks[i + held] == "-": held += 1
-        f := note_freq(t)
+        held = 1
+        loop i + held < toks.len() and toks[i + held] == "-": held += 1
+        f = note_freq(t)
         if f > 0.0:
-            nt := tone(f, beat * float(held) * 0.95, wave, volume, 0.01, beat * 0.5)
-            start := int(float(i) * beat * float(MIX_RATE)) * 2
-            for k, x in nt.samples:
+            nt = tone(f, beat * f64(held) * 0.95, wave, volume, 0.01, beat * 0.5)
+            start = int(f64(i) * beat * f64(MIX_RATE)) * 2
+            loop k in 0.. and x in nt.samples:
                 if start + k < out.samples.len(): out.samples[start + k] += x
         i += held
     out
 
 # ---------------- WAV files ----------------
-fn load_wav(file: [u8]) -> Sound:
+load_wav = (file: u8[]) -> Sound:
     if file.len() < 44 or file[0] != 'R' or file[8] != 'W': panic("not a WAV file")
-    pos := 12
-    fmt_ := 1
-    channels := 2
-    rate := 44100
-    bits := 16
-    while pos + 8 <= file.len():
-        id := str_from_bytes(file[pos..pos + 4])
-        n := int(file[pos + 4]) | (int(file[pos + 5]) << 8) | (int(file[pos + 6]) << 16) | (int(file[pos + 7]) << 24)
-        b := pos + 8
+    pos = 12
+    fmt_ = 1
+    channels = 2
+    rate = 44100
+    bits = 16
+    loop pos + 8 <= file.len():
+        id = str_from_bytes(file[pos..pos + 4))
+        n = int(file[pos + 4]) | (int(file[pos + 5]) << 8) | (int(file[pos + 6]) << 16) | (int(file[pos + 7]) << 24)
+        b = pos + 8
         if id == "fmt ":
             fmt_ = int(file[b]) | (int(file[b + 1]) << 8)
             channels = int(file[b + 2]) | (int(file[b + 3]) << 8)
             rate = int(file[b + 4]) | (int(file[b + 5]) << 8) | (int(file[b + 6]) << 16)
             bits = int(file[b + 14]) | (int(file[b + 15]) << 8)
         else if id == "data":
-            bps := bits / 8
-            nframes := n / (bps * channels)
-            src: [f32]
+            bps = bits / 8
+            nframes = n / (bps * channels)
+            src: f32[]
             src.reserve(nframes * 2)
-            for f in 0..nframes:
-                for ch in 0..2:
-                    c := min(ch, channels - 1)
-                    o := b + (f * channels + c) * bps
+            loop f in [0..nframes):
+                loop ch in [0..2):
+                    c = min(ch, channels - 1)
+                    o = b + (f * channels + c) * bps
                     v: f32 = 0.0
                     if fmt_ == 3 and bits == 32: v = ((data(file) + o) as *f32)[0]
                     else if bits == 16:
-                        x := int(file[o]) | (int(file[o + 1]) << 8)
+                        x = int(file[o]) | (int(file[o + 1]) << 8)
                         if x >= 32768: x -= 65536
                         v = f32(x) / 32768.0
                     else if bits == 8: v = (f32(file[o]) - 128.0) / 128.0
@@ -241,53 +241,53 @@ fn load_wav(file: [u8]) -> Sound:
     panic("WAV file has no data")
     Sound([])
 
-fn __resample(src: [f32], rate: int) -> Sound:
+__resample = (src: f32[], rate: int) -> Sound:
     if rate == MIX_RATE: return Sound(src)
-    nin := src.len() / 2
-    nout := int(float(nin) * float(MIX_RATE) / float(rate))
-    out := Sound([f32(0); nout * 2])
-    ratio := float(rate) / float(MIX_RATE)
-    for i in 0..nout:
-        p := float(i) * ratio
-        ip := int(p)
-        fr := f32(p - float(ip))
-        nx := min(ip + 1, nin - 1)
-        for ch in 0..2: out.samples[i * 2 + ch] = src[ip * 2 + ch] + (src[nx * 2 + ch] - src[ip * 2 + ch]) * fr
+    nin = src.len() / 2
+    nout = int(f64(nin) * f64(MIX_RATE) / f64(rate))
+    out = Sound(fill(f32(0), nout * 2))
+    ratio = f64(rate) / f64(MIX_RATE)
+    loop i in [0..nout):
+        p = f64(i) * ratio
+        ip = int(p)
+        fr = f32(p - f64(ip))
+        nx = min(ip + 1, nin - 1)
+        loop ch in [0..2): out.samples[i * 2 + ch] = src[ip * 2 + ch] + (src[nx * 2 + ch] - src[ip * 2 + ch]) * fr
     out
 
 # ---------------- output ----------------
 when TARGET == "wasm":
-    extern fn __web_audio_start(rate: i32)
+    extern __web_audio_start = (rate: i32)
 
-    fn __audio_start():
+    __audio_start = ():
         if __audio_state != 0: return
         __audio_state = 1
         __web_audio_start(i32(MIX_RATE))
 
     # the page asks for n frames of audio and receives a pointer to interleaved floats
     @export("__audio_fill")
-    fn __web_audio_fill(n: i32) -> *f32:
+    __web_audio_fill = (n: i32) -> *f32:
         __mix(int(n))
         data(__mix_buf)
 
-    fn __audio_update(): pass
+    __audio_update = (): pass
 else:
     @lib("libasound.so.2")
-    extern fn snd_pcm_open(pcm: **u8, name: *u8, stream: i32, mode: i32) -> i32
+    extern snd_pcm_open = (pcm: **u8, name: *u8, stream: i32, mode: i32) -> i32
     @lib("libasound.so.2")
-    extern fn snd_pcm_set_params(pcm: *u8, format: i32, access: i32, channels: u32, rate: u32, soft_resample: i32, latency: u32) -> i32
+    extern snd_pcm_set_params = (pcm: *u8, format: i32, access: i32, channels: u32, rate: u32, soft_resample: i32, latency: u32) -> i32
     @lib("libasound.so.2")
-    extern fn snd_pcm_avail_update(pcm: *u8) -> int
+    extern snd_pcm_avail_update = (pcm: *u8) -> int
     @lib("libasound.so.2")
-    extern fn snd_pcm_writei(pcm: *u8, buf: *u8, frames: int) -> int
+    extern snd_pcm_writei = (pcm: *u8, buf: *u8, frames: int) -> int
     @lib("libasound.so.2")
-    extern fn snd_pcm_recover(pcm: *u8, err: i32, silent: i32) -> i32
+    extern snd_pcm_recover = (pcm: *u8, err: i32, silent: i32) -> i32
     @lib("libasound.so.2")
-    extern fn snd_pcm_prepare(pcm: *u8) -> i32
+    extern snd_pcm_prepare = (pcm: *u8) -> i32
 
     __pcm: *u8 = null
 
-    fn __audio_start():
+    __audio_start = ():
         if __audio_state != 0: return
         __audio_state = 2
         if env("JOT_NO_AUDIO") != none: return
@@ -299,14 +299,14 @@ else:
         __pcm = p
         __audio_state = 1
 
-    fn __audio_update():
+    __audio_update = ():
         if __audio_state != 1: return
-        avail := snd_pcm_avail_update(__pcm)
+        avail = snd_pcm_avail_update(__pcm)
         if avail < 0:
             snd_pcm_recover(__pcm, i32(avail), 1)
             return
         if avail == 0: return
-        n := min(avail, 8192)
+        n = min(avail, 8192)
         __mix(n)
-        r := snd_pcm_writei(__pcm, data(__mix_buf) as *u8, n)
+        r = snd_pcm_writei(__pcm, data(__mix_buf) as *u8, n)
         if r < 0: snd_pcm_recover(__pcm, i32(r), 1)
