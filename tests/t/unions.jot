@@ -1,0 +1,142 @@
+# requires: jot
+# type unions: A | B values, `is` tests, narrowing, aliases, match on member types
+struct ParseError:
+    msg: str
+    at: int
+
+type Result[T, E] = T | E
+type Num = int | f64
+
+parse_int = (s: str) -> int | ParseError:
+    if len(s) == 0: return ParseError("empty", 0)
+    n = 0
+    loop i in 0.. and c in bytes(s):
+        if c < '0' or c > '9': return ParseError("not a digit", i)
+        n = n * 10 + int(c - '0')
+    n
+
+twice = (s: str) -> Result[int, ParseError]:
+    r = parse_int(s)
+    if r is ParseError: return r
+    r * 2            # r is an int here
+
+describe = (v: int | str | f64) -> str:
+    if v is int: return "int {v + 1}"
+    if v is str: return "str of length {len(v)}"
+    "something else"
+
+demo1 = ():
+    loop s in ["42", "", "4x2"]:
+        r = parse_int(s)
+        if r is int: print("ok", r + 1)
+        else: print("error:", r.msg, "at", r.at)
+    t = twice("21")
+    if t is int: print(t)
+    print(describe(5), describe("hey"), describe(2.5))
+    x: Num = 3
+    print(x is int, x is f64)
+    x = 2.5
+    print(x is int, x is f64)
+    o: int? = none
+    print(o is none, o is int)
+    o = 7
+    if o is int: print(o + 1)
+    w: int | none = 5
+    print(w is int)
+    v: int | str = "s"
+    print(v is str and len(v) == 1)
+
+struct Box:
+    v: int | str
+
+type Shape = Circle | Rect
+
+area2 = (s: Shape) -> f64:
+    if s is Circle: return 3.0 * s.r * s.r
+    if s is Rect: return s.w * s.h
+    0.0
+
+demo2 = ():
+    xs: (int | str)[] = [1, "two", 3]
+    xs.push("four")
+    print(xs)
+    print(xs[1], xs[0] == xs[0], xs[0] == xs[2])
+    b = Box("hello")
+    print(b)
+    b.v = 5
+    print(b, b.v is int)
+    shapes: Shape[] = [Circle(1.0), Rect(2.0, 3.0)]
+    total = 0.0
+    loop s in shapes: total += area2(s)
+    print(total)
+    names: str[]
+    loop x in xs:
+        if x is str: names.push(x + "!")
+    print(names)
+    m: {str: int | str} = {}
+    m["a"] = 1
+    m["b"] = "bee"
+    print(m["b"])
+    xs = []
+    names = []
+    m = {}
+    shapes = []
+    b = Box(0)
+
+struct Circle:
+    r: f64
+struct Rect:
+    w: f64
+    h: f64
+
+area = (s: Shape) -> f64:
+    match s:
+        Circle: 3.0 * s.r * s.r
+        Rect: s.w * s.h
+
+show = (v: int | str | bool) -> str:
+    match v:
+        int: "int {v * 2}"
+        str: "str {v}!"
+        bool: "bool"
+
+classify = (v: int | str) -> str:
+    if v is int and v > 10: return "big"
+    if v is str or v < 0: return "str or negative"
+    "small"
+
+demo3 = ():
+    print(area(Circle(2.0)), area(Rect(2.0, 5.0)))
+    print(show(21), show("hi"), show(true))
+    print(classify(50), classify(3), classify(-4), classify("x"))
+    u: int | str = 3
+    u = "now a string"
+    if u is str: print(len(u))
+    p: Shape = Rect(1.0, 2.0)
+    print(p, p == p)
+
+next_val = (i: int) -> int | str:
+    if i % 3 == 2: return "stop"
+    i * 10
+
+demo4 = ():
+    r = next_val(0)
+    if r is str: return
+    print(r + 1)                 # r: int
+    r = 7                        # still an int: stays narrowed
+    print(r + 1)
+    r = next_val(2)              # may be a str: r is int | str again
+    print(r)
+    i = 0
+    loop:
+        r = next_val(i)
+        if r is str: break
+        print("got", r * 2)
+        i += 1
+    print(r, r is str)
+
+main = ():
+    demo1()
+    demo2()
+    demo3()
+    demo4()

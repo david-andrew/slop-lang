@@ -209,6 +209,9 @@ __panic_bounds = (i: int, n: int, loc: str):
 __panic_unwrap = (loc: str):
     __panic("{loc}: unwrapped `none` with `!`")
 
+__panic_narrow = (loc: str):
+    __panic("{loc}: this variable no longer holds the type `is` found (a closure changed it)")
+
 __div_zero = (loc: str):
     __panic("{loc}: division by zero")
 

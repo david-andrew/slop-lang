@@ -626,6 +626,20 @@ gen_place = (e: int, write: bool) -> Place:
         e_call_nr(rt("__panic_unwrap"), [e_daddr(loc_data(nodes[e].pos))], -1)
         endc()
         return Place(true, addr)
+    else if k == .narrow:
+        # a union variable known (by `is`) to hold member aux: checked, since a closure could
+        # have changed it
+        a = int(nodes[e].a)
+        ut = prune(ntype(a))
+        layout(ut)
+        base = gen_place(a, write)
+        addr = place_addr(base, ut)
+        vi = int(nodes[e].aux)
+        iff(e_bin(.ne, VI, e_load(VI, addr, 0, 4), e_iconst(vi)))
+        e_call_nr(rt("__panic_narrow"), [e_daddr(loc_data(nodes[e].pos))], -1)
+        endc()
+        v = int(structs[int(types[ut].st)].variants) + vi
+        return Place(true, e_addi(addr, int(fields[int(variants[v].fields)].offset)))
     # not a place: evaluate into a temporary
     t = ntype(e)
     val = gen_expr(e)
@@ -1709,8 +1723,14 @@ gen_fmt_struct = (e: int) -> Val:
             want = v
             if structs[si].simple_enum: want = variants[vi].value
             iff(e_bin(.eq, VI, tag, e_iconst(want)))
-            lit(ba, name_of(int(variants[vi].name)))
             nf = int(variants[vi].nfields)
+            if structs[si].union_:
+                f = int(variants[vi].fields)
+                fmt_field(ba, int(nodes[kid2(e, fi)].sym), int(fields[f].type), e_addi(va, int(fields[f].offset)))
+                fi += 1
+                endc()
+                continue
+            lit(ba, name_of(int(variants[vi].name)))
             if nf > 0:
                 lit(ba, "(")
                 loop j in [0..nf):
@@ -1812,9 +1832,23 @@ gen_expr = (e: int) -> Val:
         if nodes[e].aux == 1: return gen_slice(e)
         p = gen_place(e, false)
         return V(read_place(p, t), false)
-    if k == .unwrap:
+    if k == .unwrap or k == .narrow:
         p = gen_place(e, false)
         return V(read_place(p, t), false)
+    if k == .istype:
+        a = int(nodes[e].a)
+        at = prune(ntype(a))
+        vi = int(nodes[e].aux)
+        if vi == -3: return V(e_iconst(1), false)
+        p = gen_place(a, false)
+        addr = place_addr(p, at)
+        if vi < 0:
+            # optional: its has-value flag follows the value
+            has = e_load(VI, addr, tsize(int(types[at].elem)), 1)
+            if vi == -1: return V(e_bin(.eq, VI, has, e_iconst(0)), false)
+            return V(e_bin(.ne, VI, has, e_iconst(0)), false)
+        layout(at)
+        return V(e_bin(.eq, VI, e_load(VI, addr, 0, 4), e_iconst(vi)), false)
     if k == .call:
         aux = int(nodes[e].aux)
         if aux == 0:

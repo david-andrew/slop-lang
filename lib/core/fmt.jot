@@ -561,7 +561,7 @@ __fmt_elem = (buf: mut u8[], s: str):
         else: __buf_byte(buf, int(c))
     __buf_byte(buf, '"')
 
-__fmt_elem = (buf: mut u8[], x): __fmt(buf, x)
+__fmt_elem = (buf: mut u8[], x): __fmt_elem_value(buf, x)
 
 __fmt[T] = (buf: mut u8[], xs: T[]):
     __buf_byte(buf, '[')

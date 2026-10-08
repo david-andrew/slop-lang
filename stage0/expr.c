@@ -30,7 +30,7 @@ static struct { const char *name; int id; bool arr_domain; } intrinsics[] = {
   {"size_of", IN_SIZEOF, false}, {"align_of", IN_ALIGNOF, false}, {"panic", IN_PANIC, false},
   {"assert", IN_ASSERT, false}, {"print", IN_PRINT, false}, {"embed", IN_EMBED, false},
   {"str_from_bytes", IN_FROM_BYTES, false}, {"bytes", IN_TO_BYTES, false}, {"__argv", IN_ARGV, false},
-  {"unreachable", IN_UNREACHABLE, false}, {"sqrt", IN_SQRT, false}, {"__fmt_fields", IN_FMT_STRUCT, false},
+  {"unreachable", IN_UNREACHABLE, false}, {"sqrt", IN_SQRT, false}, {"__fmt_fields", IN_FMT_STRUCT, false}, {"__fmt_elem_value", IN_FMT_ELEM, false},
   {"__hash_value", IN_HASH, false}, {"__set_len", IN_SETLEN, false},
   {"__atomic_add", IN_ATOMIC_ADD, false}, {"__atomic_cas", IN_ATOMIC_CAS, false},
   {"__stack_ptr", IN_STACK_PTR, false}, {"fill", IN_FILL, false},
@@ -988,6 +988,15 @@ static Type *check_intrinsic(FnCtx *c, Node **pn, int id, Node **args, int nargs
   n->a = NULL;
   Type *r = t_void;
   switch (id) {
+  case IN_FMT_ELEM: { // __fmt_elem_value(buf, x): __fmt(buf, x) (no unions here)
+    nargs_check(n, nargs, 2, 2, "__fmt_elem_value");
+    Node *callee = new_node(N_IDENT, n->pos);
+    callee->name = S("__fmt");
+    n->kind = N_CALL;
+    n->a = callee;
+    n->aux = 0;
+    return check_expr(c, pn, expected);
+  }
   case IN_FILL: { // fill(x, n): an array of n copies of x
     nargs_check(n, nargs, 2, 2, "fill");
     n->kind = N_ARRAY;

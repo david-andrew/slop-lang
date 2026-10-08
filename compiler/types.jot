@@ -58,6 +58,7 @@ struct StructInfo:
     resolved: bool
     type: i32
     name: str
+    union_: bool     # A | B: an enum whose variant i holds type argument (member) i
 
 types: TypeInfo[] = [TypeInfo()]
 type_args: i32[]
@@ -430,9 +431,9 @@ layout = (t0: int):
     if m: f |= TF_MANAGED
     types[t].flags = i32(f)
 
-# a type followed by [] or ?: function types need parentheses there
+# a type followed by [] or ? or |: function types and unions need parentheses there
 type_str_postfix = (t: int) -> str:
-    if tkind(t) == .fn_: return "({type_str(t)})"
+    if tkind(t) == .fn_ or is_union(t): return "({type_str(t)})"
     type_str(t)
 
 type_str = (t0: int) -> str:
@@ -486,6 +487,7 @@ type_str = (t0: int) -> str:
         struct_, enum_:
             si = int(ti.st)
             nm = structs[si].name
+            if structs[si].union_: return nm
             if nm == "Map" and int(structs[si].ntargs) == 2: return "\{{type_str(struct_targ(si, 0))}: {type_str(struct_targ(si, 1))}}"
             s = nm
             if int(structs[si].ntargs) > 0:
@@ -496,8 +498,94 @@ type_str = (t0: int) -> str:
                 s += "]"
             s
 
+# ---------- unions ----------
+# A | B | C is a tagged value laid out like an enum: variant i holds member i. Members are flat,
+# distinct and sorted by type id, so A | B is B | A; T | none is T?, and a single member is itself.
+is_union = (t0: int) -> bool:
+    t = prune(t0)
+    types[t].kind == .enum_ and structs[int(types[t].st)].union_
+
+union_members = (t0: int) -> int[]:
+    si = int(types[prune(t0)].st)
+    out: int[]
+    loop i in [0..int(structs[si].ntargs)): out.push(struct_targ(si, i))
+    out
+
+# the index of member m in union u (-1 if it is not one)
+union_index = (u: int, m: int) -> int:
+    si = int(types[prune(u)].st)
+    loop i in [0..int(structs[si].ntargs)):
+        if type_eq(struct_targ(si, i), m): return i
+    -1
+
+mk_union = (ms0: int[]) -> int:
+    ms: int[]
+    has_none = false
+    work = ms0
+    i = 0
+    loop i < work.len():
+        m = prune(work[i])
+        i += 1
+        k = types[m].kind
+        if k == .none_lit: has_none = true
+        else if k == .opt:
+            has_none = true
+            work.push(int(types[m].elem))
+        else if is_union(m):
+            loop x in union_members(m): work.push(x)
+        else:
+            dup = false
+            loop x in ms:
+                if type_eq(x, m): dup = true
+            if not dup: ms.push(m)
+    # sort by type id (few members: insertion sort)
+    loop i in [1..ms.len()):
+        j = i
+        loop j > 0 and ms[j - 1] > ms[j]:
+            tmp = ms[j]
+            ms[j] = ms[j - 1]
+            ms[j - 1] = tmp
+            j -= 1
+    r = T_NONE
+    if ms.len() == 1: r = ms[0]
+    else if ms.len() > 1: r = union_inst(ms)
+    if has_none and ms.len() > 0: r = mk_opt(r)
+    r
+
+union_inst = (ms: int[]) -> int:
+    loop i in 0.. and si in structs:
+        if not si.union_ or int(si.ntargs) != ms.len(): continue
+        same = true
+        loop k in [0..ms.len()):
+            if not type_eq(struct_targ(i, k), ms[k]):
+                same = false
+                break
+        if same: return int(si.type)
+    name = ""
+    hv = false
+    loop i in 0.. and m in ms:
+        if i > 0: name += " | "
+        name += type_str_postfix(m)
+        if has_var(prune(m)): hv = true
+    si = StructInfo(decl = 0, ntargs = i32(ms.len()), name = name, union_ = true, resolved = true)
+    si.targs = i32(type_args.len())
+    loop m in ms: type_args.push(i32(m))
+    si.variants = i32(variants.len())
+    si.nvariants = i32(ms.len())
+    loop i in 0.. and m in ms:
+        variants.push(Variant(name = i32(intern(type_str(m))), fields = i32(fields.len()), nfields = 1, tag = i32(i), value = i))
+        fields.push(Field(name = i32(intern("0")), type = i32(m)))
+    idx = structs.len()
+    structs.push(si)
+    flags = 0
+    if hv: flags = TF_HAS_VAR
+    types.push(TypeInfo(kind = .enum_, st = i32(idx), flags = i32(flags)))
+    structs[idx].type = i32(types.len() - 1)
+    types.len() - 1
+
 # ---------- struct instances ----------
 get_struct_inst = (decl: int, targs: int[]) -> int:
+    if decl == 0: return mk_union(targs)
     loop i in 0.. and si in structs:
         if int(si.decl) != decl or int(si.ntargs) != targs.len(): continue
         same = true

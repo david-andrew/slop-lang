@@ -1,0 +1,29 @@
+ok 43
+error: empty at 0
+error: not a digit at 1
+42
+int 6 str of length 3 something else
+true false
+false true
+true false
+8
+true
+true
+[1, "two", 3, "four"]
+two true false
+Box(v="hello")
+Box(v=5) true
+9.0
+["two!", "four!"]
+bee
+12.0 10.0
+int 42 str hi! bool
+big small str or negative str or negative
+12
+Rect(w=1.0, h=2.0) true
+1
+8
+stop
+got 0
+got 20
+stop true

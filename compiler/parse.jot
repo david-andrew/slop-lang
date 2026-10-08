@@ -167,6 +167,11 @@ parse_type_primary = () -> int:
         n = mk(.tptr, pos)
         nodes[n].a = i32(inner)
         return n
+    if k == .kw_none:
+        advance()
+        n = mk(.tname, pos)
+        nodes[n].name = i32(intern("none"))
+        return n
     if k == .kw_fn: fatal(pos, "function types are written (A, B) -> R")
     fatal(pos, "expected a type, found {tok_name(k)}")
     0
@@ -386,6 +391,7 @@ id_float = 0
 id_void = 0
 id_cfn = 0
 id_end = 0
+id_type = 0
 
 # parser modes
 p_matrix = 0          # > 0 inside array brackets: a space separates elements
@@ -1858,6 +1864,25 @@ parse_enum = () -> int:
     set_list(e, vs)
     e
 
+# type Name = A | B   or   type Name[T, E] = T | E
+parse_type_alias = () -> int:
+    pos = cur_pos()
+    advance()
+    d = mk(.typealias, pos)
+    nodes[d].name = i32(expect_ident("type name"))
+    if accept(.lbrack):
+        tps: int[]
+        loop pk() != .rbrack:
+            tp = mk(.ident, cur_pos())
+            nodes[tp].name = i32(expect_ident("type parameter"))
+            tps.push(tp)
+            if not accept(.comma): break
+        expect(.rbrack, "")
+        set_list2(d, tps)
+    expect(.assign, "'='")
+    nodes[d].a = i32(parse_type())
+    d
+
 parse_toplevel = () -> int:
     pos = cur_pos()
     attrs: int[]
@@ -1873,6 +1898,7 @@ parse_toplevel = () -> int:
     k = pk()
     d = 0
     if k == .kw_fn: old_syntax(pos, "functions are written name = (a: T, b: T) -> R: body")
+    else if k == .ident and toks[ti].ival == id_type and pkn(1) == .ident and (pkn(2) == .assign or pkn(2) == .lbrack): d = parse_type_alias()
     else if (k == .lparen or (k == .ident and (pkn(1) == .assign or pkn(1) == .lbrack))) and fn_decl_ahead(): d = parse_fn_decl(false)
     else if k == .kw_extern:
         advance()
@@ -1942,6 +1968,7 @@ parse_file = (file: int) -> int[]:
         id_void = intern("void")
         id_cfn = intern("cfn")
         id_end = intern("end")
+        id_type = intern("type")
     toks = lex(file, files[file].src)
     if stop_after == "lex":
         toks = []

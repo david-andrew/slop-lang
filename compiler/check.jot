@@ -7,7 +7,7 @@ use 'parse.jot'
 use 'types.jot'
 use 'expr.jot'
 
-enum SK: none_, local, global, fns, struct_, enum_, const_, module, type_, builtin
+enum SK: none_, local, global, fns, struct_, enum_, const_, module, type_, builtin, alias_
 
 struct Sym:
     name: i32
@@ -38,6 +38,7 @@ const LF_ADDR = 64     # address is taken (must live in memory)
 const LF_RESIZED = 128 # the variable itself is written (not just its elements or fields)
 const LF_CAPTURED = 256 # a closure captures this variable
 const LF_DECL = 512     # declared by `x = value` / `x: T`
+const LF_UNNARROWED = 2048  # a narrowed name (alias) whose variable was assigned another type
 const LF_SHARED = 1024  # modified after a closure captured it, or by the closure: closures and
                         # the function share it by reference (it lives in a heap cell, see lower.jot)
 
@@ -393,6 +394,7 @@ register_decls = (m: int, decls: int[]):
                     if name_of(int(nodes[kid(int(nodes[d].c), ai)].name)) == "export": export_decls.push(d)
         else if k == .struct_: scope_add_module(m, nm, .struct_, d, d)
         else if k == .enum_: scope_add_module(m, nm, .enum_, d, d)
+        else if k == .typealias: scope_add_module(m, nm, .alias_, d, d)
         else if k == .const_:
             globals.push(Global(name = i32(nm), decl = i32(d), mod = i32(m), is_const = true))
             scope_add_module(m, nm, .const_, globals.len() - 1, d)
@@ -463,8 +465,14 @@ resolve_type = (tn: int) -> int:
             if ms == 0 or syms[ms].kind != .module: fatal(nodes[tn].pos, "unknown module '{name_of(int(nodes[tn].sval))}'")
             s = module_lookup(int(syms[ms].ref), nm)
         else: s = lookup(nm)
-        if s == 0: fatal(nodes[tn].pos, "unknown type '{name_of(nm)}'{suggestion(name_of(nm), type_names())}")
+        if s == 0:
+            if name_of(nm) == "none": return T_NONE
+            fatal(nodes[tn].pos, "unknown type '{name_of(nm)}'{suggestion(name_of(nm), type_names())}")
         sk = syms[s].kind
+        if sk == .alias_:
+            targs: int[]
+            loop i in [0..nkids(tn)): targs.push(resolve_type(kid(tn, i)))
+            return resolve_alias(int(syms[s].ref), targs, nodes[tn].pos)
         if sk == .type_:
             if nodes[tn].nlist > 0: fatal(nodes[tn].pos, "type '{name_of(nm)}' takes no type arguments")
             return int(syms[s].ref)
@@ -489,6 +497,10 @@ resolve_type = (tn: int) -> int:
         if el.len() == 0: return T_VOID
         return mk_tuple(el)
     if k == .topt: return mk_opt(resolve_type(int(nodes[tn].a)))
+    if k == .tunion:
+        ms: int[]
+        loop i in [0..nkids(tn)): ms.push(resolve_type(kid(tn, i)))
+        return mk_union(ms)
     if k == .tptr: return mk_ptr(resolve_type(int(nodes[tn].a)))
     if k == .tfn:
         ps: int[]
@@ -502,6 +514,27 @@ resolve_type = (tn: int) -> int:
         return mk_fn(ps, ret, mm)
     fatal(nodes[tn].pos, "invalid type")
     0
+
+# type Name[T] = ...: the type it stands for, given its type arguments
+resolve_alias = (d: int, targs: int[], use_pos: int) -> int:
+    ntp = nkids2(d)
+    nm = name_of(int(nodes[d].name))
+    if targs.len() != ntp: fatal(use_pos, "type '{nm}' expects {ntp} type argument(s), got {targs.len()}")
+    if ntp == 0 and nodes[d].type != 0: return int(nodes[d].type)
+    if nodes[d].aux == 1: fatal(nodes[d].pos, "type '{nm}' is defined in terms of itself")
+    nodes[d].aux = 1
+    saved = cx
+    ctxs.push(FnCtx(i32(new_inst(FK_INIT, int(nodes[d].mod), "typedef")), -1, i32(T_VOID), false, 0, nodes[d].mod, i32(sc_names.len())))
+    cx = ctxs.len() - 1
+    mark = scope_mark()
+    push_type_params(d, targs)
+    t = resolve_type(int(nodes[d].a))
+    scope_reset(mark)
+    ctxs.pop()
+    cx = saved
+    nodes[d].aux = 0
+    if ntp == 0: nodes[d].type = i32(t)
+    t
 
 subst = (t0: int, targs: int[]) -> int:
     t = prune(t0)
@@ -1074,8 +1107,35 @@ compound_op = (op: int) -> int:
         shreq: int(Tok.shr)
         _: 0
 
+# the variable a narrowing alias (see narrow_var) stands for, or 0
+narrowed_var = (l: int) -> int:
+    if int(locals[l].flags) & LF_ALIAS == 0: return 0
+    e = int(locals[l].alias)
+    if nodes[e].kind != .narrow and nodes[e].kind != .unwrap: return 0
+    a = int(nodes[e].a)
+    if nodes[a].kind != .ident or nodes[a].aux != i32(int(SK.local)): return 0
+    int(nodes[a].sym)
+
+# x = v where x is narrowed (by `is`) and v is not of the narrowed type: x is the whole variable again
+unnarrow_assign = (s: int):
+    lhs = int(nodes[s].a)
+    if nodes[lhs].kind != .ident: return
+    sy = lookup(int(nodes[lhs].name))
+    if sy == 0 or syms[sy].kind != .local: return
+    l = int(syms[sy].ref)
+    u = narrowed_var(l)
+    if u == 0: return
+    rt = prune(check_expr(int(nodes[s].b), 0))
+    nodes[s].b = i32(last_checked)
+    add_flag(int(nodes[s].b), NF_CHECKED)
+    if not is_union(rt) and types[rt].kind != .opt and can_coerce(int(nodes[s].b), rt, int(locals[l].type)): return
+    locals[l].flags = i32(int(locals[l].flags) | LF_UNNARROWED)
+    nm = int(nodes[lhs].name)
+    push_scope_sym(nm, new_sym(nm, .local, u, 0))
+
 # returns the (possibly replaced) statement node
 check_assign = (s: int) -> int:
+    if nodes[s].op == i32(int(Tok.assign)): unnarrow_assign(s)
     lhs = int(nodes[s].a)
     op = int(nodes[s].op)
     if nodes[lhs].kind == .tuple:
@@ -1507,7 +1567,7 @@ runtime_names = ["__alloc", "__free", "__panic", "__panic_bounds", "__panic_unwr
     "__str_cmp", "__str_slice", "__str_append", "__buf_finish", "__buf_append_str", "__arr_resize", "__arr_repeat",
     "__print_str", "__str_from_bytes", "__assert_fail", "__hash_bytes", "__str_hash", "__div_zero", "__rc_inc", "__rc_dec",
     "__arr_extend", "__rc_dec_test"]
-optional_runtime = ["__mat4_mul", "__mat4_mul_vec4", "__fmt_i32", "__fmt_f32", "__ffi_resolve"]
+optional_runtime = ["__mat4_mul", "__mat4_mul_vec4", "__fmt_i32", "__fmt_f32", "__ffi_resolve", "__panic_narrow"]
 runtime_insts: {str: int} = {}
 
 runtime_fn = (name: str) -> int:

@@ -20,7 +20,9 @@ enum NK:
     # patterns
     pwild, plit, prange, pvariant,
     # added with syntax revision 2
-    tunion, istype, loopx, lhead
+    tunion, istype, loopx, lhead,
+    narrow,         # a: a union (or optional) value known to hold member aux (type is the member's)
+    typealias       # type Name[T] = a
 
 # node flags
 const NF_MUT = 1
