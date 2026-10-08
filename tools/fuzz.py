@@ -138,6 +138,15 @@ class Gen:
             self.emit(f"{w} = {v}")
             self.emit(f"{w}.xs[abs({self.iexpr(2)}) % {w}.xs.len()] = {self.iexpr(2)}")
             self.emit(f"if {v}.xs.len() < 40: {v}.xs.push({self.iexpr(2)})")
+            # a loop over a field array: its pointer and length are read once when nothing
+            # in the loop can replace or resize it (release builds)
+            k = self.fresh("fk")
+            self.emit(f"loop {k} in [0..{v}.xs.len()):")
+            self.emit(f"    {v}.xs[{k}] = {v}.xs[{k}] * 3 + {k} + {w}.xs[{k} % {w}.xs.len()]")
+            c2 = r.random()
+            if c2 < 0.25: self.emit(f"    if {k} == 1 and {v}.xs.len() < 40: {v}.xs.push({k})")
+            elif c2 < 0.45: self.emit(f"    if {k} == 0: {w} = {v}")
+            elif c2 < 0.6: self.emit(f"    if {k} == 2: {v}.xs = [{k}, {k}]")
             self.emit(f"print({v}, {w}, {a})")
         elif c == 2 and [x for x in self.arrays if x not in self.ro]:
             b = r.choice([x for x in self.arrays if x not in self.ro])

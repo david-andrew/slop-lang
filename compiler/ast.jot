@@ -45,6 +45,7 @@ const NF_BARE = 65536         # a range written without brackets (while parsing)
 const NF_SOA = 131072         # array type `soa T[]`: stored as one array per field of T
                               # (on a vardecl: the element alias of a loop over a soa array)
 const NF_RDONLY = 262144      # an element of a soa array reached through a read-only loop variable
+const NF_INBOUNDS = 524288    # an index the compiler generated knowing it is in bounds
 
 struct Node:
     kind: NK

@@ -396,7 +396,7 @@ one axis (`sum(m, 0)` adds up the rows: one sum per column).
 img = zeros(480, 640, 3)
 img[.., .., 0] = 1.0             # the red channel
 top = img[0..239, ..]
-col_sums = sum(m, 0)
+brightness = sum(img, 2)            # (480x640)
 ```
 
 `zeros`, `ones`, `rand` (uniform in [0, 1)) and `randn` (normal) take 1 to 4 dimensions (with

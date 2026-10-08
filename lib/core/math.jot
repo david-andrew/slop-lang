@@ -88,46 +88,96 @@ smoothstep = (e0: f64, e1: f64, x: f64) -> f64:
 # Elementary functions follow fdlibm (Sun Microsystems): argument reduction with split
 # constants and minimax polynomials, accurate to about 1 ulp.
 
-# sin/cos kernels on [-pi/4, pi/4]
-__ksin = (x: f64) -> f64:
+# sin/cos kernels on [-pi/4, pi/4] for x + y (y: what the argument reduction could not fit in
+# x); the polynomials in Estrin's form, with shorter chains of dependent operations than Horner's
+__ksin = (x: f64, y: f64) -> f64:
     z = x * x
+    w = z * z
     v = z * x
-    r = 8.33333333332248946124e-03 + z * (-1.98412698298579493134e-04 + z * (2.75573137070700676789e-06 + z * (-2.50507602534068634195e-08 + z * 1.58969099521155010221e-10)))
-    x + v * (-1.66666666666666324348e-01 + z * r)
+    r = (8.33333333332248946124e-03 + z * -1.98412698298579493134e-04) + w * ((2.75573137070700676789e-06 + z * -2.50507602534068634195e-08) + w * 1.58969099521155010221e-10)
+    x - ((z * (0.5 * y - v * r) - y) - v * -1.66666666666666324348e-01)
 
-__kcos = (x: f64) -> f64:
+__kcos = (x: f64, y: f64) -> f64:
     z = x * x
-    r = z * (4.16666666666666019037e-02 + z * (-1.38888888888741095749e-03 + z * (2.48015872894767294178e-05 + z * (-2.75573143513906633035e-07 + z * (2.08757232129817482790e-09 + z * -1.13596475577881948265e-11)))))
+    w = z * z
+    r = z * ((4.16666666666666019037e-02 + z * -1.38888888888741095749e-03) + w * ((2.48015872894767294178e-05 + z * -2.75573143513906633035e-07) + w * (2.08757232129817482790e-09 + z * -1.13596475577881948265e-11)))
     hz = 0.5 * z
-    w = 1.0 - hz
-    w + (((1.0 - w) - hz) + z * r)
+    w1 = 1.0 - hz
+    w1 + (((1.0 - w1) - hz) + (z * r - x * y))
 
-# x = n * pi/2 + r with |r| <= pi/4 (three-part pi/2 keeps r exact for large x)
-__rem_pio2 = (x: f64) -> (int, f64):
-    if x >= -0.7853981633974483 and x <= 0.7853981633974483: return (0, x)
-    n = floor(x * 0.63661977236758134308 + 0.5)
-    r = x - n * 1.57079632673412561417e+00
-    r = r - n * 6.07710050630396597660e-11
-    r = r - n * 2.02226624879595063154e-21
-    (int(n), r)
+# x = n * pi/2 + (y0 + y1) with |y0 + y1| <= pi/4 (fdlibm's reduction: pi/2 in parts, as many
+# as the cancellation needs, so sin and cos are within an ulp for |x| < 2^20 * pi/2; beyond
+# that the error grows, to about |x| * 1e-16)
+struct __Reduced:
+    n: int
+    y0: f64
+    y1: f64
+
+__rem_pio2 = (x0: f64) -> __Reduced:
+    x = abs(x0)
+    fq = 0.0
+    if x < 1647099.3291652855:
+        fq = (x * 6.36619772367581382433e-01 + 6755399441055744.0) - 6755399441055744.0
+    else: fq = floor(x * 6.36619772367581382433e-01 + 0.5)
+    r = x - fq * 1.57079632673412561417e+00
+    w = fq * 6.07710050650619224932e-11
+    y0 = r - w
+    j = int((x as u64) >> 52)
+    if j - int(((y0 as u64) >> 52) & 0x7FF) > 16:
+        t = r
+        w = fq * 6.07710050630396597660e-11
+        r = t - w
+        w = fq * 2.02226624879595063154e-21 - ((t - r) - w)
+        y0 = r - w
+        if j - int(((y0 as u64) >> 52) & 0x7FF) > 49:
+            t = r
+            w = fq * 2.02226624871116645580e-21
+            r = t - w
+            w = fq * 8.47842766036889956997e-32 - ((t - r) - w)
+            y0 = r - w
+    y1 = (r - y0) - w
+    if x0 < 0.0: return __Reduced(-int(fq), -y0, -y1)
+    __Reduced(int(fq), y0, y1)
 
 sin = (x: f64) -> f64:
-    if x != x or x == INF or x == -INF: return 0.0 / 0.0
-    n, r = __rem_pio2(x)
-    match n & 3:
-        0: __ksin(r)
-        1: __kcos(r)
-        2: -__ksin(r)
-        _: -__kcos(r)
+    if x >= -0.7853981633974483 and x <= 0.7853981633974483: return __ksin(x, 0.0)
+    __sin_q(x, 0)
 
 cos = (x: f64) -> f64:
-    if x != x or x == INF or x == -INF: return 0.0 / 0.0
-    n, r = __rem_pio2(x)
-    match n & 3:
-        0: __kcos(r)
-        1: -__ksin(r)
-        2: -__kcos(r)
-        _: __ksin(r)
+    if x >= -0.7853981633974483 and x <= 0.7853981633974483: return __kcos(x, 0.0)
+    __sin_q(x, 1)
+
+# sin(x + q * pi/2) for |x| > pi/4 (the first step of __rem_pio2 inline: it nearly always suffices)
+__sin_q = (x: f64, q: int) -> f64:
+    if x - x != 0.0: return 0.0 / 0.0          # (infinite or not a number)
+    n = 0
+    y0 = 0.0
+    y1 = 0.0
+    a = abs(x)
+    done = false
+    if a < 1647099.3291652855:
+        fq = (a * 6.36619772367581382433e-01 + 6755399441055744.0) - 6755399441055744.0
+        r = a - fq * 1.57079632673412561417e+00
+        w = fq * 6.07710050650619224932e-11
+        y0 = r - w
+        if int((a as u64) >> 52) - int(((y0 as u64) >> 52) & 0x7FF) <= 16:
+            y1 = (r - y0) - w
+            n = int(fq)
+            if x < 0.0:
+                n = -n
+                y0 = -y0
+                y1 = -y1
+            done = true
+    if not done:
+        rd = __rem_pio2(x)
+        n = rd.n
+        y0 = rd.y0
+        y1 = rd.y1
+    match (n + q) & 3:
+        0: __ksin(y0, y1)
+        1: __kcos(y0, y1)
+        2: -__ksin(y0, y1)
+        _: -__kcos(y0, y1)
 
 tan = (x: f64) -> f64: sin(x) / cos(x)
 
