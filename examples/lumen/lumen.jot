@@ -262,9 +262,8 @@ mist = () -> vec4: lerp(rgb(0.62, 0.5, 0.6), rgb(0.98, 0.78, 0.7), color_t)
 
 draw_background = ():
     t = f32(elapsed())
-    w = f64(screen_width())
-    h = f64(screen_height())
-    rect_gradient(0, 0, w, h, sky_top(), sky_bottom())
+    v = visible_rect()
+    rect_gradient(f64(v.x), f64(v.y), f64(v.z), f64(v.w), sky_top(), sky_bottom())
     # a large soft sun
     sun = vec2(f32(880.0 - cam.x * 0.02), f32(330.0 - 140.0 * color_t))
     blend(.add)
@@ -298,7 +297,9 @@ draw_background = ():
         # mist band in front of each layer
         my = 520.0 + f64(layer) * 40.0 + f64(oy)
         m = mist()
-        rect_gradient(0, my - 120.0, w, 220, rgba(m.x, m.y, m.z, 0), rgba(m.x, m.y, m.z, 0.28))
+        rect_gradient(f64(v.x), my - 120.0, f64(v.z), 220, rgba(m.x, m.y, m.z, 0), rgba(m.x, m.y, m.z, 0.28))
+        bottom_y = f64(v.y + v.w)
+        if layer == 3 and bottom_y > my + 100.0: rect(f64(v.x), my + 100.0, f64(v.z), bottom_y - my - 100.0, rgba(m.x, m.y, m.z, 0.28))
 
 draw_ground = (p: Rect, t: f32):
     # an organic top edge over a deep gradient body

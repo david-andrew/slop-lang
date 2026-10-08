@@ -1,0 +1,14 @@
+pos = vec2(400, 300)
+
+update = (dt: f64):
+    dir = vec2(0, 0)
+    if key_down(.left): dir.x -= 1
+    if key_down(.right): dir.x += 1
+    if key_down(.up): dir.y -= 1
+    if key_down(.down): dir.y += 1
+    pos += dir * f32(300 * dt)
+
+draw = ():
+    clear(rgb(0.08, 0.08, 0.12))
+    circle(pos, 24, rgb(1.0, 0.6, 0.2))
+    text("arrow keys", vec2(20, 20), 24, rgb(1, 1, 1))

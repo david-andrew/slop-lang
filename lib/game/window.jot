@@ -85,8 +85,11 @@ key_pressed = (k: Key) -> bool:
 key_released = (k: Key) -> bool:
     __input_init()
     __key_released[int(k)]
-mouse_pos = () -> vec2: vec2(__mouse_x, __mouse_y)
-mouse_delta = () -> vec2: vec2(__mouse_dx, __mouse_dy)
+# (in the 2D units of the screen: see screen_size)
+mouse_pos = () -> vec2:
+    s = __view_scale()
+    vec2(__mouse_x / s - (f64(__win_w) / s - f64(__design_w)) / 2.0, __mouse_y / s - (f64(__win_h) / s - f64(__design_h)) / 2.0)
+mouse_delta = () -> vec2: vec2(__mouse_dx / __view_scale(), __mouse_dy / __view_scale())
 mouse_wheel = () -> f64: __mouse_wheel
 mouse_down = (b: Mouse) -> bool:
     __input_init()
@@ -111,9 +114,26 @@ input_axis = () -> vec2:
     if length(s) > length(v): v = s
     v
 
-screen_width = () -> int: __win_w
-screen_height = () -> int: __win_h
-screen_size = () -> vec2: vec2(f32(__win_w), f32(__win_h))
+# The screen's size in 2D drawing units: the size given to window(), whatever the window's real
+# size (2D drawing is scaled to fit it, centered; 3D uses all of it). pixel_size() is the real size.
+screen_width = () -> int: __design_w
+screen_height = () -> int: __design_h
+screen_size = () -> vec2: vec2(f32(__design_w), f32(__design_h))
+pixel_size = () -> vec2: vec2(f32(__win_w), f32(__win_h))
+# the part of the 2D plane the screen shows, as (x, y, width, height): the area of screen_size()
+# centered in a window of any shape (draw backgrounds over this to fill the window)
+visible_rect = () -> vec4:
+    s = __view_scale()
+    w = f64(__win_w) / s
+    h = f64(__win_h) / s
+    vec4(f32((f64(__design_w) - w) / 2.0), f32((f64(__design_h) - h) / 2.0), f32(w), f32(h))
+
+__design_w = 1280
+__design_h = 720
+# window pixels per 2D unit
+__view_scale = () -> f64:
+    if __design_w <= 0 or __design_h <= 0 or __win_w <= 0 or __win_h <= 0: return 1.0
+    min(f64(__win_w) / f64(__design_w), f64(__win_h) / f64(__design_h))
 frame_time = () -> f64: __dt
 fps = () -> f64: __fps
 elapsed = () -> f64:
@@ -134,6 +154,8 @@ window = (title: str = "jot", width: int = 1280, height: int = 720):
     __win_title = title
     __win_w = width
     __win_h = height
+    __design_w = width
+    __design_h = height
     __platform_open()
     __win_open = true
     __time0 = time()

@@ -35,8 +35,10 @@ __font_spread = 6.0
 __proj = mat4()
 __xform = mat4()
 __xform_stack: mat4[]
-__target_w = 0
+__target_w = 0          # pixels of the current target
 __target_h = 0
+__view_w = 0.0          # its size in 2D drawing units
+__view_h = 0.0
 __cur_target = -1
 __blend = Blend.alpha
 
@@ -118,7 +120,7 @@ __gfx_init = ():
 __gfx_begin_frame = ():
     __gfx_init()
     __cur_target = -1
-    __set_target_size(__win_w, __win_h)
+    __set_screen_target()
     glBindFramebuffer(GL_FRAMEBUFFER, 0)
     glViewport(0, 0, i32(__win_w), i32(__win_h))
     __xform = mat4()
@@ -133,10 +135,25 @@ __gfx_end_frame = ():
     flush()
     __post_end()
 
+# a render target: 2D units are its pixels
 __set_target_size = (w: int, h: int):
     __target_w = w
     __target_h = h
+    __view_w = f64(w)
+    __view_h = f64(h)
     __proj = orthographic(0.0, f64(w), f64(h), 0.0, -1.0, 1.0)
+
+# the screen: 2D units are the size the program asked for in window(), scaled uniformly to fit
+# the window and centered in it (a window of another shape shows more around that area)
+__set_screen_target = ():
+    __target_w = __win_w
+    __target_h = __win_h
+    s = __view_scale()
+    ox = (f64(__win_w) / s - f64(__design_w)) / 2.0
+    oy = (f64(__win_h) / s - f64(__design_h)) / 2.0
+    __view_w = f64(__design_w)
+    __view_h = f64(__design_h)
+    __proj = orthographic(-ox, f64(__design_w) + ox, f64(__design_h) + oy, -oy, -1.0, 1.0)
 
 # ---------------- textures ----------------
 # upload an image to the GPU
@@ -202,7 +219,7 @@ draw_to_screen = ():
     flush()
     glBindFramebuffer(GL_FRAMEBUFFER, 0)
     glViewport(0, 0, i32(__win_w), i32(__win_h))
-    __set_target_size(__win_w, __win_h)
+    __set_screen_target()
     __cur_target = -1
 
 # ---------------- state ----------------
@@ -236,7 +253,7 @@ reset_transform = (): __xform = mat4()
 # 2D camera: `target` appears at the screen center, scaled by zoom
 camera2d = (target: vec2, zoom: f64 = 1.0, angle: f64 = 0.0):
     __xform = mat4()
-    translate(f64(__target_w) / 2.0, f64(__target_h) / 2.0)
+    translate(__view_w / 2.0, __view_h / 2.0)
     rotate(angle)
     scale(zoom, zoom)
     translate(-f64(target.x), -f64(target.y))

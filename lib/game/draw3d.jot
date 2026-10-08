@@ -452,6 +452,7 @@ __post_begin = ():
         __bloom_a = render_target(max(w / 4, 1), max(h / 4, 1))
         __bloom_b = render_target(max(w / 4, 1), max(h / 4, 1))
     draw_to(__scene_rt)
+    __set_screen_target()          # (it stands in for the screen)
     __post_active = true
 
 __post_pass = (sh: Shader, dst: RenderTarget, p: PostParams):
