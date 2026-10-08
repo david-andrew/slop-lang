@@ -128,6 +128,9 @@ language-servers = ["jot"]
 
 ## Documentation
 
+The website (built by `tools/site.py`, published by `.github/workflows/site.yml`) has these
+pages and the playground.
+
 - [docs/LANGUAGE.md](docs/LANGUAGE.md) — the language
 - [docs/API.md](docs/API.md) — the standard library (generated from `lib/`)
 - [docs/REPORT.md](docs/REPORT.md) — measured results for the design goals (`tools/report.py`)
@@ -156,7 +159,7 @@ tests/         test programs with expected output (tools/runtests.py), render re
 bench/         benchmarks (Jot and equivalent C)
 tools/         bootstrap, test runner, render test, differential fuzzer, language server test,
                headless GNOME screenshots (gnomeshot.py), the web playground (playground.py,
-               playground/), report, profiler, instruction counter
+               playground/), the website (site.py, site/), report, profiler, instruction counter
 ```
 
 Testing: `tools/runtests.py` runs the test programs in each mode (native/web, debug/release,

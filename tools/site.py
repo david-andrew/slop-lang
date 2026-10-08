@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""Build Jot's website into build/site: a home page, the docs (from the Markdown files) and the
+playground. Static files only: serve the directory anywhere (GitHub Pages: .github/workflows).
+usage: tools/site.py [output-dir]          (needs bin/jot, for the playground)"""
+import html, os, re, shutil, subprocess, sys
+
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "build", "site")
+here = os.path.join(root, "tools", "site")
+REPO = "https://github.com/david-andrew/slop-lang"
+
+# ---- Markdown (the subset the docs use) ----
+
+def slug(text):
+    s = re.sub(r"<[^>]+>", "", text).lower()
+    s = re.sub(r"[^a-z0-9 _-]", "", s).strip().replace(" ", "-")
+    return re.sub(r"-+", "-", s) or "section"
+
+LINKS = {"docs/LANGUAGE.md": "language.html", "LANGUAGE.md": "language.html", "docs/API.md": "api.html",
+         "API.md": "api.html", "docs/REPORT.md": "report.html", "REPORT.md": "report.html", "README.md": "start.html",
+         "../README.md": "start.html"}
+
+def inline(t):
+    # code spans first (their contents are literal)
+    parts = re.split(r"(`[^`]+`)", t)
+    outp = []
+    for p in parts:
+        if p.startswith("`") and p.endswith("`") and len(p) > 1:
+            outp.append("<code>" + html.escape(p[1:-1]) + "</code>")
+            continue
+        p = html.escape(p, quote=False)
+        def link(m):
+            label, url = m.group(1), m.group(2)
+            url = LINKS.get(url, url)
+            if not re.match(r"^(https?:|#|mailto:)", url) and url.endswith(".md"): url = REPO + "/blob/master/" + url
+            elif not re.match(r"^(https?:|#|mailto:)", url) and not url.endswith(".html"): url = REPO + "/tree/master/" + url
+            return f'<a href="{url}">{label}</a>'
+        p = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", link, p)
+        p = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", p)
+        p = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"<em>\1</em>", p)
+        p = re.sub(r"(?<!\w)_(?!\s)([^_]+?)(?<!\s)_(?!\w)", r"<em>\1</em>", p)
+        outp.append(p)
+    return "".join(outp)
+
+def markdown(src):
+    lines = src.split("\n")
+    out, toc = [], []
+    i = 0
+    para = []
+    seen = set()
+
+    def flush():
+        nonlocal para
+        if para:
+            text = ""
+            for k, l in enumerate(para):
+                # (two trailing spaces: a line break)
+                text += inline(l.rstrip()) + ("<br>" if l.endswith("  ") and k < len(para) - 1 else " ")
+            out.append("<p>" + text.strip() + "</p>")
+            para = []
+
+    def lists(i):
+        # a list starting at line i (bullets or numbers, nested by indentation)
+        items, kind = [], None
+        base = len(lines[i]) - len(lines[i].lstrip())
+        while i < len(lines):
+            l = lines[i]
+            m = re.match(r"^(\s*)([-*]|\d+\.)\s+(.*)$", l)
+            if not m or len(m.group(1)) < base:
+                if l.strip() and items and len(l) - len(l.lstrip()) > base:
+                    items[-1][1].append(l.strip())
+                    i += 1
+                    continue
+                break
+            ind = len(m.group(1))
+            if ind > base:
+                sub, i = lists(i)
+                items[-1][2].append(sub)
+                continue
+            kind = kind or ("ol" if m.group(2)[0].isdigit() else "ul")
+            items.append([m.group(3), [], []])
+            i += 1
+        h = f"<{kind}>" + "".join("<li>" + inline(" ".join([t] + more)) + "".join(subs) + "</li>" for t, more, subs in items) + f"</{kind}>"
+        return h, i
+
+    while i < len(lines):
+        l = lines[i]
+        if l.startswith("```"):
+            flush()
+            lang = l[3:].strip()
+            body = []
+            i += 1
+            while i < len(lines) and not lines[i].startswith("```"):
+                body.append(lines[i])
+                i += 1
+            i += 1
+            cls = "jot" if lang in ("", "jot") else lang
+            out.append(f'<pre><code class="{cls}">' + html.escape("\n".join(body)) + "</code></pre>")
+            continue
+        m = re.match(r"^(#{1,4})\s+(.*)$", l)
+        if m:
+            flush()
+            n = len(m.group(1))
+            text = inline(m.group(2))
+            s = slug(m.group(2))
+            while s in seen: s += "-"
+            seen.add(s)
+            if n in (2, 3): toc.append((n, s, re.sub(r"<[^>]+>", "", text)))
+            out.append(f'<h{n} id="{s}"><a class="anchor" href="#{s}">{text}</a></h{n}>')
+            i += 1
+            continue
+        if l.startswith("|"):
+            flush()
+            rows = []
+            while i < len(lines) and lines[i].startswith("|"):
+                rows.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
+                i += 1
+            head, body = rows[0], [r for r in rows[1:] if not all(re.match(r"^:?-+:?$", c) for c in r)]
+            t = "<table><thead><tr>" + "".join(f"<th>{inline(c)}</th>" for c in head) + "</tr></thead><tbody>"
+            t += "".join("<tr>" + "".join(f"<td>{inline(c)}</td>" for c in r) + "</tr>" for r in body)
+            out.append(t + "</tbody></table>")
+            continue
+        if re.match(r"^\s*([-*]|\d+\.)\s+", l) and not re.match(r"^\s*-{3,}\s*$", l):
+            flush()
+            h, i = lists(i)
+            out.append(h)
+            continue
+        if l.startswith(">"):
+            flush()
+            q = []
+            while i < len(lines) and lines[i].startswith(">"):
+                q.append(lines[i][1:].strip())
+                i += 1
+            out.append("<blockquote><p>" + inline(" ".join(q)) + "</p></blockquote>")
+            continue
+        if re.match(r"^\s*-{3,}\s*$", l):
+            flush()
+            out.append("<hr>")
+            i += 1
+            continue
+        if not l.strip():
+            flush()
+            i += 1
+            continue
+        para.append(l)
+        i += 1
+    flush()
+    return "\n".join(out), toc
+
+# ---- pages ----
+
+def nav(here_page, prefix):
+    items = [("Docs", "docs/start.html"), ("Language", "docs/language.html"), ("Library", "docs/api.html"),
+             ("Playground", "playground/"), ("Report", "docs/report.html")]
+    links = "".join(f'<a class="{"on" if p == here_page else ""}" href="{prefix}{p}">{n}</a>' for n, p in items)
+    return (f'<nav class="top"><a class="brand" href="{prefix}index.html"><img src="{prefix}icon.svg" alt="">Jot</a>'
+            f'<div class="links">{links}</div><div class="spacer"></div><a href="{REPO}">GitHub</a></nav>')
+
+def page(title, body, here_page, prefix, extra_head=""):
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{html.escape(title)}</title><link rel="icon" href="{prefix}icon.svg"><link rel="stylesheet" href="{prefix}style.css">{extra_head}
+</head><body>{nav(here_page, prefix)}
+{body}
+<footer>Jot &middot; <a href="{REPO}">source on GitHub</a></footer>
+<script src="{prefix}highlight.js"></script>
+<script>for (const c of document.querySelectorAll("pre code.jot")) c.innerHTML = jotHighlight(c.textContent, 0).replace(/\\n$/, "");</script>
+</body></html>
+"""
+
+DOCS = [("start.html", "README.md", "Getting started"), ("language.html", "docs/LANGUAGE.md", "The language"),
+        ("api.html", "docs/API.md", "Standard library"), ("report.html", "docs/REPORT.md", "Report")]
+
+def build_docs():
+    os.makedirs(os.path.join(out, "docs"), exist_ok=True)
+    for name, src, title in DOCS:
+        text = open(os.path.join(root, src)).read()
+        body, toc = markdown(text)
+        pages = "".join(f'<a class="{"on" if n == name else ""}" href="{n}">{t}</a>' for n, _, t in DOCS)
+        tocs = "".join(f'<a class="h{n}" href="#{s}">{t}</a>' for n, s, t in toc)
+        main = f'<div class="doc"><aside><div class="pages">{pages}</div><div class="toc">{tocs}</div></aside><main>{body}</main></div>'
+        here_page = "docs/start.html" if name == "start.html" else "docs/" + name
+        open(os.path.join(out, "docs", name), "w").write(page(f"{title} — Jot", main, here_page, "../"))
+
+HOME = """
+<section class="hero">
+  <div>
+    <h1>Jot: <span>scripts</span> that compile to games.</h1>
+    <p class="lead">A small, statically typed language that feels like Python and runs like C. One command
+    compiles and runs your program in milliseconds, as a native Linux executable or as a single web page.</p>
+    <div class="buttons"><a class="btn primary" href="playground/">Try it in your browser</a>
+    <a class="btn" href="docs/start.html">Get started</a><a class="btn" href="docs/language.html">The language</a></div>
+  </div>
+  <pre><code class="jot">pos = vec2(400, 300)
+
+update = (dt: f64):
+    pos += input_axis() * f32(300 * dt)
+
+draw = ():
+    clear(rgb(0.08, 0.08, 0.12))
+    circle(pos, 24, rgb(1.0, 0.6, 0.2))
+    text("arrow keys", vec2(20, 20), 24, WHITE)</code></pre>
+</section>
+<section class="features">
+  <div class="feature"><h3>Instant compiles</h3><p>About 250,000 lines a second. Hello world compiles and runs in about 10 ms; there is no build system, options live in the source.</p></div>
+  <div class="feature"><h3>Fast programs</h3><p>Release builds run within about 1.5&times; of gcc -O2, with bounds checks on. <code>parallel_map</code> uses every core; GPU arrays run on the GPU.</p></div>
+  <div class="feature"><h3>Easy</h3><p>Type inference everywhere, indentation syntax, closures, partial application, generics without ceremony, unions, value semantics with no garbage collector.</p></div>
+  <div class="feature"><h3>Made for games</h3><p>Windows, input, 2D drawing, a 3D renderer with shadows and bloom, shaders written in Jot, audio, pixel art and any screen shape, all built in.</p></div>
+  <div class="feature"><h3>Runs anywhere it lands</h3><p>Native programs are static executables with no dependencies; web builds are one HTML file. Graphics drivers are optional: there is a software renderer.</p></div>
+  <div class="feature"><h3>Self-hosted</h3><p>The compiler is written in Jot and compiles itself, even in this site's playground, where it runs as WebAssembly.</p></div>
+</section>
+<section class="strip">
+  <h2>Numbers, arrays, and the rest</h2>
+  <pre><code class="jot">fib = (n: int) -> int:
+    if n < 2: return n
+    fib(n - 1) + fib(n - 2)
+
+nums = [5 3 9 1]
+nums.sort()
+add = (a: int, b: int): a + b
+print(nums.map((x): x * x), add(1, _)(41), fib(30))
+print(nums .* 2.5 .+ 1, sqrt.([4.0 9.0]), [1 2; 3 4] * [1 0; 0 1])</code></pre>
+  <p>Editors: <code>jot lsp</code> is a language server (VS Code and Cursor extension in the repository). An interactive prompt: run <code>jot</code> with no file.</p>
+</section>
+"""
+
+def main():
+    if os.path.exists(out): shutil.rmtree(out)
+    os.makedirs(out)
+    for f in ["style.css", "icon.svg"]: shutil.copy(os.path.join(here, f), out)
+    shutil.copy(os.path.join(root, "tools", "playground", "highlight.js"), out)
+    open(os.path.join(out, "index.html"), "w").write(page("Jot — a small, fast language for games", HOME, "index.html", ""))
+    build_docs()
+    os.makedirs(os.path.join(out, "playground"))
+    subprocess.run([sys.executable, os.path.join(root, "tools", "playground.py"), os.path.join(out, "playground", "index.html")], check=True)
+    # (the playground's title leads back to the site)
+    pg = os.path.join(out, "playground", "index.html")
+    t = open(pg).read().replace('<h1><span>Jot</span> playground</h1>', '<h1><a href="../" style="color:inherit"><span>Jot</span></a> playground</h1>', 1)
+    t = t.replace('<title>Jot playground</title>', '<title>Jot playground</title><link rel="icon" href="../icon.svg">', 1)
+    open(pg, "w").write(t)
+    open(os.path.join(out, ".nojekyll"), "w").close()
+    print(out)
+
+main()
