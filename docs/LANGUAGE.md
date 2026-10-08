@@ -513,6 +513,7 @@ parallel functions.
 
 ```
 jot file.jot [args]     compile and run (wasm target: opens the browser)
+jot --web file.jot      compile for the web and open it in the browser
 jot build file.jot      write the executable / .html
 jot test file.jot       run `test` blocks
 jot check file.jot      type check only

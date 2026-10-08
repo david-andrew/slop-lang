@@ -77,7 +77,8 @@ tools/bootstrap.sh            # stage0 (C) -> jot1 -> jot2 -> jot3, checks jot2 
 bin/jot examples/shapes.jot   # compile and run
 bin/jot examples/lumen/lumen.jot          # the 2D demo game
 bin/jot examples/dunes/dunes.jot          # the 3D demo game
-bin/jot build examples/dunes/dunes.jot --target wasm -o dunes.html   # open dunes.html in a browser
+bin/jot --web examples/dunes/dunes.jot    # the same game in the browser
+bin/jot build examples/dunes/dunes.jot --target wasm -o dunes.html   # a page to keep or share
 bin/jot test tests/unit/sample_test.jot  # run `test` blocks
 bin/jot check file.jot        # type check only
 ```
