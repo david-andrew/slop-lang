@@ -28,3 +28,31 @@ main = ():
     print(qs.len(), qs[1].y)
     qs.clear()
     print(qs.len())
+
+struct V2:
+    x: f64
+    y: f64
+struct PV:
+    pos: V2
+    vel: V2
+    alive: bool = true
+
+alias_demo = ():
+    ps: soa PV[]
+    loop i in [0..4): ps.push(PV(V2(f64(i), 0.0), V2(1.0, 2.0)))
+    loop mut p in ps:
+        p.pos.x += p.vel.x * 0.5
+        p.pos.y = p.vel.y
+        if p.pos.x > 2.5: p.alive = false
+    total = 0.0
+    loop p in ps: total += p.pos.x
+    print(total, ps.alive)
+    loop mut p in ps:
+        if not p.alive: p = PV(V2(0.0, 0.0), V2(0.0, 0.0))
+    loop i in 0.. and p in ps: print(i, p)
+    keep = (p: PV) -> bool: p.alive
+    n = 0
+    loop p in ps:
+        if keep(p): n += 1
+    print(n)
+alias_demo()

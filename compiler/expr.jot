@@ -305,6 +305,7 @@ check_place = (n: int, for_mut: bool):
             l = int(nodes[n].sym)
             f = int(locals[l].flags)
             nm = name_of(int(locals[l].name))
+            if f & LF_SOAELEM != 0: fatal(nodes[n].pos, "'{nm}' stands for an element of a soa array: assign it a whole value (in `loop mut`) or change its fields")
             # a closure modifying a variable it captured modifies the variable itself
             r = l
             loop int(locals[r].flags) & LF_CAPTURE != 0: r = int(locals[r].outer)
@@ -331,6 +332,7 @@ check_place = (n: int, for_mut: bool):
         cp_inner -= 1
         return
     if k == .index:
+        if has_flag(n, NF_RDONLY): fatal(nodes[n].pos, "cannot modify loop variable '{name_of(int(nodes[n].name))}' (use `loop mut`)")
         bt = prune(ntype(int(nodes[n].a)))
         bk = types[bt].kind
         if bk == .ptr: return
@@ -2041,6 +2043,10 @@ check_expr = (n: int, expected: int) -> int:
         else: fatal(nodes[n].pos, "invalid use of '{name_of(nm)}'")
     else if k == .field:
         a0 = int(nodes[n].a)
+        sl = soa_alias_of(a0)
+        if sl != 0:
+            nodes[n] = nodes[soa_alias_field(n, sl)]
+            return check_expr(n, expected)
         if nodes[a0].kind == .index and nodes[a0].b != 0:
             # ps[i].x on a soa array is ps.x[i]
             abt = prune(check_expr(int(nodes[a0].a), 0))

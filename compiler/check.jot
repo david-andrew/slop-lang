@@ -39,6 +39,8 @@ const LF_RESIZED = 128 # the variable itself is written (not just its elements o
 const LF_CAPTURED = 256 # a closure captures this variable
 const LF_DECL = 512     # declared by `x = value` / `x: T`
 const LF_UNNARROWED = 2048  # a narrowed name (alias) whose variable was assigned another type
+const LF_SOAELEM = 4096     # loop p in ps (ps a soa array): p stands for ps[i] (see soa_loop)
+const LF_SOAMUT = 8192      # ... and the loop is `loop mut`
 const LF_SHARED = 1024  # modified after a closure captured it, or by the closure: closures and
                         # the function share it by reference (it lives in a heap cell, see lower.jot)
 
@@ -54,6 +56,7 @@ struct Local:
     vreg: i32
     outer: i32      # LF_CAPTURE: the enclosing function's variable this one captures
     dloops: i32     # loops being checked when it was declared
+    soa: i32        # LF_SOAELEM: the (unchecked) ps[i] it stands for
     wloop: i32      # outermost loop (inside its scope) that modifies it before any capture
 
 struct Global:
@@ -1000,7 +1003,6 @@ soa_loop = (s: int):
     nodes[s].a = i32(it)
     if not is_soa(t): return
     pos = nodes[s].pos
-    if has_flag(s, NF_MUT): fatal(pos, "`loop mut` over a soa array is not supported (in an index loop, write ps[i].x = ...)")
     ik = nodes[it].kind
     if ik != .ident and ik != .field: fatal(pos, "a loop over a soa array needs the array in a variable")
     nv = nkids(s)
@@ -1016,11 +1018,53 @@ soa_loop = (s: int):
     nodes[ix].a = i32(clone(it))
     nodes[ix].b = i32(bc_ident(ixn, pos))
     body = int(nodes[s].b)
-    stmts = [bc_let(name_of(int(nodes[pv].name)), ix, pos)]
+    # p stands for ps[i]: p.x is ps.x[i]; only a use of p as a whole reads every field
+    el = bc_let(name_of(int(nodes[pv].name)), ix, pos)
+    add_flag(el, NF_SOA)
+    if has_flag(s, NF_MUT): add_flag(el, NF_MUT)
+    clear_flag(s, NF_MUT)
+    stmts = [el]
     loop x in kids(body): stmts.push(x)
     set_list(body, stmts)
     set_list(s, [bc_ident(ixn, pos)])
     nodes[s].a = i32(r)
+
+# the element alias of a loop over a soa array (see soa_loop)
+soa_alias = (s: int):
+    tmpl = clone(int(nodes[s].b))
+    check_expr(int(nodes[s].b), 0)
+    v = last_checked
+    l = new_local(int(nodes[s].name), ntype(v), nodes[s].pos)
+    f = LF_ALIAS | LF_SOAELEM
+    if has_flag(s, NF_MUT): f |= LF_SOAMUT
+    locals[l].flags = i32(f)
+    locals[l].alias = i32(v)
+    locals[l].soa = i32(tmpl)
+    nodes[s].kind = .block
+    nodes[s].nlist = 0
+
+# the soa element alias local a name stands for here, or 0
+soa_alias_of = (e: int) -> int:
+    if nodes[e].kind != .ident: return 0
+    s = lookup(int(nodes[e].name))
+    if s == 0 or syms[s].kind != .local: return 0
+    l = int(syms[s].ref)
+    if int(locals[l].flags) & LF_SOAELEM == 0: return 0
+    l
+
+# p.x for a soa element alias p: ps.x[i]
+soa_alias_field = (n: int, l: int) -> int:
+    t = int(locals[l].soa)
+    f = mk(.field, nodes[n].pos)
+    nodes[f].a = i32(clone(int(nodes[t].a)))
+    nodes[f].name = nodes[n].name
+    ix = mk(.index, nodes[n].pos)
+    nodes[ix].a = i32(f)
+    nodes[ix].b = i32(clone(int(nodes[t].b)))
+    if int(locals[l].flags) & LF_SOAMUT == 0:
+        add_flag(ix, NF_RDONLY)
+        nodes[ix].name = locals[l].name
+    ix
 
 # loop a, b in xs (an array of pairs): loop t in xs: let a, b = t
 unpack_loop = (s: int):
@@ -1209,6 +1253,11 @@ unnarrow_assign = (s: int):
 # returns the (possibly replaced) statement node
 check_assign = (s: int) -> int:
     if nodes[s].op == i32(int(Tok.assign)): unnarrow_assign(s)
+    sl = soa_alias_of(int(nodes[s].a))
+    if sl != 0:
+        # p = value in `loop mut p in ps`: ps[i] = value
+        if int(locals[sl].flags) & LF_SOAMUT == 0: fatal(nodes[s].pos, "cannot modify loop variable '{name_of(int(locals[sl].name))}' (use `loop mut`)")
+        nodes[s].a = i32(clone(int(locals[sl].soa)))
     lhs = int(nodes[s].a)
     op = int(nodes[s].op)
     if nodes[lhs].kind == .tuple:
@@ -1306,6 +1355,9 @@ check_assign = (s: int) -> int:
     s
 
 check_vardecl = (s: int):
+    if has_flag(s, NF_SOA):
+        soa_alias(s)
+        return
     if nodes[s].nlist > 0:
         if has_flag(s, NF_GLOBAL):
             loop i in [0..nkids(s)):

@@ -376,14 +376,18 @@ k = m .* 2.0 .+ [10.0 20.0]      # broadcasting a row
 `col(m, j)`, `flatten`, `sum`, `mean`, `dot`, `norm`. On 2-D arrays `+ -` work elementwise on
 equal shapes and `*` is the matrix product.
 
-**Struct-of-arrays.** `ps: soa Particle[]` behaves like `Particle[]` — `push`, `pop`,
-`remove`, `len`, `ps[i]`, `ps[i].x += 1`, `loop p in ps`, conversion from `Particle[]` — but
-keeps each field in an array of its own, so code that looks at one field reads only that
-field's memory. `ps.x` is the whole field array:
+**Struct-of-arrays.** `ps: soa Particle[]` is used exactly like `Particle[]` — `push`, `pop`,
+`remove`, `len`, `ps[i]`, `ps[i].x += 1`, `loop p in ps`, `loop mut p in ps`, conversion from
+`Particle[]` — but keeps each field in an array of its own. A loop variable stands for the
+element itself: `p.x` reads (or, in `loop mut`, writes) only the `x` array, so a loop that looks
+at two fields of a large struct touches only those two arrays. Using `p` as a whole value reads
+every field. `ps.x` is the whole field array, for elementwise math:
 
 ```jot
 ps: soa Particle[] = make_particles()
-ps.x = ps.x .+ ps.vx .* dt
+loop mut p in ps:
+    p.pos += p.vel * dt                 # reads vel, writes pos: no other field is touched
+ps.age = ps.age .+ dt
 ```
 
 **GPU arrays.** `gpu(xs)` copies an array to GPU memory and `cpu(g)` copies it back. A dotted

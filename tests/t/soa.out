@@ -1,3 +1,9 @@
+8.0 [true, true, true, false]
+0 PV(pos=V2(x=0.5, y=2.0), vel=V2(x=1.0, y=2.0), alive=true)
+1 PV(pos=V2(x=1.5, y=2.0), vel=V2(x=1.0, y=2.0), alive=true)
+2 PV(pos=V2(x=2.5, y=2.0), vel=V2(x=1.0, y=2.0), alive=true)
+3 PV(pos=V2(x=0.0, y=0.0), vel=V2(x=0.0, y=0.0), alive=true)
+4
 3 3 P(x=3.0, y=4.0, alive=false) 5.0
 [11.0, -1.0, 5.0] [2.0, -2.0, 6.0] [true, true, true]
 54.0
