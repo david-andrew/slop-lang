@@ -433,8 +433,12 @@ ys = cpu(h)
 ```
 
 GPU arrays have the shape of the array they were made from (up to 4 dimensions) and broadcast
-like arrays on the CPU; `cpu(g)` gives an `f32[,]` of that shape. Values on the GPU are `f32`. GPU
-memory is reused automatically once no copy of a GPU array is left. Native programs use OpenGL
+like arrays on the CPU; `cpu(g)` gives an array of that shape. Values on the GPU are `f32`, or `i32`
+for arrays made from integers: integer arithmetic keeps integer semantics (`7 / 2` is 3, `%` keeps
+the dividend's sign, as on the CPU), and mixing integers with floats gives floats. `sum`, `mean`,
+`min` and `max` run on the GPU (float sums add in `f32`, pairwise: about 1e-7 relative error).
+Arrays may hold as many values as the GPU's largest texture times four (a billion on a typical
+desktop GPU). GPU memory is reused automatically once no copy of a GPU array is left. Native programs use OpenGL
 ES (no window needed), web builds WebGL 2. Where neither can render to float textures (no
 driver, `JOT_SOFTWARE=1`, an old browser) the same expressions run on the CPU, so programs work
 everywhere; `gpu_available()` tells which.

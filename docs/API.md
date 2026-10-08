@@ -640,29 +640,45 @@ step = (edge: f32, x: f32) -> f32
 
 GPU arrays: numbers kept in GPU memory and computed on by GPU programs.  
   
-g = gpu(xs)                       # upload (f32 values; xs may have up to 4 dimensions)  
+g = gpu(xs)                       # upload (up to 4 dimensions)  
 h = g .* 2.0 .+ sin.(g)           # one GPU program, made from the expression at compile time  
-ys = cpu(h)                       # download: an f32[,] of the same shape  
+ys = cpu(h)                       # download: an array of the same shape  
+total = sum(h)                    # reductions run on the GPU too  
   
-A dotted expression whose arrays are GPU arrays runs on the GPU as one fragment program (the  
-functions applied with f.(g) are translated to GLSL, like shader functions; numbers in the  
-expression become f32 uniforms). Shapes broadcast as on the CPU. Native programs use OpenGL ES  
-(without a window, through a windowless EGL context), web builds WebGL 2. Where neither can  
-render to float textures (no driver, JOT_SOFTWARE=1, an old browser, node) the same  
-expressions run on the CPU, so programs work everywhere; gpu_available() tells which.  
+Values are f32, or i32 for arrays made from integers (gpu(int_array)): integer arithmetic  
+keeps integer semantics (7 / 2 is 3), and mixing with floats gives floats. A dotted expression  
+whose arrays are GPU arrays runs on the GPU as one fragment program (the functions applied with  
+f.(g) are translated to GLSL, like shader functions; numbers in the expression become  
+uniforms). Shapes broadcast as on the CPU. Native programs use OpenGL ES (without a window,  
+through a windowless EGL context), web builds WebGL 2. Where neither can render to float  
+textures (no driver, JOT_SOFTWARE=1, an old browser, node) the same expressions run on the CPU,  
+so programs work everywhere; gpu_available() tells which.  
+  
+Textures hold four values per texel (RGBA), as wide as the GPU allows: up to about a billion  
+values on a typical desktop GPU (64 million where textures are at most 4096 wide).  
 
 ```
-struct GpuArray
+struct GpuArray[T]
 gpu_available = () -> bool
-gpu = (xs: f32[]) -> GpuArray
-gpu = (m: NDArray[f32]) -> GpuArray
-gpu = (m: NDArray[f64]) -> GpuArray
-gpu = (xs: f64[]) -> GpuArray
-gpu = (xs: int[]) -> GpuArray
-gpu = (xs: bool[]) -> GpuArray
-cpu = (g: GpuArray) -> NDArray[f32]    # the values (an array of the GPU array's shape)
-len = (g: GpuArray) -> int
-sum = (g: GpuArray) -> f64
+gpu = (xs: f32[]) -> GpuArray[f32]
+gpu = (xs: f64[]) -> GpuArray[f32]
+gpu = (xs: i32[]) -> GpuArray[i32]
+gpu = (xs: int[]) -> GpuArray[i32]
+gpu = (xs: bool[]) -> GpuArray[f32]
+gpu = (m: NDArray[f32]) -> GpuArray[f32]
+gpu = (m: NDArray[f64]) -> GpuArray[f32]
+gpu = (m: NDArray[i32]) -> GpuArray[i32]
+gpu = (m: NDArray[int]) -> GpuArray[i32]
+cpu[T] = (g: GpuArray[T]) -> NDArray[T]    # the values (an array of the GPU array's shape)
+len[T] = (g: GpuArray[T]) -> int
+sum = (g: GpuArray[f32]) -> f64    # Floats are reduced on the GPU (64 values at a time, until few are left), then added up in f64; integers are added up exactly, in 64 bits, on the CPU.
+sum = (g: GpuArray[i32]) -> int
+mean = (g: GpuArray[f32]) -> f64
+mean = (g: GpuArray[i32]) -> f64
+min = (g: GpuArray[f32]) -> f32
+max = (g: GpuArray[f32]) -> f32
+min = (g: GpuArray[i32]) -> i32
+max = (g: GpuArray[i32]) -> i32
 ```
 
 ### image.jot

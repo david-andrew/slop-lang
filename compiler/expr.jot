@@ -3071,6 +3071,25 @@ bc_loop1 = (tmpl: int, arrs: str[], pre: str, epre: str, pos: int) -> int[]:
     stmts.push(bc_stmt(bc_ident(out, pos), pos))
     stmts
 
+is_gpu_array = (t0: int) -> bool:
+    t = prune(t0)
+    types[t].kind == .struct_ and structs[int(types[t].st)].decl != 0 and name_of(int(nodes[int(structs[int(types[t].st)].decl)].name)) == "GpuArray"
+
+# the checked value of operand k of a dotted expression (the let in front of the loop)
+d0_leaf = (stmts: int[], k: int) -> int: int(nodes[stmts[k]].b)
+
+# an array literal of type T[] (also when it is empty)
+typed_array = (elems: int[], t: int, pos: int) -> int:
+    a = mk(.array, pos)
+    set_list(a, elems)
+    tn = mk(.tname, pos)
+    nodes[tn].aux = -7
+    nodes[tn].ival = mk_array(t)
+    c = mk(.cast, pos)
+    nodes[c].a = i32(a)
+    nodes[c].b = i32(tn)
+    c
+
 is_nd = (t0: int) -> bool:
     t = prune(t0)
     types[t].kind == .struct_ and structs[int(types[t].st)].name == "NDArray"
@@ -3095,7 +3114,7 @@ check_dotted = (n: int, expected: int) -> int:
         r = 0
         if types[t].kind == .array: r = 1
         else if is_nd(t): r = 2
-        else if types[t].kind == .struct_ and structs[int(types[t].st)].name == "GpuArray":
+        else if is_gpu_array(t):
             r = 3
             gpu = true
         ranks.push(r)
@@ -3114,10 +3133,13 @@ check_dotted = (n: int, expected: int) -> int:
     result = 0
     if gpu:
         # GPU arrays: one fragment program, or the same loop on the CPU where there is no GPU
+        # (each operand is an f32 or i32 in the GPU program: arrays by their element type, numbers
+        # by whether they are integers)
         desc = ""
         params: int[]
         gins: int[]
-        scal: int[]
+        fscal: int[]
+        iscal: int[]
         harrs: str[]
         hstmts: int[]
         loop k in [0..leaves.len()):
@@ -3125,35 +3147,44 @@ check_dotted = (n: int, expected: int) -> int:
             nodes[pm].name = i32(intern("{pre}e{k}"))
             ty = mk(.tname, pos)
             nodes[ty].aux = -7
-            nodes[ty].ival = T_F32
-            nodes[pm].a = i32(ty)
-            params.push(pm)
+            et = T_F32
             harrs.push("")
             if ranks[k] == 3:
-                desc += "t"
-                gins.push(d(k))
+                gt = prune(ntype(d0_leaf(stmts, k)))
+                if is_int(struct_targ(int(types[gt].st), 0)):
+                    et = T_I32
+                    desc += "i"
+                else: desc += "t"
+                gins.push(bc_call("__gpu_in", [d(k)], pos))
                 harrs[k] = "{pre}h{k}"
                 hstmts.push(bc_let(harrs[k], bc_call("cpu", [d(k)], pos), pos))
             else if ranks[k] == 0:
-                desc += "s"
-                scal.push(bc_call("f32", [d(k)], pos))
+                lt = prune(ntype(d0_leaf(stmts, k)))
+                if is_int(lt):
+                    et = T_I32
+                    desc += "n"
+                    iscal.push(bc_call("i32", [d(k)], pos))
+                else:
+                    desc += "s"
+                    fscal.push(bc_call("f32", [d(k)], pos))
             else: fatal(nodes[leaves[k]].pos, "this array is in CPU memory: upload it with gpu(xs) to use it with GPU arrays")
+            nodes[ty].ival = et
+            nodes[pm].a = i32(ty)
+            params.push(pm)
         lam = mk(.lambda, pos)
         set_list(lam, params)
         nodes[lam].b = i32(bc_block([bc_stmt(clone(tmpl), pos)], pos))
+        # (the expression's type decides the result's: integers stay integers)
+        lt = prune(check_expr(lam, 0))
+        lam = last_checked
+        rt = prune(int(types[lt].elem))
+        runf = "__gpu_run_f"
+        if is_int(rt): runf = "__gpu_run_i"
         ds = mk(.str_lit, pos)
         nodes[ds].sval = i32(intern(desc))
         ga = mk(.array, pos)
         set_list(ga, gins)
-        sa = mk(.array, pos)
-        set_list(sa, scal)
-        st = mk(.tname, pos)
-        nodes[st].aux = -7
-        nodes[st].ival = mk_array(T_F32)
-        sc = mk(.cast, pos)
-        nodes[sc].a = i32(sa)
-        nodes[sc].b = i32(st)
-        run = bc_call("__gpu_run", [bc_call("__gpu_kernel", [lam, ds], pos), ga, sc], pos)
+        run = bc_call(runf, [bc_call("__gpu_kernel", [lam, ds], pos), ga, typed_array(fscal, T_F32, pos), typed_array(iscal, T_I32, pos)], pos)
         hkinds: int[]
         loop k in [0..leaves.len()):
             if ranks[k] == 3: hkinds.push(2)

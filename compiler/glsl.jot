@@ -241,7 +241,16 @@ gl_expr = (e: int) -> str:
         a = int(nodes[e].a)
         b = int(nodes[e].b)
         op = nodes[e].op as Tok
-        if op == .percent and (is_float(ntype(a)) or is_vec(ntype(a))): return "mod({gl_expr(a)}, {gl_expr(b)})"
+        # (% keeps the dividend's sign, as on the CPU: GLSL's mod() takes the divisor's, and its %
+        # is undefined for negative numbers)
+        if op == .percent and (is_float(ntype(a)) or is_vec(ntype(a))):
+            x = gl_expr(a)
+            y = gl_expr(b)
+            return "({x} - {y} * trunc({x} / {y}))"
+        if op == .percent and is_int(ntype(a)):
+            x = gl_expr(a)
+            y = gl_expr(b)
+            return "({x} - ({x} / {y}) * {y})"
         return "({gl_expr(a)} {gl_binop(op)} {gl_expr(b)})"
     if k == .unary:
         if nodes[e].op == i32(int(Tok.minus)): return "(-{gl_expr(int(nodes[e].a))})"
@@ -442,26 +451,48 @@ glsl_kernel = (f: int, desc: str) -> str:
     gl_function(f)
     pos = nodes[int(fns[f].decl)].pos
     src = "#version 300 es\nprecision highp float;\nprecision highp int;\nuniform ivec4 od;\nuniform int ow;\n"
+    # desc: one letter per operand: t a float texture, i an integer one, s a float number, n an
+    # integer number. Textures hold 4 values per texel; a fragment computes 4 results.
     args: str[]
     fetch = ""
+    fdecl = ""
+    idecl = ""
     nt = 0
-    ns = 0
+    nf = 0
+    ni = 0
     loop c in desc:
-        if c == 't':
-            src += "uniform highp sampler2D t{nt};\nuniform ivec4 st{nt};\nuniform int w{nt};\n"
-            fetch += "    int o{nt} = i0 * st{nt}.x + i1 * st{nt}.y + i2 * st{nt}.z + i3 * st{nt}.w;\n"
-            args.push("texelFetch(t{nt}, ivec2(o{nt} % w{nt}, o{nt} / w{nt}), 0).r")
+        if c == 't' or c == 'i':
+            sampler = "sampler2D"
+            if c == 'i': sampler = "isampler2D"
+            src += "uniform highp {sampler} t{nt};\nuniform ivec4 st{nt};\nuniform int w{nt};\n"
+            fetch += "        int o{nt} = i0 * st{nt}.x + i1 * st{nt}.y + i2 * st{nt}.z + i3 * st{nt}.w;\n"
+            args.push("texelFetch(t{nt}, ivec2((o{nt} >> 2) % w{nt}, (o{nt} >> 2) / w{nt}), 0)[o{nt} & 3]")
             nt += 1
+        else if c == 's':
+            fdecl += "uniform float sf{nf};\n"
+            args.push("sf{nf}")
+            nf += 1
         else:
-            src += "uniform float s{ns};\n"
-            args.push("s{ns}")
-            ns += 1
-    src += "out vec4 o_;\n" + join(gl_decls, "")
+            idecl += "uniform int si{ni};\n"
+            args.push("si{ni}")
+            ni += 1
+    rt = gl_type(int(fns[f].ret), pos)
+    int_out = rt == "int"
+    src += fdecl + idecl
+    if int_out: src += "out highp ivec4 o_;\n"
+    else: src += "out vec4 o_;\n"
+    src += join(gl_decls, "")
     val = "{gl_fn_name(f)}({join(args, ", ")})"
-    if gl_type(int(fns[f].ret), pos) != "float": val = "float({val})"
-    src += "void main() \{\n    int lin = int(gl_FragCoord.y) * ow + int(gl_FragCoord.x);\n"
-    src += "    int i3 = lin % od.w;\n    int q = lin / od.w;\n    int i2 = q % od.z;\n    q /= od.z;\n    int i1 = q % od.y;\n    int i0 = q / od.y;\n"
-    src + fetch + "    o_ = vec4({val}, 0.0, 0.0, 1.0);\n}\n"
+    if not int_out and rt != "float": val = "float({val})"
+    zero = "vec4(0.0)"
+    if int_out: zero = "ivec4(0)"
+    src += "void main() \{\n    int base = (int(gl_FragCoord.y) * ow + int(gl_FragCoord.x)) * 4;\n"
+    src += "    int total = od.x * od.y * od.z * od.w;\n"
+    if int_out: src += "    ivec4 r = {zero};\n"
+    else: src += "    vec4 r = {zero};\n"
+    src += "    for (int c = 0; c < 4; c++) \{\n        int lin = base + c;\n        if (lin >= total) break;\n"
+    src += "        int i3 = lin % od.w;\n        int q = lin / od.w;\n        int i2 = q % od.z;\n        q /= od.z;\n        int i1 = q % od.y;\n        int i0 = q / od.y;\n"
+    src + fetch + "        r[c] = {val};\n    }\n    o_ = r;\n}\n"
 
 # move every struct definition above the first `uniform` declaration
 __hoist_struct = (src: str, ustruct: str) -> str:

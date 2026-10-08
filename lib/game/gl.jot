@@ -153,6 +153,11 @@ when TARGET == "wasm":
         glReadPixels(i32(x), i32(y), i32(w), i32(h), GL_RGBA, GL_FLOAT, out, i32(w * h * 16))
     extern glUniform4i = (loc: i32, x: i32, y: i32, z: i32, w: i32)
     gl_uniform4i = (loc: int, x: int, y: int, z: int, w: int): glUniform4i(i32(loc), i32(x), i32(y), i32(z), i32(w))
+    extern glGetMaxTextureSize = () -> i32
+    gl_max_texture_size = () -> int: int(glGetMaxTextureSize())
+    # RGBA i32 pixels of an integer render target
+    gl_read_pixels_i32 = (x: int, y: int, w: int, h: int, out: *u8):
+        glReadPixels(i32(x), i32(y), i32(w), i32(h), 0x8D99, 0x1404, out, i32(w * h * 16))
 else:
     @lib("libGLESv2.so.2")
     @symbol("glClearColor")
@@ -687,5 +692,13 @@ else:
         __glReadPixels(i32(x), i32(y), i32(w), i32(h), GL_RGBA, GL_UNSIGNED_BYTE, out)
     gl_read_pixels_f32 = (x: int, y: int, w: int, h: int, out: *u8):
         __glReadPixels(i32(x), i32(y), i32(w), i32(h), GL_RGBA, GL_FLOAT, out)
+    gl_read_pixels_i32 = (x: int, y: int, w: int, h: int, out: *u8):
+        __glReadPixels(i32(x), i32(y), i32(w), i32(h), 0x8D99, 0x1404, out)       # RGBA_INTEGER, INT
+    @lib("libGLESv2.so.2")
+    extern glGetIntegerv = (pname: u32, out: *i32)
+    gl_max_texture_size = () -> int:
+        v: i32 = 0
+        glGetIntegerv(0x0D33, &v)                                                  # MAX_TEXTURE_SIZE
+        int(v)
     gl_uniform4i = (loc: int, x: int, y: int, z: int, w: int):
         if not __soft: __glUniform4i(i32(loc), i32(x), i32(y), i32(z), i32(w))

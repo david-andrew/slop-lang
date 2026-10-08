@@ -25,3 +25,15 @@ broadcast_demo = ():
     t = gpu(reshape([1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0], 2, 2, 2))
     print(t .* gpu([1.0 10.0]))
 broadcast_demo()
+
+# integers stay integers (division truncates, % keeps the dividend's sign); mixed with floats,
+# floats. Reductions run on the GPU (exact here: whole numbers below 2^24)
+int_demo = ():
+    a = gpu([7, -7, 9, 100, -13])
+    b = gpu([2, 2, -4, 7, 5])
+    print(a ./ b, a .% b, a .* 3 .+ 1, a .> b, a .* 0.5)
+    print(gpu([7.5, -7.5, 2.25]) .% 2.0)
+    print(sum(a), min(a), max(a), mean(a))
+    many = gpu(fill(1.0, 100_000)) .* 3.0
+    print(sum(many), min(many), max(many), len(many))
+int_demo()
