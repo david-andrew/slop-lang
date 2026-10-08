@@ -1,0 +1,26 @@
+# A tiny game: move with the arrow keys (click the output first), collect the stars.
+
+pos = vec2(640, 360)
+stars: vec2[]
+score = 0
+
+main = ():
+    loop i in [0..12): stars.push(vec2(f32(random() * 1180 + 50), f32(random() * 620 + 50)))
+
+update = (dt: f64):
+    dir = vec2(0, 0)
+    if key_down(.left): dir.x -= 1
+    if key_down(.right): dir.x += 1
+    if key_down(.up): dir.y -= 1
+    if key_down(.down): dir.y += 1
+    pos += dir * f32(400 * dt)
+    loop mut s in stars:
+        if distance(s, pos) < 36.0:
+            score += 1
+            s = vec2(f32(random() * 1180 + 50), f32(random() * 620 + 50))
+
+draw = ():
+    clear(rgb(0.07, 0.08, 0.12))
+    loop s in stars: circle(s, 10, rgb(1.0, 0.85, 0.3))
+    circle(pos, 24, rgb(0.3, 0.7, 1.0))
+    text("stars: {score}", vec2(20, 20), 28, rgb(1, 1, 1))

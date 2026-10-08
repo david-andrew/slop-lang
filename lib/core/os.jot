@@ -5,7 +5,11 @@ exit = (code: int): __exit(code)
 # command line arguments (args()[0] is the program path)
 args = () -> str[]:
     out: str[]
-    when TARGET != "wasm":
+    when TARGET == "wasm":
+        b = __wasm_bytes((p: *u8, cap: int): __wasm_args(p, cap))
+        if b.len() > 0:
+            loop a in split(str_from_bytes(b), "\0"): out.push(a)
+    else:
         sp = __argv() as *int
         argc = sp[0]
         argv = (sp + 1) as **u8
@@ -49,6 +53,17 @@ env = (name: str) -> str?:
             i += 1
     none
 
+# (a host call that fills a buffer and says how much it needed, or -1: none)
+__wasm_bytes = (f: (*u8, int) -> int) -> u8[]:
+    buf = fill(u8(0), 4096)
+    n = f(data(buf), 4096)
+    if n < 0: return []
+    if n > 4096:
+        buf = fill(u8(0), n)
+        f(data(buf), n)
+    buf.truncate(n)
+    buf
+
 __zstr = (s: str) -> str:
     # strings always carry a NUL terminator, except the empty string
     if len(s) == 0: return "\0"
@@ -57,7 +72,8 @@ __zstr = (s: str) -> str:
 # read a whole file; none if it cannot be read
 read_file = (path: str) -> str?:
     when TARGET == "wasm":
-        return none
+        if not __wasm_has(path): return none
+        return str_from_bytes(__wasm_bytes((p: *u8, cap: int): __wasm_read_file(data(path), len(path), p, cap)))
     else:
         fd = syscall(2, data(__zstr(path)), 0, 0)
         if fd < 0: return none
@@ -80,7 +96,7 @@ read_bytes = (path: str) -> u8[]?:
 
 write_file = (path: str, contents: str) -> bool:
     when TARGET == "wasm":
-        return false
+        return __wasm_write_file(data(path), len(path), data(contents), len(contents)) == 1
     else:
         fd = syscall(2, data(__zstr(path)), 0x241, 0x1A4)
         if fd < 0: return false
@@ -97,7 +113,7 @@ write_bytes = (path: str, b: u8[]) -> bool: write_file(path, str_from_bytes(b))
 
 file_exists = (path: str) -> bool:
     when TARGET == "wasm":
-        return false
+        return __wasm_has(path)
     else:
         syscall(21, data(__zstr(path)), 0) == 0
 
@@ -142,10 +158,23 @@ eprint = (s: str):
     __write_fd(2, data(s), len(s))
     __write_fd(2, data("\n"), 1)
 
+# (a file or a directory)
+__wasm_has = (path: str) -> bool:
+    when TARGET == "wasm":
+        b = [u8(0)]
+        if __wasm_read_file(data(path), len(path), data(b), 0) >= 0: return true
+        return __wasm_list_dir(data(path), len(path), data(b), 0) >= 0
+    else:
+        return false
+
 # names of the entries in a directory (excluding . and ..)
 list_dir = (path: str) -> str[]:
     out: str[]
-    when TARGET != "wasm":
+    when TARGET == "wasm":
+        b = __wasm_bytes((p: *u8, cap: int): __wasm_list_dir(data(path), len(path), p, cap))
+        if b.len() > 0:
+            loop n in split(str_from_bytes(b), "\n"): out.push(n)
+    else:
         fd = syscall(2, data(__zstr(path)), 0x10000, 0)
         if fd < 0: return out
         buf = __alloc(8192)
@@ -165,6 +194,8 @@ list_dir = (path: str) -> str[]:
 # absolute path of the running executable
 exe_path = () -> str:
     when TARGET == "wasm":
+        a = args()
+        if a.len() > 0: return a[0]
         return ""
     else:
         buf = __alloc(4096)
@@ -219,7 +250,7 @@ chmod = (path: str, mode: int) -> bool:
 
 mkdir = (path: str) -> bool:
     when TARGET == "wasm":
-        return false
+        return true
     else:
         r = syscall(83, data(__zstr(path)), 0x1ED)
         r == 0 or r == -17

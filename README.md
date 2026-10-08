@@ -86,6 +86,11 @@ bin/jot check file.jot        # type check only
 
 `bin/jot` finds the standard library in `lib/` next to its own directory (or `$JOT_LIB`).
 
+**In the browser:** `tools/playground.py` builds `build/playground.html`, one self-contained
+page (1.4 MB) with an editor, examples and the Jot compiler itself, compiled to WebAssembly:
+programs (games included) compile in the page in well under 100 ms and run beside the editor.
+Share links carry the program in the address.
+
 ## Editors
 
 `jot lsp` is a language server (the Language Server Protocol, on standard input and output):
@@ -150,7 +155,8 @@ examples/      demos: lumen (2D), dunes (3D), shapes, cube, scene3d
 tests/         test programs with expected output (tools/runtests.py), render references
 bench/         benchmarks (Jot and equivalent C)
 tools/         bootstrap, test runner, render test, differential fuzzer, language server test,
-               headless GNOME screenshots (gnomeshot.py), report, profiler, instruction counter
+               headless GNOME screenshots (gnomeshot.py), the web playground (playground.py,
+               playground/), report, profiler, instruction counter
 ```
 
 Testing: `tools/runtests.py` runs the test programs in each mode (native/web, debug/release,

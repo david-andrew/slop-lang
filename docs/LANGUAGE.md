@@ -587,7 +587,9 @@ address) draws an overlay with the frame rate, a graph of recent frame times, th
 `update` + `draw`, the time spent handing frames to the screen, and how many frames took much
 longer than usual (stutter). `JOT_STATS=log` (`?stats=log`) prints the same numbers every two
 seconds, and each long frame as it happens. In a web page, `env(name)` reads the page's URL
-parameters, so `?JOT_STATS=1` and `?stats` are the same.
+parameters, so `?JOT_STATS=1` and `?stats` are the same. Files in a web page (`read_file`,
+`write_file`, `list_dir`) are the page's own, in memory (`jot.files` in JavaScript); a web build
+run under node (`tools/runwasm.js page.html args...`) uses the real ones and gets the arguments.
 
 Environment variables for testing and tuning: `JOT_SCREENSHOT=out.png` (with `JOT_FRAMES=n`)
 saves frame n and exits — the clock then advances exactly 1/60 s per frame, so the image is

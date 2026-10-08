@@ -7,6 +7,7 @@ use 'types.jot'
 use 'check.jot'
 use 'ir.jot'
 use 'lower.jot'
+use 'x64.jot'
 
 const RO_BASE = 1024
 const STACK_SIZE = 1 << 20
@@ -458,21 +459,21 @@ emit_wins = (ins: Ins):
             op(0)
         vop:
             # one f32 lane at a time
-            code = int(ins.imm)
-            n = (code >> 4) & 7
+            vcode = int(ins.imm)
+            n = (vcode >> 4) & 7
             loop i in [0..n):
                 addr32(a)
-                if code & VOP_SPLAT_B != 0: lget(bb)
+                if vcode & VOP_SPLAT_B != 0: lget(bb)
                 else:
                     addr32(bb)
                     op(0x2A)
                     memarg(2, 4 * i)
-                if code & VOP_SPLAT_C != 0: lget(int(ins.c))
+                if vcode & VOP_SPLAT_C != 0: lget(int(ins.c))
                 else:
                     addr32(int(ins.c))
                     op(0x2A)
                     memarg(2, 4 * i)
-                op([0x92, 0x93, 0x94, 0x95][code & 3])                   # f32.add sub mul div
+                op([0x92, 0x93, 0x94, 0x95][vcode & 3])                   # f32.add sub mul div
                 op(0x38)                                                 # f32.store
                 memarg(2, 4 * i)
         memset:
@@ -587,23 +588,121 @@ vtype_of = (v: int) -> int:
 
 slot_offs: int[]
 
+wasm_group = (t: int) -> int:
+    if t == VF: return 1
+    if t == VS: return 2
+    0
+
+# where each value is first and last live (positions in the code; -1: never used), extended
+# over loops it is live in (as the x86-64 backend's analysis)
+wasm_live = (f: IrFn) -> (int[], int[]):
+    saved = ir
+    ir = f
+    nv = f.vtypes.len()
+    first = fill(INF_POS, nv)
+    last = fill(-1, nv)
+    loop_s: int[]
+    loop_e: int[]
+    kinds: int[]
+    starts: int[]
+    loop pos in 0.. and ins in f.code:
+        d = operands(ins)
+        loop u in use_buf:
+            if pos < first[u]: first[u] = pos
+            if pos > last[u]: last[u] = pos
+        if d >= 0:
+            if pos < first[d]: first[d] = pos
+            if pos > last[d]: last[d] = pos
+        if ins.op == .zeroslots:
+            loop k in [0..int(ins.b)):
+                item = int(f.args[int(ins.a) + k])
+                if item & 1 == 1:
+                    v = item >> 1
+                    if pos < first[v]: first[v] = pos
+                    if pos > last[v]: last[v] = pos
+        if ins.op == .block or ins.op == .loop or ins.op == .if_:
+            kinds.push(int(ins.op))
+            starts.push(pos)
+        else if ins.op == .end:
+            k = kinds.pop()
+            st = starts.pop()
+            if k == int(Op.loop):
+                loop_s.push(st)
+                loop_e.push(pos)
+    ir = saved
+    # loops in order of their start; a value live where a loop starts lives to its end
+    nl = loop_s.len()
+    order: int[]
+    loop i in [0..nl): order.push(i)
+    order.sort_by((i: int): loop_s[i])
+    ls: int[]
+    le: int[]
+    loop i in order:
+        ls.push(loop_s[i])
+        le.push(loop_e[i])
+    loop v in [0..nv):
+        if last[v] < 0: continue
+        fv = first[v]
+        if v < f.nparams: fv = -1
+        lo = 0
+        hi = nl
+        loop lo < hi:
+            mid = (lo + hi) / 2
+            if ls[mid] <= fv: lo = mid + 1
+            else: hi = mid
+        i = lo
+        loop i < nl and ls[i] <= last[v]:
+            if le[i] > last[v]: last[v] = le[i]
+            i += 1
+    (first, last)
+
 wasm_body = (f: IrFn) -> u8[]:
     cur_wf = f
     wb = []
     nv = f.vtypes.len()
     loc_of = fill(0, nv)
-    # locals: params keep their indices, others grouped by type
+    # locals: params keep their indices; other values share locals of their type when they are
+    # not live at the same time (as registers are shared on x86-64: engines give every local a
+    # stack slot, and big frames make deep recursion run out of stack)
     loop p in [0..f.nparams): loc_of[p] = p
+    first, last = wasm_live(f)
+    order: int[]
+    loop v in [f.nparams..nv):
+        if last[v] >= 0: order.push(v)
+    order.sort_by((v: int): first[v])
+    counts = [0, 0, 0]
+    free: int[][] = [[], [], []]
+    active: (int, int, int)[]           # (last, type group, local within the group)
+    loop v in order:
+        g = wasm_group(vtype_of(v))
+        k = 0
+        loop k < active.len():
+            if active[k].0 < first[v]:
+                free[active[k].1].push(active[k].2)
+                active[k] = active[active.len() - 1]
+                active.pop()
+            else: k += 1
+        idx = 0
+        if free[g].len() > 0: idx = free[g].pop()
+        else:
+            idx = counts[g]
+            counts[g] += 1
+        loc_of[v] = idx
+        active.push((last[v], g, idx))
+    # (values never used still need a local of their type)
+    loop v in [f.nparams..nv):
+        if last[v] < 0:
+            g = wasm_group(vtype_of(v))
+            if counts[g] == 0: counts[g] = 1
+            loc_of[v] = 0
     next = f.nparams
+    base = [0, 0, 0]
     groups: (int, int)[]
-    loop t in [VI, VF, VS]:
-        cnt = 0
-        loop v in [f.nparams..nv):
-            if int(f.vtypes[v]) == t:
-                loc_of[v] = next
-                next += 1
-                cnt += 1
-        if cnt > 0: groups.push((cnt, wt(t)))
+    loop g in [0..3):
+        base[g] = next
+        next += counts[g]
+        if counts[g] > 0: groups.push((counts[g], wt([VI, VF, VS][g])))
+    loop v in [f.nparams..nv): loc_of[v] += base[wasm_group(vtype_of(v))]
     fp_local = next
     next += 1
     groups.push((1, WT_I32))

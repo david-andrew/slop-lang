@@ -1,0 +1,36 @@
+# Structs, enums, unions and optionals
+
+struct Point:
+    x: f64
+    y: f64
+
+(+) = (a: Point, b: Point): Point(a.x + b.x, a.y + b.y)
+length = (p: Point) -> f64: sqrt(p.x * p.x + p.y * p.y)
+
+enum Shape:
+    circle(r: f64)
+    rect(w: f64, h: f64)
+
+area = (s: Shape) -> f64:
+    match s:
+        circle(r): 3.14159 * r * r
+        rect(w, h): w * h
+
+struct ParseError:
+    line: int
+    why: str
+
+parse_number = (s: str, line: int) -> int | ParseError:
+    if let n = to_int(s): return n
+    ParseError(line, "'{s}' is not a number")
+
+p = Point(3, 4) + Point(0.5, 0.5)
+print(p, p.length())                # x.f() is f(x)
+loop s in [Shape.circle(1.0), Shape.rect(2.0, 3.0)]:
+    print("{s}: {area(s):.2}")
+loop i in 0.. and s in ["12", "x7", "40"]:
+    r = parse_number(s, i + 1)
+    if r is int: print("number {r * 2}")
+    else: print("line {r.line}: {r.why}")
+ages = {"ann": 31, "bo": 27}
+print(ages.get("cy") ?? -1, ages["bo"])

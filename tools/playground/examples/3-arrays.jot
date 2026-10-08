@@ -1,0 +1,15 @@
+# Numeric arrays: elementwise operators that fuse into one loop, n-dimensional arrays
+
+xs = linspace(0.0, 1.0, 5)
+print(xs .* xs .+ 1.0)
+print(sin.(xs .* 3.14159))
+
+m = [1.0 2 3; 4 5 6]                # 2 rows, 3 columns
+print(m)
+print(m[0, ..], m[.., 1])           # a row, a column
+print(sum(m, 0), mean(m, 1))        # along an axis
+print(m * [1.0 0; 0 1; 1 1])        # matrix product
+
+# statistics of a million random numbers
+r = rand(1000000)
+print("mean {mean(r):.3}, min {min(r):.4}, max {max(r):.4}")
