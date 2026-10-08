@@ -27,6 +27,8 @@ class Gen:
         self.parrs = []     # [P] arrays (never empty)
         self.closures = []  # fn(int) -> int values
         self.maps = []      # {int: int} maps
+        self.vecs = []      # (name, lanes) of vec2/vec3/vec4 variables
+        self.varrs = []     # (name, lanes) of arrays of 3 vectors
         self.depth = 0
         self.fns = []       # (name, nparams) of helper functions: int -> int
         self.n = 0
@@ -95,6 +97,54 @@ class Gen:
         if op == "abs": return f"abs({a})"
         return f"floor({a})"
 
+    def vlit(self, n):
+        r = self.r
+        return f"vec{n}({', '.join(r.choice(['0.5', '1.0', '-2.0', '3.25', '0.125', '-0.75', '8.0']) for _ in range(n))})"
+
+    def vexpr(self, n, d=0):
+        r = self.r
+        if d > 2 or r.random() < 0.3:
+            c = r.random()
+            same = [v for v, k in self.vecs if k == n]
+            arrs = [v for v, k in self.varrs if k == n]
+            if c < 0.5 and same: return r.choice(same)
+            if c < 0.7 and arrs: return f"{r.choice(arrs)}[abs({self.iexpr(3)}) % 3]"
+            return self.vlit(n)
+        op = r.choice(["+", "-", "*", "s*", "*s", "/s", "s-", "/v"])
+        a = self.vexpr(n, d + 1)
+        sc = f"f32({self.fexpr(3)})"
+        if op in "+-*": return f"({a} {op} {self.vexpr(n, d + 1)})"
+        if op == "s*": return f"({sc} * {a})"
+        if op == "*s": return f"({a} * {sc})"
+        if op == "s-": return f"({sc} - {a})"
+        if op == "/v": return f"({a} / {self.vlit(n)})"
+        return f"({a} / (abs({sc}) + 1.0))"
+
+    def vstmt(self):
+        r = self.r
+        n = r.randint(2, 4)
+        c = r.random()
+        same = [v for v, k in self.vecs if k == n]
+        arrs = [v for v, k in self.varrs if k == n]
+        if c < 0.3 or not same:
+            v = self.fresh("v")
+            self.emit(f"{v} := {self.vexpr(n)}")
+            self.vecs.append((v, n))
+        elif c < 0.45:
+            v = self.fresh("va")
+            self.emit(f"{v} := [{self.vexpr(n, 2)}, {self.vexpr(n, 2)}, {self.vexpr(n, 2)}]")
+            self.varrs.append((v, n))
+        elif c < 0.65:
+            v = r.choice(same)
+            self.emit(f"{v} {r.choice(['=', '+=', '-=', '*='])} {self.vexpr(n)}")
+        elif c < 0.8 and arrs:
+            a = r.choice(arrs)
+            i = f"abs({self.iexpr(3)}) % 3"
+            self.emit(f"{a}[{i}] = {a}[{i}] * {self.vexpr(n, 2)} + {self.vexpr(n, 2)}")
+            self.emit(f"print({a})")
+        else:
+            self.emit(f"print({r.choice(same)})")
+
     def cond(self, d=0):
         r = self.r
         c = r.random()
@@ -106,22 +156,25 @@ class Gen:
 
     # ---------------- statements ----------------
     def block(self, n):
-        saved = (list(self.ints), list(self.floats), list(self.arrays), list(self.strs), list(self.structs), list(self.parrs), list(self.closures), list(self.maps))
+        saved = (list(self.ints), list(self.floats), list(self.arrays), list(self.strs), list(self.structs), list(self.parrs), list(self.closures), list(self.maps), list(self.vecs), list(self.varrs))
         self.depth += 1
         for _ in range(n): self.stmt()
         if not self.lines[-1].strip() or self.lines[-1].endswith(":"): self.emit("pass")
         self.depth -= 1
-        self.ints, self.floats, self.arrays, self.strs, self.structs, self.parrs, self.closures, self.maps = saved
+        self.ints, self.floats, self.arrays, self.strs, self.structs, self.parrs, self.closures, self.maps, self.vecs, self.varrs = saved
 
     def stmt(self):
         r = self.r
+        if r.random() < 0.1:
+            self.vstmt()
+            return
         c = r.random()
         if c < 0.2 or not self.ints:
             v = self.fresh("i")
             self.emit(f"{v} := {self.iexpr()}")
             self.ints.append(v)
         elif c < 0.3:
-            v = self.fresh("f")
+            v = self.fresh("fl")
             self.emit(f"{v} := {self.fexpr()}")
             self.floats.append(v)
         elif c < 0.38:
@@ -223,6 +276,7 @@ class Gen:
             self.lines = []
             self.ints, self.floats, self.arrays = list(params), [], []
             self.strs, self.structs, self.parrs, self.closures, self.maps = [], [], [], [], []
+            self.vecs, self.varrs = [], []
             self.ro = set(params)
             self.depth = 1
             for _ in range(r.randint(1, 5)): self.stmt()
@@ -236,8 +290,10 @@ class Gen:
         self.lines = []
         self.ints, self.floats, self.arrays = [], [], []
         self.strs, self.structs, self.parrs, self.closures, self.maps = [], [], [], [], []
+        self.vecs, self.varrs = [], []
         self.depth = 1
         for _ in range(r.randint(10, 40)): self.stmt()
+        if self.vecs: self.emit(f"print({', '.join(v for v, _ in self.vecs[-4:])})")
         self.emit(f"print({', '.join(self.ints[-6:]) or '0'})")
         if self.floats: self.emit(f"print({', '.join(self.floats[-4:])})")
         if self.arrays: self.emit(f"print({self.arrays[-1]})")

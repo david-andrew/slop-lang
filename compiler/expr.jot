@@ -934,6 +934,10 @@ fn call_by_name(n: int, name: int, mod_scope: int, args: [int], expected: int, u
             for it in intrinsics:
                 if it.arr == (tk == .array or tk == .str_): cands.push(intern(it.name))
             fatal(nodes[n].pos, "no field or function '{name_of(name)}' for type {type_str(ntype(args[0]))}{suggestion(name_of(name), cands)}")
+        # a variable of the same name hides the function or type
+        hs := lookup(name)
+        if hs != 0 and syms[hs].kind == .local:
+            fatal(nodes[n].pos, "'{name_of(name)}' is a variable of type {type_str(int(locals[int(syms[hs].ref)].type))} here (it hides the function or type of that name); rename the variable")
         all := visible_names()
         for it in intrinsics: all.push(intern(it.name))
         fatal(nodes[n].pos, "unknown function '{name_of(name)}'{suggestion(name_of(name), all)}")

@@ -804,6 +804,13 @@ fn o_cleanup(code: [Ins]) -> [Ins]:
     kinds: [Op]          # open constructs
     dead := false
     depth := 0
+    # how many instructions take the address of each frame slot
+    slot_refs := [0; ir.slot_size.len()]
+    for ins in code:
+        if ins.op == .slot: slot_refs[int(ins.a)] += 1
+    slot_of: [int] = [-1; o_nuse.len()]
+    for ins in code:
+        if ins.op == .slot and int(ins.dst) < slot_of.len(): slot_of[int(ins.dst)] = int(ins.a)
     for ins in code:
         op := ins.op
         if dead:
@@ -825,6 +832,14 @@ fn o_cleanup(code: [Ins]) -> [Ins]:
             d := int(ins.dst)
             if t != d and int(last.dst) == t and o_nuse[t] == 1 and vtype(t) == vtype(d) and o_retargetable(last.op):
                 last.dst = i32(d)
+                out[out.len() - 1] = last
+                continue
+        if op == .copy and out.len() > 0:
+            # vector arithmetic into a temporary that is then copied: compute into the copy's target
+            last := out[out.len() - 1]
+            t := int(ins.b)
+            if last.op == .vop and int(last.a) == t and t < slot_of.len() and slot_of[t] >= 0 and slot_refs[slot_of[t]] == 1 and o_nuse[t] == 2 and int(ins.imm) == ((int(last.imm) >> 4) & 7) * 4:
+                last.a = ins.a
                 out[out.len() - 1] = last
                 continue
         out.push(ins)
