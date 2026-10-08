@@ -1,0 +1,180 @@
+# Arrays for numeric work, in the spirit of numpy and MATLAB.
+#
+# T[,] is a 2-D array (Array2[T]): its elements in row-major order, and its shape. Write one as
+# [1 2; 3 4] (rows separated by ';' or line breaks), or make one with zeros(r, c), ones, eye,
+# rand, reshape. m[i, j] reads and writes an element.
+#
+# The dotted operators work element by element on arrays of any shape, and broadcast like numpy
+# (a dimension of length 1, or a missing one, stretches to fit): a .* b, m .+ 1.0, v .^ 2,
+# xs .< 0.5, and f.(xs) applies f to each element. A whole dotted expression runs as one loop.
+# On 2-D arrays the plain operators follow linear algebra: a * b is the matrix product.
+
+struct Array2[T]:
+    data: T[]
+    rows: int
+    cols: int
+
+__panic_index2 = (i: int, j: int, rows: int, cols: int):
+    panic("index [{i}, {j}] out of bounds (shape {rows}x{cols})")
+
+([])[T] = (m: Array2[T], i: int, j: int) -> T:
+    if i < 0 or i >= m.rows or j < 0 or j >= m.cols: __panic_index2(i, j, m.rows, m.cols)
+    m.data[i * m.cols + j]
+
+([]=)[T] = (m: mut Array2[T], i: int, j: int, v: T):
+    if i < 0 or i >= m.rows or j < 0 or j >= m.cols: __panic_index2(i, j, m.rows, m.cols)
+    m.data[i * m.cols + j] = v
+
+# [1 2; 3 4]: elements row by row
+__array2[T] = (data: T[], rows: int, cols: int) -> Array2[T]: Array2(data, rows, cols)
+
+# [a; b] with arrays a and b: one row each
+__array2_rows[T] = (rows: T[][]) -> Array2[T]:
+    if rows.len() == 0: return Array2([] as T[], 0, 0)
+    c = rows[0].len()
+    data: T[]
+    data.reserve(rows.len() * c)
+    loop i in 0.. and r in rows:
+        if r.len() != c: panic("rows of a 2-D array must have the same length (row 0 has {c} elements, row {i} has {r.len()})")
+        data.extend(r)
+    Array2(data, rows.len(), c)
+
+# the common length of broadcast dimensions (each equal to it, or 1)
+__bcast = (dims: int[]) -> int:
+    n = 1
+    loop d in dims:
+        if d != 1:
+            if n == 1: n = d
+            else if d != n: panic("shapes do not match for an elementwise operation: lengths {dims}")
+    if dims.len() > 0 and n == 1:
+        loop d in dims:
+            if d == 0: return 0
+    n
+
+shape[T] = (m: Array2[T]) -> (int, int): (m.rows, m.cols)
+size[T] = (m: Array2[T]) -> int: m.rows * m.cols
+flatten[T] = (m: Array2[T]) -> T[]: m.data
+
+row[T] = (m: Array2[T], i: int) -> T[]:
+    if i < 0 or i >= m.rows: panic("row {i} out of bounds ({m.rows} rows)")
+    m.data[i * m.cols..(i + 1) * m.cols)
+
+col[T] = (m: Array2[T], j: int) -> T[]:
+    if j < 0 or j >= m.cols: panic("column {j} out of bounds ({m.cols} columns)")
+    out: T[]
+    out.reserve(m.rows)
+    loop i in [0..m.rows): out.push(m.data[i * m.cols + j])
+    out
+
+reshape[T] = (xs: T[], rows: int, cols: int) -> Array2[T]:
+    if rows * cols != xs.len(): panic("cannot reshape {xs.len()} elements to {rows}x{cols}")
+    Array2(xs, rows, cols)
+
+reshape[T] = (m: Array2[T], rows: int, cols: int) -> Array2[T]: reshape(m.data, rows, cols)
+
+transpose[T] = (m: Array2[T]) -> Array2[T]:
+    out: T[]
+    out.reserve(m.rows * m.cols)
+    loop j in [0..m.cols):
+        loop i in [0..m.rows): out.push(m.data[i * m.cols + j])
+    Array2(out, m.cols, m.rows)
+
+# ---------------- making arrays ----------------
+zeros = (n: int) -> f64[]: fill(0.0, n)
+zeros = (rows: int, cols: int) -> f64[,]: Array2(fill(0.0, rows * cols), rows, cols)
+ones = (n: int) -> f64[]: fill(1.0, n)
+ones = (rows: int, cols: int) -> f64[,]: Array2(fill(1.0, rows * cols), rows, cols)
+
+# the identity matrix
+eye = (n: int) -> f64[,]:
+    m = zeros(n, n)
+    loop i in [0..n): m.data[i * n + i] = 1.0
+    m
+
+# uniformly random in [0, 1)
+rand = (n: int) -> f64[]:
+    out: f64[]
+    out.reserve(n)
+    loop _ in [0..n): out.push(random())
+    out
+rand = (rows: int, cols: int) -> f64[,]: Array2(rand(rows * cols), rows, cols)
+
+# normally distributed (mean 0, standard deviation 1)
+randn = () -> f64:
+    u = 1.0 - random()
+    sqrt(-2.0 * log(u)) * cos(TAU * random())
+randn = (n: int) -> f64[]:
+    out: f64[]
+    out.reserve(n)
+    loop _ in [0..n): out.push(randn())
+    out
+randn = (rows: int, cols: int) -> f64[,]: Array2(randn(rows * cols), rows, cols)
+
+# n evenly spaced values from a to b (both included)
+linspace = (a: f64, b: f64, n: int) -> f64[]:
+    out: f64[]
+    out.reserve(n)
+    if n == 1: out.push(a)
+    else:
+        loop i in [0..n): out.push(a + (b - a) * f64(i) / f64(n - 1))
+    out
+
+# ---------------- reductions ----------------
+sum[T] = (m: Array2[T]) -> T: sum(m.data)
+mean = (xs: f64[]) -> f64: sum(xs) / f64(xs.len())
+mean = (m: f64[,]) -> f64: mean(m.data)
+
+dot = (a: f64[], b: f64[]) -> f64:
+    if a.len() != b.len(): panic("dot: lengths {a.len()} and {b.len()} differ")
+    s = 0.0
+    loop i in [0..a.len()): s += a[i] * b[i]
+    s
+
+norm = (a: f64[]) -> f64: sqrt(dot(a, a))
+
+# ---------------- linear algebra ----------------
+# matrix product
+(*) = (a: f64[,], b: f64[,]) -> f64[,]:
+    if a.cols != b.rows: panic("matrix product of {a.rows}x{a.cols} and {b.rows}x{b.cols}: inner sizes differ")
+    out = fill(0.0, a.rows * b.cols)
+    loop i in [0..a.rows):
+        loop k in [0..a.cols):
+            x = a.data[i * a.cols + k]
+            if x == 0.0: continue
+            ro = i * b.cols
+            bo = k * b.cols
+            loop j in [0..b.cols): out[ro + j] += x * b.data[bo + j]
+    Array2(out, a.rows, b.cols)
+
+# matrix times column vector
+(*) = (a: f64[,], v: f64[]) -> f64[]:
+    if a.cols != v.len(): panic("matrix {a.rows}x{a.cols} times a vector of length {v.len()}")
+    out: f64[]
+    out.reserve(a.rows)
+    loop i in [0..a.rows):
+        s = 0.0
+        o = i * a.cols
+        loop k in [0..a.cols): s += a.data[o + k] * v[k]
+        out.push(s)
+    out
+
+(*) = (k: f64, m: f64[,]) -> f64[,]: m .* k
+(*) = (m: f64[,], k: f64) -> f64[,]: m .* k
+(/) = (m: f64[,], k: f64) -> f64[,]: m ./ k
+(+) = (a: f64[,], b: f64[,]) -> f64[,]:
+    if a.rows != b.rows or a.cols != b.cols: panic("adding a {a.rows}x{a.cols} and a {b.rows}x{b.cols} matrix")
+    a .+ b
+(-) = (a: f64[,], b: f64[,]) -> f64[,]:
+    if a.rows != b.rows or a.cols != b.cols: panic("subtracting a {b.rows}x{b.cols} from a {a.rows}x{a.cols} matrix")
+    a .- b
+
+# ---------------- printing ----------------
+# [1.0 2.0; 3.0 4.0]
+__fmt[T] = (buf: mut u8[], m: Array2[T]):
+    __buf_byte(buf, '[')
+    loop i in [0..m.rows):
+        if i > 0: __buf_append_str(buf, "; ")
+        loop j in [0..m.cols):
+            if j > 0: __buf_byte(buf, ' ')
+            __fmt_elem(buf, m.data[i * m.cols + j])
+    __buf_byte(buf, ']')

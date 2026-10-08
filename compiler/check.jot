@@ -486,6 +486,7 @@ resolve_type = (tn: int) -> int:
         fatal(nodes[tn].pos, "'{name_of(nm)}' is not a type")
     if k == .tarray:
         if nodes[tn].b != 0: fatal(nodes[tn].pos, "fixed-size arrays are not supported yet")
+        if nodes[tn].aux == 2: return array2_of(resolve_type(int(nodes[tn].a)), nodes[tn].pos)
         return mk_array(resolve_type(int(nodes[tn].a)))
     if k == .tmap:
         s = prelude.get(intern("Map")) ?? 0
@@ -514,6 +515,12 @@ resolve_type = (tn: int) -> int:
         return mk_fn(ps, ret, mm)
     fatal(nodes[tn].pos, "invalid type")
     0
+
+# T[,] (lib/std/nd.jot)
+array2_of = (t: int, pos: int) -> int:
+    s = prelude.get(intern("Array2")) ?? 0
+    if s == 0: fatal(pos, "2-D arrays are not available (lib/std/nd.jot is missing)")
+    get_struct_inst(int(syms[s].ref), [t])
 
 # type Name[T] = ...: the type it stands for, given its type arguments
 resolve_alias = (d: int, targs: int[], use_pos: int) -> int:
@@ -1163,19 +1170,26 @@ check_assign = (s: int) -> int:
             recv = int(nodes[lhs].a)
             add_flag(recv, NF_MUT)
             val = int(nodes[s].b)
+            # (m[i, j] = v has several indexes)
+            ixs = kids(lhs)
+            if nodes[lhs].b != 0: ixs = [int(nodes[lhs].b)]
             if op != int(Tok.assign):
                 get = mk(.index, nodes[s].pos)
                 ga = clone(recv)
                 clear_flag(ga, NF_MUT)
                 nodes[ga].type = 0
                 nodes[get].a = i32(ga)
-                nodes[get].b = i32(clone(int(nodes[lhs].b)))
+                if nodes[lhs].b != 0: nodes[get].b = i32(clone(int(nodes[lhs].b)))
+                else:
+                    cl: int[]
+                    loop x in ixs: cl.push(clone(x))
+                    set_list(get, cl)
                 bin = mk(.binary, nodes[s].pos)
                 nodes[bin].op = i32(compound_op(op))
                 nodes[bin].a = i32(get)
                 nodes[bin].b = i32(val)
                 val = bin
-            set_list(call, [recv, int(nodes[lhs].b), val])
+            set_list(call, [recv] + ixs + [val])
             clear_flag(recv, NF_CHECKED)
             es = mk(.exprstmt, nodes[s].pos)
             check_expr(call, 0)

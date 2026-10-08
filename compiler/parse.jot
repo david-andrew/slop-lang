@@ -193,7 +193,7 @@ parse_type_postfix = (t0: int) -> int:
             expect(.rbrack, "")
             nodes[a].a = i32(t)
             nodes[a].aux = i32(rank)
-            if rank > 1: fatal(nodes[a].pos, "multi-dimensional array types are not supported yet")
+            if rank > 2: fatal(nodes[a].pos, "arrays of more than 2 dimensions are not supported yet")
             t = a
         else: return t
     t
@@ -531,6 +531,8 @@ parse_bracket = () -> int:
     advance()
     if pk() == .kw_loop: return parse_comprehension(pos)
     elems: int[]
+    ncols = -1          # 2-D literal: elements per row (rows end at ';' or a line break)
+    row_start = 0
     p_matrix += 1
     loop pk() != .rbrack and pk() != .rparen:
         el = parse_expr()
@@ -557,13 +559,27 @@ parse_bracket = () -> int:
             advance()
             continue
         if k == .rbrack: break
-        if k == .semi: fatal(cur_pos(), "2-d arrays ([1 2; 3 4]) are not supported yet; [x; n] is now fill(x, n)")
-        # a space or a line break separates elements
-        if nl_before(ti) and elems.len() > 0 and toks[ti - 1].kind != .comma and toks[ti - 1].kind != .lbrack: fatal(cur_pos(), "2-d arrays (rows on separate lines) are not supported yet; separate elements with ',' to continue on the next line")
+        # ';' or a line break (without a ',' before it) ends a row of a 2-D array
+        semi = k == .semi
+        if semi or (nl_before(ti) and toks[ti - 1].kind != .comma):
+            if semi: advance()
+            w = elems.len() - row_start
+            if ncols < 0: ncols = w
+            else if w != ncols: fatal(nodes[el].pos, "the rows of a 2-D array must have the same length (this row has {w} elements, the first has {ncols})")
+            row_start = elems.len()
+            continue
+        # a space separates elements
         if not space_before(ti): fatal(cur_pos(), "expected ',' or ']' in the array")
     p_matrix -= 1
     if pk() == .rparen: fatal(cur_pos(), "')' closes only a range here")
     expect(.rbrack, "")
+    if ncols >= 0:
+        w = elems.len() - row_start
+        if w > 0 and w != ncols: fatal(pos, "the rows of a 2-D array must have the same length (the last row has {w} elements, the first has {ncols})")
+        m = mk(.matrix, pos)
+        set_list(m, elems)
+        nodes[m].ival = ncols
+        return m
     n = mk(.array, pos)
     set_list(n, elems)
     n

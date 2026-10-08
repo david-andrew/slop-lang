@@ -1485,6 +1485,7 @@ charlike_to_int = (n: int):
 
 check_binary = (n: int, expected: int) -> int:
     op = nodes[n].op as Tok
+    if op == .dotop: return check_dotted(n, expected)
     if op == .kw_xor:
         # logical on bools (a != b), bitwise on integers
         ta = prune(check_expr(int(nodes[n].a), 0))
@@ -2070,7 +2071,9 @@ check_expr = (n: int, expected: int) -> int:
         if variants[int(structs[int(types[et].st)].variants) + vi].nfields != 0: fatal(nodes[n].pos, "variant '{name_of(int(nodes[n].name))}' needs arguments")
         nodes[n].aux = i32(vi)
         t = et
-    else if k == .call: t = check_call(n, expected)
+    else if k == .call:
+        if has_flag(n, NF_BROADCAST): return check_dotted(n, expected)
+        t = check_call(n, expected)
     else if k == .index:
         bt = prune(check_expr(int(nodes[n].a), 0))
         bk = types[bt].kind
@@ -2083,6 +2086,18 @@ check_expr = (n: int, expected: int) -> int:
             if bk != .array and bk != .str_: fatal(nodes[n].pos, "cannot slice {type_str(bt)}")
             nodes[n].aux = 1
             t = bt
+        else if b == 0 and nkids(n) > 0 and bk == .struct_:
+            # m[i, j]: the `[]` operator with several indexes
+            call = mk(.call, nodes[n].pos)
+            callee = mk(.ident, nodes[n].pos)
+            nodes[callee].name = i32(intern("[]"))
+            nodes[call].a = i32(callee)
+            add_flag(int(nodes[n].a), NF_CHECKED)
+            set_list(call, [int(nodes[n].a)] + kids(n))
+            nodes[n] = nodes[call]
+            t = check_expr(n, expected)
+            last_checked = n
+            return t
         else:
             if b == 0: fatal(nodes[n].pos, "invalid index")
             if bk == .array:
@@ -2373,6 +2388,7 @@ check_expr = (n: int, expected: int) -> int:
     else if k == .namedarg: fatal(nodes[n].pos, "named arguments are only allowed in calls")
     else if k == .fnref or k == .conv: t = ntype(n)
     else if k == .block: t = check_block(n, expected, true)
+    else if k == .matrix: return check_matrix(n, expected)
     else: fatal(nodes[n].pos, "invalid expression")
     nodes[n].type = i32(t)
     add_flag(n, NF_CHECKED)
@@ -2444,6 +2460,254 @@ check_if = (n: int, ex: int) -> int:
         coerce(vb, ex)
         return ex
     join_types(va, vb, nodes[n].pos)
+
+# ---------------- 2-D array literals ----------------
+# [1 2; 3 4] is __array2([1, 2, 3, 4], 2, 2); [a; b] with arrays a, b is __array2_rows([a, b])
+check_matrix = (n: int, expected: int) -> int:
+    pos = nodes[n].pos
+    els = kids(n)
+    ncols = int(nodes[n].ival)
+    arr = mk(.array, pos)
+    args: int[]
+    fname = "__array2"
+    if ncols == 1 and els.len() > 0:
+        t0 = prune(check_expr(els[0], 0))
+        els[0] = last_checked
+        if types[t0].kind == .array: fname = "__array2_rows"
+    set_list(arr, els)
+    args.push(arr)
+    if fname == "__array2":
+        # with a known element type, literals take it (m: f32[,] = [1 2; 3 4])
+        ex = prune(expected)
+        if ex != 0 and types[ex].kind == .struct_ and structs[int(types[ex].st)].name == "Array2":
+            check_expr(arr, mk_array(struct_targ(int(types[ex].st), 0)))
+        rows = 0
+        if ncols > 0: rows = els.len() / ncols
+        args.push(bc_int(rows, pos))
+        args.push(bc_int(ncols, pos))
+    c = bc_call(fname, args, pos)
+    nodes[n] = nodes[c]
+    check_expr(n, expected)
+
+# ---------------- elementwise operations ----------------
+# A dotted expression (a .* b .+ c, f.(xs), ...) becomes one loop over the elements: its operands
+# that are not themselves dotted operations are evaluated once, and the operation applies to their
+# elements, broadcast like numpy (a dimension of length 1, or a missing leading one, stretches).
+bc_count = 0
+
+bc_ident = (name: str, pos: int) -> int:
+    n = mk(.ident, pos)
+    nodes[n].name = i32(intern(name))
+    n
+
+bc_int = (v: int, pos: int) -> int:
+    n = mk(.int_lit, pos)
+    nodes[n].ival = v
+    add_flag(n, NF_LITERAL)
+    n
+
+bc_bin = (op: Tok, a: int, b: int, pos: int) -> int:
+    n = mk(.binary, pos)
+    nodes[n].op = i32(int(op))
+    nodes[n].a = i32(a)
+    nodes[n].b = i32(b)
+    n
+
+bc_call = (name: str, args: int[], pos: int) -> int:
+    c = mk(.call, pos)
+    nodes[c].a = i32(bc_ident(name, pos))
+    set_list(c, args)
+    c
+
+bc_method = (recv: int, name: str, args: int[], pos: int) -> int:
+    f = mk(.field, pos)
+    nodes[f].a = i32(recv)
+    nodes[f].name = i32(intern(name))
+    c = mk(.call, pos)
+    nodes[c].a = i32(f)
+    set_list(c, args)
+    c
+
+bc_field = (recv: int, name: str, pos: int) -> int:
+    f = mk(.field, pos)
+    nodes[f].a = i32(recv)
+    nodes[f].name = i32(intern(name))
+    f
+
+bc_let = (name: str, v: int, pos: int) -> int:
+    d = mk(.vardecl, pos)
+    nodes[d].name = i32(intern(name))
+    nodes[d].b = i32(v)
+    d
+
+bc_stmt = (e: int, pos: int) -> int:
+    s = mk(.exprstmt, pos)
+    nodes[s].a = i32(e)
+    s
+
+bc_block = (stmts: int[], pos: int) -> int:
+    b = mk(.block, pos)
+    set_list(b, stmts)
+    b
+
+# loop name in [0..n): body
+bc_loop = (name: str, n: int, body: int[], pos: int) -> int:
+    f = mk(.for_, pos)
+    set_list(f, [bc_ident(name, pos)])
+    r = mk(.range, pos)
+    nodes[r].a = i32(bc_int(0, pos))
+    nodes[r].b = i32(n)
+    nodes[f].a = i32(r)
+    nodes[f].b = i32(bc_block(body, pos))
+    f
+
+# int(x != 1): the step through an operand's dimension of length x (0 when it is broadcast)
+bc_step = (x: int, pos: int) -> int: bc_call("int", [bc_bin(.ne, x, bc_int(1, pos), pos)], pos)
+
+is_dotted = (n: int) -> bool:
+    k = nodes[n].kind
+    (k == .binary and nodes[n].op == i32(int(Tok.dotop))) or (k == .call and has_flag(n, NF_BROADCAST))
+
+# the operator a dotted operator applies to each element (.+ is +, .<= is <=, ...)
+dot_base_op = (n: int) -> Tok:
+    c = int(nodes[n].aux)
+    three = nodes[n].aux2 == 1
+    if c == '+': return .plus
+    if c == '-': return .minus
+    if c == '*': return .star
+    if c == '/': return .slash
+    if c == '%': return .percent
+    if c == '<':
+        if three: return .le
+        return .lt
+    if c == '>':
+        if three: return .ge
+        return .gt
+    if c == '=': return .eq
+    if c == '!': return .ne
+    .caret
+
+# the per-element expression of dotted expression n; its operands go to `leaves` (replaced by
+# __b<tag>e<k>, the current element of operand k); literals stay in place (and keep adapting)
+dot_template = (n: int, leaves: mut int[], tag: str) -> int:
+    pos = nodes[n].pos
+    k = nodes[n].kind
+    if k == .binary and nodes[n].op == i32(int(Tok.dotop)):
+        a = dot_template(int(nodes[n].a), leaves, tag)
+        b = dot_template(int(nodes[n].b), leaves, tag)
+        op = dot_base_op(n)
+        if op == .caret: return bc_call("pow", [a, b], pos)
+        return bc_bin(op, a, b, pos)
+    if k == .call and has_flag(n, NF_BROADCAST):
+        c = mk(.call, pos)
+        nodes[c].a = nodes[n].a
+        args: int[]
+        loop x in kids(n): args.push(dot_template(x, leaves, tag))
+        set_list(c, args)
+        return c
+    if (k == .int_lit or k == .float_lit or k == .bool_lit) and not has_flag(n, NF_CHECKED): return n
+    leaves.push(n)
+    bc_ident("__b{tag}e{leaves.len() - 1}", pos)
+
+is_array2 = (t0: int) -> bool:
+    t = prune(t0)
+    types[t].kind == .struct_ and structs[int(types[t].st)].name == "Array2"
+
+check_dotted = (n: int, expected: int) -> int:
+    pos = nodes[n].pos
+    bc_count += 1
+    tag = "{bc_count}"
+    leaves: int[]
+    tmpl = dot_template(n, leaves, tag)
+    pre = "__b{tag}"
+    stmts: int[]
+    ranks: int[]
+    rank = 0
+    loop k in [0..leaves.len()):
+        lf = leaves[k]
+        check_expr(lf, 0)
+        lf = last_checked
+        finalize_literal(lf)
+        t = prune(ntype(lf))
+        r = 0
+        if types[t].kind == .array: r = 1
+        else if is_array2(t): r = 2
+        ranks.push(r)
+        if r > rank: rank = r
+        stmts.push(bc_let("{pre}d{k}", lf, pos))
+    d = (k: int) -> int: bc_ident("{pre}d{k}", pos)
+    # scalars: the same value for every element
+    loop k in [0..leaves.len()):
+        if ranks[k] == 0: stmts.push(bc_let("{pre}e{k}", d(k), pos))
+    if rank == 0:
+        stmts.push(bc_stmt(tmpl, pos))
+        nodes[n] = nodes[bc_block(stmts, pos)]
+        return check_expr(n, expected)
+    out = "{pre}o"
+    body: int[]
+    result = 0
+    if rank == 1:
+        lens: int[]
+        loop k in [0..leaves.len()):
+            if ranks[k] == 1: lens.push(bc_call("len", [d(k)], pos))
+        larr = mk(.array, pos)
+        set_list(larr, lens)
+        stmts.push(bc_let("{pre}n", bc_call("__bcast", [larr], pos), pos))
+        loop k in [0..leaves.len()):
+            if ranks[k] == 1:
+                stmts.push(bc_let("{pre}s{k}", bc_step(bc_call("len", [d(k)], pos), pos), pos))
+                ix = mk(.index, pos)
+                nodes[ix].a = i32(d(k))
+                nodes[ix].b = i32(bc_bin(.star, bc_ident("{pre}i", pos), bc_ident("{pre}s{k}", pos), pos))
+                body.push(bc_let("{pre}e{k}", ix, pos))
+        stmts.push(bc_let(out, mk(.array, pos), pos))
+        stmts.push(bc_stmt(bc_method(bc_ident(out, pos), "reserve", [bc_ident("{pre}n", pos)], pos), pos))
+        body.push(bc_stmt(bc_method(bc_ident(out, pos), "push", [tmpl], pos), pos))
+        stmts.push(bc_loop("{pre}i", bc_ident("{pre}n", pos), body, pos))
+        result = bc_ident(out, pos)
+    else:
+        # 2-D: a vector is a row (numpy aligns trailing dimensions)
+        rows: int[]
+        cols: int[]
+        loop k in [0..leaves.len()):
+            if ranks[k] == 2:
+                rows.push(bc_field(d(k), "rows", pos))
+                cols.push(bc_field(d(k), "cols", pos))
+            else if ranks[k] == 1: cols.push(bc_call("len", [d(k)], pos))
+        ra = mk(.array, pos)
+        set_list(ra, rows)
+        ca = mk(.array, pos)
+        set_list(ca, cols)
+        stmts.push(bc_let("{pre}r", bc_call("__bcast", [ra], pos), pos))
+        stmts.push(bc_let("{pre}c", bc_call("__bcast", [ca], pos), pos))
+        loop k in [0..leaves.len()):
+            ij = 0
+            src = 0
+            if ranks[k] == 2:
+                # element (i, j) of a rows x cols operand: data[i * rstep + j * cstep]
+                stmts.push(bc_let("{pre}x{k}", bc_field(d(k), "data", pos), pos))
+                stmts.push(bc_let("{pre}rs{k}", bc_bin(.star, bc_step(bc_field(d(k), "rows", pos), pos), bc_field(d(k), "cols", pos), pos), pos))
+                stmts.push(bc_let("{pre}cs{k}", bc_step(bc_field(d(k), "cols", pos), pos), pos))
+                ij = bc_bin(.plus, bc_bin(.star, bc_ident("{pre}i", pos), bc_ident("{pre}rs{k}", pos), pos), bc_bin(.star, bc_ident("{pre}j", pos), bc_ident("{pre}cs{k}", pos), pos), pos)
+                src = bc_ident("{pre}x{k}", pos)
+            else if ranks[k] == 1:
+                stmts.push(bc_let("{pre}cs{k}", bc_step(bc_call("len", [d(k)], pos), pos), pos))
+                ij = bc_bin(.star, bc_ident("{pre}j", pos), bc_ident("{pre}cs{k}", pos), pos)
+                src = d(k)
+            else: continue
+            ix = mk(.index, pos)
+            nodes[ix].a = i32(src)
+            nodes[ix].b = i32(ij)
+            body.push(bc_let("{pre}e{k}", ix, pos))
+        stmts.push(bc_let(out, mk(.array, pos), pos))
+        stmts.push(bc_stmt(bc_method(bc_ident(out, pos), "reserve", [bc_bin(.star, bc_ident("{pre}r", pos), bc_ident("{pre}c", pos), pos)], pos), pos))
+        body.push(bc_stmt(bc_method(bc_ident(out, pos), "push", [tmpl], pos), pos))
+        inner = bc_loop("{pre}j", bc_ident("{pre}c", pos), body, pos)
+        stmts.push(bc_loop("{pre}i", bc_ident("{pre}r", pos), [inner], pos))
+        result = bc_call("__array2", [bc_ident(out, pos), bc_ident("{pre}r", pos), bc_ident("{pre}c", pos)], pos)
+    stmts.push(bc_stmt(result, pos))
+    nodes[n] = nodes[bc_block(stmts, pos)]
+    check_expr(n, expected)
 
 # ---------------- unions: `is` and narrowing ----------------
 # x is T: aux = the member's index for a union; -1 (is none) or -2 (has a value) for an optional
