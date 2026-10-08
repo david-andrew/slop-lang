@@ -235,15 +235,18 @@
         },
         {
           "begin": "\\[",
-          "end": "\\]",
+          "end": "(\\])|(\\))",
           "beginCaptures": {
             "0": {
               "name": "punctuation.definition.list.begin.jot"
             }
           },
           "endCaptures": {
-            "0": {
+            "1": {
               "name": "punctuation.definition.list.end.jot"
+            },
+            "2": {
+              "name": "punctuation.definition.range.end.jot"
             }
           },
           "patterns": [

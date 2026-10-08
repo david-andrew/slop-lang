@@ -2,45 +2,105 @@
   "name": "jot",
   "displayName": "Jot",
   "description": "The Jot language: highlighting, errors as you type, hover, go to definition, references, rename, completion, signature help, inlay type hints, outline; run files in a terminal or the browser",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "jot-lang",
   "license": "MIT",
-  "engines": { "vscode": "^1.75.0" },
-  "categories": ["Programming Languages"],
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
   "main": "./extension.js",
-  "activationEvents": ["onLanguage:jot"],
+  "activationEvents": [
+    "onLanguage:jot"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "jot",
-        "aliases": ["Jot", "jot"],
-        "extensions": [".jot"],
+        "aliases": [
+          "Jot",
+          "jot"
+        ],
+        "extensions": [
+          ".jot"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
-      { "language": "jot", "scopeName": "source.jot", "path": "./syntaxes/jot.tmLanguage.json" }
+      {
+        "language": "jot",
+        "scopeName": "source.jot",
+        "path": "./syntaxes/jot.tmLanguage.json",
+        "unbalancedBracketScopes": [
+          "punctuation.definition.range.end.jot",
+          "keyword.operator.arrow.jot",
+          "keyword.operator.comparison.jot"
+        ]
+      }
     ],
     "commands": [
-      { "command": "jot.run", "title": "Jot: Run File", "icon": "$(play)" },
-      { "command": "jot.runWeb", "title": "Jot: Run File in the Browser", "icon": "$(globe)" },
-      { "command": "jot.test", "title": "Jot: Run the File's Tests", "icon": "$(beaker)" },
-      { "command": "jot.restartServer", "title": "Jot: Restart the Language Server" }
+      {
+        "command": "jot.run",
+        "title": "Jot: Run File",
+        "icon": "$(play)"
+      },
+      {
+        "command": "jot.runWeb",
+        "title": "Jot: Run File in the Browser",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "jot.test",
+        "title": "Jot: Run the File's Tests",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "jot.restartServer",
+        "title": "Jot: Restart the Language Server"
+      }
     ],
     "menus": {
       "editor/title/run": [
-        { "command": "jot.run", "when": "resourceLangId == jot", "group": "navigation@1" },
-        { "command": "jot.runWeb", "when": "resourceLangId == jot", "group": "navigation@2" },
-        { "command": "jot.test", "when": "resourceLangId == jot", "group": "navigation@3" }
+        {
+          "command": "jot.run",
+          "when": "resourceLangId == jot",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jot.runWeb",
+          "when": "resourceLangId == jot",
+          "group": "navigation@2"
+        },
+        {
+          "command": "jot.test",
+          "when": "resourceLangId == jot",
+          "group": "navigation@3"
+        }
       ],
       "commandPalette": [
-        { "command": "jot.run", "when": "editorLangId == jot" },
-        { "command": "jot.runWeb", "when": "editorLangId == jot" },
-        { "command": "jot.test", "when": "editorLangId == jot" }
+        {
+          "command": "jot.run",
+          "when": "editorLangId == jot"
+        },
+        {
+          "command": "jot.runWeb",
+          "when": "editorLangId == jot"
+        },
+        {
+          "command": "jot.test",
+          "when": "editorLangId == jot"
+        }
       ]
     },
     "keybindings": [
-      { "command": "jot.run", "key": "ctrl+f5", "when": "editorLangId == jot" }
+      {
+        "command": "jot.run",
+        "key": "ctrl+f5",
+        "when": "editorLangId == jot"
+      }
     ],
     "configuration": {
       "title": "Jot",
