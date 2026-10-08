@@ -135,8 +135,79 @@ demo4 = ():
         i += 1
     print(r, r is str)
 
+# three members: ruling one out leaves a smaller union; widening to a bigger union
+struct Big:
+    v: int
+    tag: str
+type Val = int | str | Big
+
+weigh = (x: Val) -> int:
+    if x is str: return len(x) * 10
+    if x is Big: return x.v + len(x.tag)        # x: int | Big before this test
+    x + 1000                                    # x: int
+
+show3 = (x: int | str | f64) -> str: "<{x}>"
+
+demo5 = ():
+    vals: Val[] = [3, "four", Big(5, "five")]
+    loop x in vals:
+        print(weigh(x))
+        if x is int: print("int", x + 1)
+        else if x is str: print("str", x + "!")
+        else: print("big", x.tag)               # neither int nor str
+        match x:
+            int, str: print("simple", x)        # x: int | str
+            _: print("other", x.v)              # x: Big
+        if x is str: continue
+        y: int | Big = x                        # (int | Big fits)
+        print(y)
+    small: int | str = "s"
+    print(show3(small))                         # int | str widens to int | str | f64
+    small = 2
+    wide: int | str | f64 = small
+    print(wide, show3(wide))
+    w: Val = 1
+    if w is str: return
+    w = "reassigned"                            # the whole union again
+    print(w, weigh(w))
+
+# fields narrow like variables
+struct Slot:
+    item: int | str | Big
+    count: int?
+
+describe = (self: Slot) -> str:
+    if self.item is Big: return "big {self.item.tag}"
+    if self.item is int: return "number {self.item + 1}"
+    "text {self.item} ({len(self.item)})"
+
+bump = (self: mut Slot):
+    if self.count is int: self.count = self.count + 1
+    else: self.count = 1
+
+# a type parameter inside a union stands for the members the union does not name
+value_or[T] = (r: T | Big, d: T) -> T:
+    if r is Big: return d
+    r
+is_big[T] = (r: T | Big) -> bool: r is Big
+
+demo6 = ():
+    slots = [Slot(3, 2), Slot("abc", none), Slot(Big(1, "b"), 1)]
+    loop s in slots: print(describe(s))
+    s = slots[0]
+    if s.item is int and s.count is int: print(s.item * s.count)
+    s.item = "text"                             # s.item is a str from here on
+    print(len(s.item))
+    if s.count is int:
+        bump(s)                                 # (may change s.count: no longer known)
+        print(s.count)
+    v: int | str | Big = "x"
+    print(value_or(v, 5), value_or(Big(2, "two"), 7), is_big(2.5), is_big(Big(0, "")))
+
 main = ():
     demo1()
     demo2()
     demo3()
     demo4()
+    demo5()
+    demo6()

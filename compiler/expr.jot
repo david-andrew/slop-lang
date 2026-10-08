@@ -13,7 +13,7 @@ enum IN:
     hash, alignof, unreachable, arrcap, fmt_struct, sqrt, vec_ctor, cfn_cast, wasm_call, callc, floor_,
     ceil_, fabs, fmin, fmax, setjmp, longjmp, jump, shader, extend, clone_thread, atomic_add, atomic_cas, stack_ptr, fill, fmt_elem, gpu_kernel
 
-enum CV: none_, int_, int2float, float2int, float_, opt, ptr, bits, fn2clos
+enum CV: none_, int_, int2float, float2int, float_, opt, ptr, bits, fn2clos, union_
 
 struct Intrinsic:
     name: str
@@ -96,6 +96,7 @@ can_coerce = (n: int, from0: int, to0: int) -> bool:
     if fk == .int_ and tk == .float_: return true
     if fk == .float_ and tk == .float_: return true
     if tk == .enum_ and fk != .enum_ and is_union(to): return union_target(n, from, to) >= 0
+    if is_union(from) and is_union(to): return union_within(from, to)
     if fk == .array and is_soa(to): return can_coerce(0, int(types[from].elem), soa_elem(to))
     if tk == .opt:
         if fk == .none_lit: return true
@@ -104,6 +105,12 @@ can_coerce = (n: int, from0: int, to0: int) -> bool:
     if fk == .null_ and (tk == .ptr or tk == .cfn): return true
     if fk == .ptr and tk == .ptr and (to == T_RAWPTR or from == T_RAWPTR): return true
     false
+
+# every member of union a is one of union b's
+union_within = (a: int, b: int) -> bool:
+    loop m in union_members(a):
+        if union_index(b, m) < 0: return false
+    true
 
 # the member of union u a value of type `from` becomes (an exact match first), or -1
 union_target = (n: int, from: int, u: int) -> int:
@@ -184,6 +191,9 @@ coerce = (n: int, target: int) -> int:
         if vi < 0: fatal(nodes[n].pos, "type mismatch: expected {type_str(to)}, found {type_str(from)}")
         coerce(n, union_members(to)[vi])
         wrap_union(n, vi, to)
+        return n
+    if is_union(from) and is_union(to) and union_within(from, to):
+        wrap_conv(n, .union_, to)
         return n
     if has_var(from) or has_var(to):
         if unify(from, to): return n
@@ -445,6 +455,7 @@ match_type = (pat0: int, a0: int, binds: mut int[], depth: int) -> int:
             return 1
         return -1
     if ak == .var: return 0
+    if is_union(pat): return match_union(pat, a, binds, depth)
     if pk == .opt and ak != .opt:
         if ak == .none_lit: return 0
         r = match_type(int(types[pat].elem), a, binds, depth + 1)
@@ -475,6 +486,44 @@ match_type = (pat0: int, a0: int, binds: mut int[], depth: int) -> int:
             cost += r
         return cost
     -1
+
+# type parameter id is a member of a union in type t
+param_in_union = (t0: int, id: int) -> bool:
+    t = prune(t0)
+    if not has_var(t): return false
+    k = types[t].kind
+    if is_union(t):
+        loop m in union_members(t):
+            if types[prune(m)].kind == .param and int(types[prune(m)].id) == id: return true
+    if k == .array or k == .opt or k == .ptr: return param_in_union(int(types[t].elem), id)
+    if k == .struct_ or k == .enum_:
+        si = int(types[t].st)
+        loop j in [0..int(structs[si].ntargs)):
+            if param_in_union(struct_targ(si, j), id): return true
+    false
+
+# T | Err against int | str | Err: the members the pattern names match themselves, and its type
+# parameter stands for the rest (int | str); a lone member (Err, or int) matches the same way
+match_union = (pat: int, a: int, binds: mut int[], depth: int) -> int:
+    pms = union_members(pat)
+    ams = [a]
+    if is_union(a): ams = union_members(a)
+    rest: int[]
+    loop m in ams:
+        named = false
+        loop pm in pms:
+            if not has_var(pm) and type_eq(pm, m): named = true
+        if not named: rest.push(m)
+    params: int[]
+    loop pm in pms:
+        if has_var(pm): params.push(pm)
+    if params.len() != 1 or types[prune(params[0])].kind != .param: return -1
+    widen = 0
+    if not is_union(a): widen = 1
+    if rest.len() == 0: return widen        # (the parameter is decided by other arguments)
+    r = match_type(params[0], mk_union(rest), binds, depth + 1)
+    if r < 0: return -1
+    r + widen
 
 subst_partial = (pat0: int, binds: mut int[]) -> int:
     pat = prune(pat0)
@@ -550,6 +599,7 @@ arg_cost = (a: int, pat: int, binds: mut int[]) -> int:
             if b == 0: return 2
             if can_coerce(a, ntype(a), b): return 0
             return -1
+        if is_union(p) and has_var(p): return match_type(pat, lit_default(a), binds, 0)
         if pk == .int_:
             if nodes[a].kind == .int_lit:
                 if p == T_INT: return 0
@@ -585,6 +635,7 @@ finish_arg = (a: int, pt: int, is_mut: bool):
         add_flag(a, NF_CHECKED)
     if is_mut:
         check_place(a, true)
+        if path_narrows > 0: path_forget(path_key(a))
         if not type_eq(ntype(a), pt) and not unify(ntype(a), pt): fatal(nodes[a].pos, "`mut` argument must have type {type_str(pt)} exactly, found {type_str(ntype(a))}")
         add_flag(a, NF_MUT)
         return
@@ -730,9 +781,16 @@ resolve_fn_call = (n: int, name: int, decls: int[], args: int[], expected: int) 
         if match_type(int(cd.sig.ret), expected, rb, 0) >= 0: cd.binds = rb
     loop i in [0..int(cd.sig.ntp)):
         b = cd.binds[i]
+        if b == 0:
+            # T | Err given just an Err: T is nothing (the union is just Err)
+            loop pt in cd.sig.params:
+                if param_in_union(pt, i): cd.binds[i] = T_NEVER
+            b = cd.binds[i]
         if b == 0 or tkind(b) == .var:
             if partial: fatal(nodes[n].pos, "cannot infer generic types for partial application of '{name_of(name)}'; annotate the arguments")
-            fatal(nodes[n].pos, "cannot infer type parameter {i + 1} of '{name_of(name)}'")
+            tp = "{i + 1}"
+            if int(nodes[decl].nlist2) > i: tp = "'{name_of(int(nodes[kid2(decl, i)].name))}'"
+            fatal(nodes[n].pos, "cannot infer type parameter {tp} of '{name_of(name)}' from the arguments")
     f = get_fn_inst(decl, cd.binds, nodes[n].pos)
     fin: int[]
     loop i in [0..np):
@@ -1745,14 +1803,20 @@ check_match = (m: int, expected: int) -> int:
     if types[st].kind == .enum_:
         check_struct_fields(int(types[st].st))
         seen = fill(false, int(structs[int(types[st].st)].nvariants))
+    sc = int(nodes[m].a)
+    narrows = is_union(st) and nodes[sc].kind == .ident and nodes[sc].aux == i32(int(SK.local))
     loop i in [0..nkids(m)):
         arm = kid(m, i)
         amark = scope_mark()
+        arm_members: int[]
+        arm_wild = false
+        seen_before = seen
         loop k in [0..nkids(arm)):
             p = kid(arm, k)
             pk = nodes[p].kind
             if pk == .pwild:
                 has_wild = true
+                arm_wild = true
                 continue
             if pk == .pvariant and types[st].kind == .enum_:
                 si = int(types[st].st)
@@ -1761,18 +1825,7 @@ check_match = (m: int, expected: int) -> int:
                 nodes[p].aux2 = i32(vi)
                 seen[vi] = true
                 v = int(structs[si].variants) + vi
-                sc = int(nodes[m].a)
-                if structs[si].union_ and nkids(arm) == 1 and nodes[sc].kind == .ident and nodes[sc].aux == i32(int(SK.local)):
-                    # match x: T: ...   x is a T in the arm
-                    sl = int(nodes[sc].sym)
-                    na = mk(.narrow, nodes[p].pos)
-                    nodes[na].a = i32(mk_ident_local(sl, nodes[p].pos))
-                    nodes[na].aux = i32(vi)
-                    nodes[na].type = fields[int(variants[v].fields)].type
-                    add_flag(na, NF_CHECKED)
-                    nl = new_local(int(locals[sl].name), int(nodes[na].type), nodes[p].pos)
-                    locals[nl].flags = i32(LF_ALIAS)
-                    locals[nl].alias = i32(na)
+                if structs[si].union_: arm_members.push(int(fields[int(variants[v].fields)].type))
                 if nkids(p) > 0:
                     if nkids(p) != int(variants[v].nfields): fatal(nodes[p].pos, "variant '{name_of(int(variants[v].name))}' has {variants[v].nfields} field(s), pattern binds {nkids(p)}")
                     if nkids(arm) > 1: fatal(nodes[p].pos, "patterns with bindings cannot be combined with other patterns")
@@ -1810,6 +1863,13 @@ check_match = (m: int, expected: int) -> int:
                 check_to(int(nodes[p].b), st)
                 continue
             fatal(nodes[p].pos, "invalid pattern")
+        if narrows:
+            # match x: T: ...   x is a T in the arm (T, U: ... a T | U; _: the members not matched yet)
+            if arm_wild:
+                arm_members.clear()
+                loop vi in 0.. and um in union_members(st):
+                    if not seen_before[vi]: arm_members.push(um)
+            narrow_local(int(nodes[sc].sym), arm_members, nodes[arm].pos)
         body = int(nodes[arm].b)
         if is_stmt: check_block(body, 0, false)
         else:
@@ -2018,6 +2078,11 @@ check_expr = (n: int, expected: int) -> int:
             ensure_global(g, nodes[n].pos)
             nodes[n].sym = i32(g)
             t = int(globals[g].type)
+            if path_narrows > 0 and not no_path_narrow:
+                al = path_alias(n)
+                if al >= 0:
+                    nodes[n] = nodes[mk_ident_local(al, nodes[n].pos)]
+                    t = int(locals[al].type)
         else if sk == .const_:
             g = int(syms[s].ref)
             if globals[g].decl != 0: ensure_global(g, nodes[n].pos)
@@ -2097,6 +2162,11 @@ check_expr = (n: int, expected: int) -> int:
                 if fi >= 0:
                     nodes[n].aux = i32(fi)
                     t = int(fields[int(structs[si].fields) + fi].type)
+                    if path_narrows > 0 and not no_path_narrow and bk == .struct_:
+                        al = path_alias(n)
+                        if al >= 0:
+                            nodes[n] = nodes[mk_ident_local(al, nodes[n].pos)]
+                            t = int(locals[al].type)
             if t == 0:
                 cands: int[]
                 if types[bt].kind == .struct_:
@@ -3097,33 +3167,136 @@ narrow_by = (c: int, holds: bool):
 
 narrow_var = (isn: int, holds: bool):
     a = int(nodes[isn].a)
+    if nodes[a].kind == .field or (nodes[a].kind == .ident and nodes[a].aux == i32(int(SK.global))):
+        narrow_path(a, int(nodes[isn].aux), holds)
+        return
     if nodes[a].kind != .ident or nodes[a].aux != i32(int(SK.local)): return
     l = int(nodes[a].sym)
     ut = prune(int(locals[l].type))
     vi = int(nodes[isn].aux)
     pos = nodes[a].pos
-    e = 0
-    t = 0
     if is_union(ut):
         ms = union_members(ut)
-        mi = vi
-        if not holds:
-            if ms.len() != 2: return
-            mi = 1 - vi
-        e = mk(.narrow, pos)
-        nodes[e].aux = i32(mi)
-        t = ms[mi]
-    else if types[ut].kind == .opt:
-        if (vi == -2) != holds: return
-        e = mk(.unwrap, pos)
-        t = int(types[ut].elem)
-    else: return
+        if holds: narrow_local(l, [ms[vi]], pos)
+        else:
+            # (not that member: one of the others)
+            rest: int[]
+            loop i in 0.. and m in ms:
+                if i != vi: rest.push(m)
+            narrow_local(l, rest, pos)
+        return
+    if types[ut].kind != .opt or (vi == -2) != holds: return
+    e = mk(.unwrap, pos)
+    t = int(types[ut].elem)
     nodes[e].a = i32(mk_ident_local(l, pos))
     nodes[e].type = i32(t)
     add_flag(e, NF_CHECKED)
     nl = new_local(int(locals[l].name), t, pos)
     locals[nl].flags = i32(LF_ALIAS)
     locals[nl].alias = i32(e)
+
+# from here on, union variable l is known to hold one of members ms: its name stands for that
+# member (one) or the smaller union of them (converted from the variable's value when used)
+narrow_local = (l: int, ms: int[], pos: int):
+    # (a variable already narrowed to some of its members: narrow the variable itself)
+    root = mk_ident_local(l, pos)
+    if int(locals[l].flags) & LF_ALIAS != 0:
+        al = int(locals[l].alias)
+        if nodes[al].kind == .conv and nodes[al].aux == i32(int(CV.union_)): root = copy_path(int(nodes[al].a))
+    narrow_expr(root, ms, pos, int(locals[l].name))
+
+# the name `name` stands for root (a variable or field path) narrowed to members ms of its union
+narrow_expr = (root: int, ms: int[], pos: int, name: int):
+    rt = prune(ntype(root))
+    if not is_union(rt) or ms.len() == 0: return
+    e = 0
+    t = 0
+    if ms.len() == 1:
+        e = mk(.narrow, pos)
+        nodes[e].aux = i32(union_index(rt, ms[0]))
+        t = ms[0]
+    else:
+        t = mk_union(ms)
+        if type_eq(t, rt): return
+        e = mk(.conv, pos)
+        nodes[e].aux = i32(int(CV.union_))
+    nodes[e].a = i32(root)
+    nodes[e].type = i32(t)
+    add_flag(e, NF_CHECKED)
+    nl = new_local(name, t, pos)
+    locals[nl].flags = i32(LF_ALIAS)
+    locals[nl].alias = i32(e)
+
+# ---- narrowing field paths (x.f, x.f.g, a global g) ----
+# a narrowed path is a scope entry named by its key ("#L<local>.<field>...", "#G<global>..."),
+# standing for an alias local; the tag is still checked when the value is used (a call or a
+# closure may have changed it)
+path_narrows = 0                # (none yet: field accesses need not look)
+no_path_narrow = false          # (the target of an assignment is the field itself)
+
+path_key = (n: int) -> str:
+    k = nodes[n].kind
+    if k == .ident:
+        if nodes[n].aux == i32(int(SK.local)): return "#L{nodes[n].sym}"
+        if nodes[n].aux == i32(int(SK.global)): return "#G{nodes[n].sym}"
+        return ""
+    if k == .field and nodes[n].aux >= 0 and nodes[n].a != 0:
+        a = int(nodes[n].a)
+        if tkind(ntype(a)) != .struct_: return ""
+        b = path_key(a)
+        if len(b) == 0: return ""
+        return "{b}.{nodes[n].aux}"
+    ""
+
+# a checked copy of a field path
+copy_path = (n: int) -> int:
+    c = nodes.len()
+    nodes.push(nodes[n])
+    if nodes[n].kind == .field: nodes[c].a = i32(copy_path(int(nodes[n].a)))
+    c
+
+# the alias local a field path (or global) is narrowed to here, or -1
+path_alias = (n: int) -> int:
+    key = path_key(n)
+    if len(key) == 0: return -1
+    s = lookup(intern(key))
+    if s == 0 or syms[s].kind != .local: return -1
+    al = int(syms[s].ref)
+    if int(locals[al].owner) != int(ctxs[cx].inst): return -1
+    al
+
+narrow_path = (a: int, vi: int, holds: bool):
+    key = path_key(a)
+    if len(key) == 0: return
+    ut = prune(ntype(a))
+    pos = nodes[a].pos
+    path_narrows += 1
+    if is_union(ut):
+        sel: int[]
+        loop i in 0.. and m in union_members(ut):
+            if (i == vi) == holds: sel.push(m)
+        narrow_expr(copy_path(a), sel, pos, intern(key))
+    else if types[ut].kind == .opt and (vi == -2) == holds:
+        e = mk(.unwrap, pos)
+        nodes[e].a = i32(copy_path(a))
+        nodes[e].type = types[ut].elem
+        add_flag(e, NF_CHECKED)
+        nl = new_local(intern(key), int(types[ut].elem), pos)
+        locals[nl].flags = i32(LF_ALIAS)
+        locals[nl].alias = i32(e)
+
+# the path (and paths inside it) may hold another value from here on: forget their narrowing
+path_forget = (key: str):
+    if path_narrows == 0 or len(key) == 0: return
+    prefix = key + "."
+    found: int[]
+    i = sc_names.len() - 1
+    floor = int(ctxs[cx].floor)
+    loop i >= floor:
+        nm = name_of(sc_names[i])
+        if nm == key or starts_with(nm, prefix): found.push(sc_names[i])
+        i -= 1
+    loop nm in found: push_scope_sym(nm, new_sym(nm, .global, -1, 0))
 
 check_iflet = (n: int, ex: int) -> int:
     is_stmt = has_flag(n, NF_STMT)

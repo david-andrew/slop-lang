@@ -292,6 +292,7 @@ unify = (a0: int, b0: int) -> bool:
         if occurs(b, a): return false
         types[b].ref = i32(a)
         return true
+    if is_union(a) and is_union(b) and (has_var(a) or has_var(b)): return unify_unions(a, b)
     ta = types[a]
     tb = types[b]
     if ta.kind != tb.kind or ta.nargs != tb.nargs or ta.bits != tb.bits or ta.sign != tb.sign: return false
@@ -309,6 +310,25 @@ unify = (a0: int, b0: int) -> bool:
         if not unify(targ(a, i), targ(b, i)): return false
     if ta.kind == .fn_ and ta.mutmask != tb.mutmask: return false
     true
+
+# unions with type variables: members that are equal match each other, and a single variable
+# member of one side stands for the other side's remaining members
+unify_unions = (a: int, b: int) -> bool:
+    if has_var(b) and not has_var(a): return unify_unions(b, a)
+    ams = union_members(a)
+    bms = union_members(b)
+    rest: int[]
+    loop m in bms:
+        same = false
+        loop am in ams:
+            if not has_var(am) and type_eq(am, m): same = true
+        if not same: rest.push(m)
+    vars: int[]
+    loop am in ams:
+        if has_var(am): vars.push(am)
+    if vars.len() != 1 or types[prune(vars[0])].kind != .var or rest.len() == 0: return false
+    if not unify(vars[0], mk_union(rest)): return false
+    type_eq(a, b)
 
 simple_enum = (t: int) -> bool:
     layout(t)
@@ -529,6 +549,7 @@ mk_union = (ms0: int[]) -> int:
         m = prune(work[i])
         i += 1
         k = types[m].kind
+        if m == T_NEVER: continue           # (a value that never exists adds nothing)
         if k == .none_lit: has_none = true
         else if k == .opt:
             has_none = true

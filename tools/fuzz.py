@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Differential fuzzing: generate random (well-defined) Jot programs and check that debug,
-release and web builds print the same thing.
+release and web builds print the same thing. Half the programs also use the newer features
+(unions with narrowing, closures that change captured variables, struct-of-arrays checked
+against a plain array, n-dimensional arrays and broadcasting); the others stay within the
+C bootstrap compiler's subset, which is then a fifth, independent build.
 
 usage: tools/fuzz.py [count] [--seed N] [--no-wasm] [--keep]
 Failing programs are saved to build/fuzz/fail_<seed>.jot.
@@ -8,7 +11,7 @@ Failing programs are saved to build/fuzz/fail_<seed>.jot.
 import os, random, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-JOT = os.path.join(ROOT, "bin", "jot")
+JOT = os.environ.get("JOT_FUZZ_COMPILER") or os.path.join(ROOT, "bin", "jot")
 JOT0 = os.path.join(ROOT, "stage0", "jot0")      # the C bootstrap compiler: an independent implementation
 ENV = dict(os.environ, JOT_LIB=os.path.join(ROOT, "lib"))
 OUT = os.path.join(ROOT, "build", "fuzz")
@@ -32,6 +35,11 @@ class Gen:
         self.varrs = []     # (name, lanes) of arrays of 3 vectors
         self.depth = 0
         self.use_vec = rnd.random() < 0.5     # half the programs stay in the bootstrap compiler's subset
+        self.use_new = self.use_vec and rnd.random() < 0.8
+        self.unions = []    # U variables (int | str | UA)
+        self.soas = []      # (soa P[] name, P[] mirror name)
+        self.mats = []      # (name, rows, cols) of f64[,] variables
+        self.fvs = []       # (name, n) of f64[] variables
         self.fns = []       # (name, nparams) of helper functions: int -> int
         self.n = 0
 
@@ -47,6 +55,8 @@ class Gen:
         r = self.r
         if d > 3 or r.random() < 0.25:
             c = r.random()
+            if d > 7:                # (leaves that hold expressions themselves stop somewhere)
+                return r.choice(self.ints) if self.ints else str(r.choice([0, 1, 7, -5]))
             if c < 0.5 and self.ints: return r.choice(self.ints)
             if c < 0.65 and self.arrays:
                 a = r.choice(self.arrays)
@@ -59,6 +69,10 @@ class Gen:
             if c < 0.92 and self.parrs:
                 a = r.choice(self.parrs)
                 return f"{a}[abs({self.iexpr(d + 2)}) % {a}.len()].a"
+            if c < 0.95 and self.unions: return f"ushow({r.choice(self.unions)})"
+            if c < 0.97 and self.mats:
+                m, rows, cols = r.choice(self.mats)
+                return f"fi({m}[abs({self.iexpr(d + 2)}) % {rows}, abs({self.iexpr(d + 2)}) % {cols}])"
             return str(r.choice([0, 1, 2, 3, 7, -1, -5, 100, 255, 1000, -32768, 65537, 2147483647, -2147483648]))
         op = r.choice(["+", "-", "*", "/", "%", "&", "|", "xor", "<<", ">>", "call", "neg", "if", "min", "cmpsel", "float", "match"])
         a = self.iexpr(d + 1)
@@ -73,7 +87,7 @@ class Gen:
             return f"{name}({args})"
         if op == "if": return f"(if {self.cond(d + 1)}: {a} else: {b})"
         if op == "min": return f"min({a}, {b})"
-        if op == "cmpsel": return f"int({a} < {b}) + int({a} == {b}) * 2"
+        if op == "cmpsel": return f"(int({a} < {b}) + int({a} == {b}) * 2)"
         if op == "float" and self.floats: return f"fi({r.choice(self.floats)} * 3.0) % 100000"
         if op == "match" and d <= 1 and self.ints:
             arms = []
@@ -88,6 +102,12 @@ class Gen:
     def fexpr(self, d=0):
         r = self.r
         if d > 3 or r.random() < 0.3:
+            if self.mats and d < 6 and r.random() < 0.15:
+                m, rows, cols = r.choice(self.mats)
+                return f"{m}[abs({self.iexpr(3)}) % {rows}, abs({self.iexpr(3)}) % {cols}]"
+            if self.fvs and d < 6 and r.random() < 0.15:
+                v, n = r.choice(self.fvs)
+                return r.choice([f"{v}[abs({self.iexpr(3)}) % {n}]", f"sum({v})"])
             if self.floats and r.random() < 0.6: return r.choice(self.floats)
             return r.choice(["0.5", "1.25", "-3.75", "100.0", "0.1", "2.0"])
         op = r.choice(["+", "-", "*", "/", "int", "sqrt", "abs", "floor"])
@@ -201,17 +221,22 @@ class Gen:
 
     # ---------------- statements ----------------
     def block(self, n):
-        saved = (list(self.ints), list(self.floats), list(self.arrays), list(self.strs), list(self.structs), list(self.parrs), list(self.closures), list(self.maps), list(self.vecs), list(self.varrs))
+        saved = (list(self.ints), list(self.floats), list(self.arrays), list(self.strs), list(self.structs), list(self.parrs), list(self.closures), list(self.maps), list(self.vecs), list(self.varrs),
+                 list(self.unions), list(self.soas), list(self.mats), list(self.fvs))
         self.depth += 1
         for _ in range(n): self.stmt()
         if not self.lines[-1].strip() or self.lines[-1].endswith(":"): self.emit("pass")
         self.depth -= 1
-        self.ints, self.floats, self.arrays, self.strs, self.structs, self.parrs, self.closures, self.maps, self.vecs, self.varrs = saved
+        (self.ints, self.floats, self.arrays, self.strs, self.structs, self.parrs, self.closures, self.maps, self.vecs, self.varrs,
+         self.unions, self.soas, self.mats, self.fvs) = saved
 
     def stmt(self):
         r = self.r
         if self.use_vec and r.random() < 0.1:
             self.vstmt()
+            return
+        if self.use_new and r.random() < 0.18:
+            r.choice([self.union_stmt, self.union_stmt, self.closure_stmt, self.soa_stmt, self.nd_stmt, self.nd_stmt])()
             return
         if r.random() < 0.06 and self.arrays:
             self.managed_stmt()
@@ -339,6 +364,204 @@ class Gen:
             self.emit(f"print({v}.len())")
             self.maps.append(v)
 
+    # ---------------- newer features ----------------
+    def umember(self):
+        r = self.r
+        c = r.random()
+        if c < 0.4: return self.iexpr(2)
+        if c < 0.7: return f'"t{{{self.iexpr(3)}}}"'
+        return f"UA({self.iexpr(2)})"
+
+    def union_stmt(self):
+        r = self.r
+        c = r.random()
+        if c < 0.3 or not self.unions:
+            v = self.fresh("u")
+            self.emit(f"{v}: U = {self.umember()}")
+            self.unions.append(v)
+            return
+        u = r.choice(self.unions)
+        if c < 0.45:
+            self.emit(f"{u} = {self.umember()}")
+        elif c < 0.6:
+            # narrowing in if / else if / else
+            self.emit(f"if {u} is int: print({u} + {self.iexpr(2)}, {u} * 2)")
+            self.emit(f"else if {u} is str: print({u}, len({u}))")
+            self.emit(f"else: print({u}.v * 3)")
+        elif c < 0.7:
+            self.emit(f"if {u} is str and len({u}) > 2: print({u}[1..])")
+            self.emit(f"if {u} is int and {u} > {self.iexpr(3)}:")
+            self.depth += 1
+            self.emit(f"{u} = \"over\"")        # (makes it the whole union again)
+            self.emit(f"print(ushow({u}))")
+            self.depth -= 1
+        elif c < 0.8:
+            self.emit(f"match {u}:")
+            self.emit(f"    int: print(\"int\", {u} - 1)")
+            self.emit(f"    str: print(\"str\", {u} + \"!\")")
+            self.emit(f"    UA: print(\"ua\", {u}.v)")
+        elif c < 0.9:
+            us = self.fresh("us")
+            acc = self.fresh("ut")
+            self.emit(f"{us}: U[] = [{u}, {self.umember()}, {self.umember()}]")
+            self.emit(f"{us}.push({self.umember()})")
+            self.emit(f"{acc} = 0")
+            self.emit(f"loop x in {us}: {acc} += ushow(x)")
+            self.emit(f"print({us}, {acc}, unarrow({us}[abs({self.iexpr(3)}) % {us}.len()]))")
+        else:
+            o = self.fresh("o")
+            self.emit(f"{o}: int? = none")
+            self.emit(f"if {self.cond(2)}: {o} = {self.iexpr(2)}")
+            self.emit(f"if let w = {o}: print(w + 1)")
+            self.emit(f"print({o} ?? -7)")
+
+    def closure_stmt(self):
+        r = self.r
+        c = r.random()
+        mutable = [x for x in self.ints if x not in self.ro]
+        if c < 0.3:
+            v = self.fresh("cc")
+            self.emit(f"{v} = mkc({self.iexpr(2)})")
+            self.closures.append(v)             # (each call changes its count)
+        elif c < 0.55 and mutable:
+            # a closure that reads a variable changed afterwards: it sees the change
+            x = r.choice(mutable)
+            v = self.fresh("rd")
+            self.emit(f"{v} = (q: int) -> int: q * 2 + {x}")
+            self.emit(f"{x} += {self.iexpr(2)}")
+            self.emit(f"print({v}(1), {x})")
+            self.closures.append(v)
+        elif c < 0.8 and mutable:
+            # a closure that changes a captured variable
+            x = r.choice(mutable)
+            v = self.fresh("wr")
+            self.emit(f"{v} = (q: int):")
+            self.emit(f"    {x} = ({x} xor q) + 1")
+            for _ in range(r.randint(1, 3)): self.emit(f"{v}({self.iexpr(2)})")
+            self.emit(f"print({x})")
+        else:
+            # closures made in a loop each see their own iteration's variables
+            fs = self.fresh("fs")
+            k = self.fresh("k")
+            self.emit(f"{fs}: ((int) -> int)[]")
+            self.emit(f"loop {k} in [0..{r.randint(1, 4)}):")
+            self.emit(f"    t{k} = {k} * {r.randint(1, 9)}")
+            self.emit(f"    {fs}.push((q: int) -> int: q + t{k})")
+            self.emit(f"print([loop f in {fs}: f({self.iexpr(3)})])")
+
+    def soa_stmt(self):
+        r = self.r
+        c = r.random()
+        if c < 0.25 or not self.soas:
+            v = self.fresh("so")
+            n = r.randint(1, 4)
+            a, b = self.fresh("ta"), self.fresh("tb")
+            self.emit(f"{v}m: P[] = []")
+            for _ in range(n):
+                self.emit(f"{a} = {self.iexpr(2)}")
+                self.emit(f"{v}m.push(P({a}, {r.choice(['0.5', '1.25', '-2.0', '3.0'])}))")
+            self.emit(f"{v}: soa P[] = {v}m")
+            self.soas.append((v, v + "m"))
+            return
+        v, m = r.choice(self.soas)
+        t = self.fresh("tv")
+        if c < 0.4:
+            f = self.fresh("tf")
+            self.emit(f"{t} = {self.iexpr(2)}")
+            self.emit(f"{f} = {self.fexpr(2)}")
+            self.emit(f"if {m}.len() < 30:")
+            self.emit(f"    {v}.push(P({t}, {f}))")
+            self.emit(f"    {m}.push(P({t}, {f}))")
+        elif c < 0.5:
+            self.emit(f"if {m}.len() > 1: print({v}.pop() == {m}.pop())")
+        elif c < 0.65:
+            i = self.fresh("ti")
+            self.emit(f"{i} = abs({self.iexpr(2)}) % {m}.len()")
+            self.emit(f"{t} = {self.iexpr(2)}")
+            self.emit(f"{v}[{i}].a += {t}")
+            self.emit(f"{m}[{i}].a += {t}")
+        elif c < 0.8:
+            self.emit(f"{t} = {self.iexpr(3)}")
+            for name in (v, m):
+                self.emit(f"loop mut p in {name}:")
+                self.emit(f"    p.a = p.a * 3 + {t}")
+                self.emit(f"    p.b = p.b * 0.5")
+        elif c < 0.9:
+            self.emit(f"{t} = {self.fexpr(3)}")
+            self.emit(f"{v}.b = {v}.b .* 2.0 .+ {t}")
+            self.emit(f"loop mut p in {m}: p.b = p.b * 2.0 + {t}")
+        else:
+            acc = self.fresh("sa")
+            self.emit(f"{acc} = 0")
+            self.emit(f"loop p in {v}: {acc} += p.a")
+            self.emit(f"print({v}, {acc})")
+        self.emit(f"if {v}.a != [loop p in {m}: p.a] or {v}.b != [loop p in {m}: p.b]: print(\"SOA MISMATCH\", {v}, {m})")
+
+    def flit(self):
+        return self.r.choice(["0.5", "1.25", "-2.0", "3.0", "0.125", "-0.75", "4.5", "10.0"])
+
+    def nd_stmt(self):
+        r = self.r
+        c = r.random()
+        if c < 0.2 or not self.mats:
+            v = self.fresh("mt")
+            rows, cols = r.randint(1, 3), r.randint(1, 4)
+            if rows > 1 and r.random() < 0.6:
+                self.emit(f"{v} = [" + "; ".join(", ".join(self.flit() for _ in range(cols)) for _ in range(rows)) + "]")
+                if cols == 1: self.emit(f"{v} = reshape({v}, {rows}, 1)")
+            else:
+                self.emit(f"{v} = reshape([{', '.join(self.flit() for _ in range(rows * cols))}], {rows}, {cols})")
+            self.mats.append((v, rows, cols))
+            return
+        if c < 0.3:
+            v = self.fresh("fv")
+            n = r.randint(1, 5)
+            self.emit(f"{v} = [{', '.join(self.flit() for _ in range(n))}]")
+            self.fvs.append((v, n))
+            return
+        m, rows, cols = r.choice(self.mats)
+        if c < 0.45:
+            # broadcasting: a scalar, a row, a column, a 1-D row, or the same shape
+            other = r.choice(["s", "row", "col", "vec", "same"])
+            if other == "s": rhs = f"{self.fexpr(2)}"
+            elif other == "row": rhs = f"reshape([{', '.join(self.flit() for _ in range(cols))}], 1, {cols})"
+            elif other == "col": rhs = f"reshape([{', '.join(self.flit() for _ in range(rows))}], {rows}, 1)"
+            elif other == "vec": rhs = f"[{', '.join(self.flit() for _ in range(cols))}]"
+            else: rhs = m
+            op = r.choice([".+", ".-", ".*", "./"])
+            if op == "./": rhs = f"(abs.({rhs}) .+ 1.0)"
+            v = self.fresh("bc")
+            self.emit(f"{v} = {m} .* {self.flit()} {op} {rhs}")
+            self.emit(f"print({v}, {v}.shape)")
+            self.mats.append((v, rows, cols))
+        elif c < 0.55:
+            self.emit(f"{m}[abs({self.iexpr(2)}) % {rows}, abs({self.iexpr(2)}) % {cols}] = {self.fexpr(2)}")
+        elif c < 0.62:
+            v = self.fresh("cp")
+            self.emit(f"{v} = {m}")
+            self.emit(f"{v}[0, 0] = {self.fexpr(2)}")
+            self.emit(f"print({m}, {v})")
+        elif c < 0.7:
+            self.emit(f"print({m} * transpose({m}), transpose({m}).shape)")
+        elif c < 0.78:
+            self.emit(f"print(sum({m}), fsq.({m}), sqrt.(abs.({m})) .> 1.0)")
+        elif c < 0.86 and self.fvs:
+            v, n = r.choice(self.fvs)
+            w = [x for x, k in self.fvs if k == n]
+            other = r.choice(w)
+            self.emit(f"{v} = {v} .* {self.fexpr(2)} .+ fsq.({other})")
+            self.emit(f"print({v}, {v} .>= {other}, min({v} .* 0.0 .+ 1.0, {other}.len()))" if False else f"print({v}, {v} .>= {other})")
+        elif c < 0.93:
+            v = self.fresh("cb")
+            a, b, cc = r.randint(1, 3), r.randint(1, 3), r.randint(1, 3)
+            self.emit(f"{v} = zeros({a}, {b}, {cc})")
+            self.emit(f"{v}[abs({self.iexpr(2)}) % {a}, abs({self.iexpr(2)}) % {b}, abs({self.iexpr(2)}) % {cc}] = {self.fexpr(2)}")
+            self.emit(f"print({v} .+ reshape([{', '.join(self.flit() for _ in range(a))}], {a}, 1, 1), sum({v}))")
+        else:
+            v = self.fresh("im")
+            self.emit(f"{v} = [{self.iexpr(3)} {r.randint(-5, 9)}; {r.randint(0, 9)} {r.randint(-3, 3)}]")
+            self.emit(f"print({v} .* {self.iexpr(3)} .+ {r.randint(-9, 9)}, {v} * {v})")
+
     def program(self):
         r = self.r
         out = ["struct P:", "    a: int", "    b: f64", "",
@@ -361,6 +584,25 @@ class Gen:
                "fi = (x: f64) -> int:",
                "    if x == x and abs(x) < 1000000000000000.0: return int(x)",
                "    0", ""]
+        if self.use_new:
+            out += ["struct UA:", "    v: int", "",
+                    "type U = int | str | UA", "",
+                    "ushow = (u: U) -> int:",
+                    "    match u:",
+                    "        int: u * 2",
+                    "        str: len(u)",
+                    "        UA: u.v + 1", "",
+                    "# narrowing after early returns",
+                    "unarrow = (u: U) -> int:",
+                    "    if u is str: return len(u) * 10",
+                    "    if u is UA: return u.v - 1",
+                    "    u + 1000", "",
+                    "mkc = (start: int) -> (int) -> int:",
+                    "    n = start",
+                    "    (k: int) -> int:",
+                    "        n += k",
+                    "        n", "",
+                    "fsq = (x: f64) -> f64: x * 0.5 + 1.0", ""]
         # helper functions first
         for fi in range(r.randint(1, 4)):
             name = f"h{fi}"
@@ -370,6 +612,7 @@ class Gen:
             self.ints, self.floats, self.arrays = list(params), [], []
             self.strs, self.structs, self.parrs, self.closures, self.maps = [], [], [], [], []
             self.vecs, self.varrs = [], []
+            self.unions, self.soas, self.mats, self.fvs = [], [], [], []
             self.ro = set(params)
             self.depth = 1
             self.emit("macc: int[]")
@@ -385,6 +628,7 @@ class Gen:
         self.ints, self.floats, self.arrays = [], [], []
         self.strs, self.structs, self.parrs, self.closures, self.maps = [], [], [], [], []
         self.vecs, self.varrs = [], []
+        self.unions, self.soas, self.mats, self.fvs = [], [], [], []
         self.depth = 1
         self.emit("macc: int[]")
         for _ in range(r.randint(10, 40)): self.stmt()
@@ -435,7 +679,7 @@ def check(seed, wasm=True, keep=False):
     # programs printing megabytes can time out on the slower builds: inconclusive, not a failure
     if len(outs.get("debug", "")) > 1000000 and any(v.endswith("timeout") for v in vals):
         vals = [v for v in vals if not v.endswith("timeout")]
-    ok = all(v == vals[0] for v in vals) and not vals[0].startswith("COMPILE ERROR")
+    ok = all(v == vals[0] for v in vals) and not vals[0].startswith("COMPILE ERROR") and "SOA MISMATCH" not in vals[0]
     if not ok:
         os.rename(path, os.path.join(OUT, f"fail_{seed}.jot"))
         print(f"MISMATCH seed {seed}:")

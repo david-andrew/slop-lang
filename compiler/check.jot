@@ -1228,7 +1228,7 @@ compound_op = (op: int) -> int:
 narrowed_var = (l: int) -> int:
     if int(locals[l].flags) & LF_ALIAS == 0: return 0
     e = int(locals[l].alias)
-    if nodes[e].kind != .narrow and nodes[e].kind != .unwrap: return 0
+    if nodes[e].kind != .narrow and nodes[e].kind != .unwrap and (nodes[e].kind != .conv or nodes[e].aux != i32(int(CV.union_))): return 0
     a = int(nodes[e].a)
     if nodes[a].kind != .ident or nodes[a].aux != i32(int(SK.local)): return 0
     int(nodes[a].sym)
@@ -1245,7 +1245,11 @@ unnarrow_assign = (s: int):
     rt = prune(check_expr(int(nodes[s].b), 0))
     nodes[s].b = i32(last_checked)
     add_flag(int(nodes[s].b), NF_CHECKED)
-    if not is_union(rt) and types[rt].kind != .opt and can_coerce(int(nodes[s].b), rt, int(locals[l].type)): return
+    # (a member assigned to a variable narrowed to that member is stored in place; a variable
+    # narrowed to several members is always assigned as a whole)
+    al = int(locals[l].alias)
+    in_place = nodes[al].kind != .conv
+    if in_place and not is_union(rt) and types[rt].kind != .opt and can_coerce(int(nodes[s].b), rt, int(locals[l].type)): return
     locals[l].flags = i32(int(locals[l].flags) | LF_UNNARROWED)
     nm = int(nodes[lhs].name)
     push_scope_sym(nm, new_sym(nm, .local, u, 0))
@@ -1311,13 +1315,23 @@ check_assign = (s: int) -> int:
             check_expr(call, 0)
             nodes[es].a = i32(last_checked)
             return es
+    # (assigning a narrowed field or global assigns the whole of it)
+    plain = op == int(Tok.assign) and nodes[lhs].kind != .ident or op == int(Tok.assign) and path_narrows > 0
+    if plain: no_path_narrow = true
     lt = check_expr(lhs, 0)
+    no_path_narrow = false
     lhs = last_checked
     nodes[s].a = i32(lhs)
     check_place(lhs, false)
     if op == int(Tok.assign):
-        check_expr(int(nodes[s].b), lt)
+        rt = prune(check_expr(int(nodes[s].b), lt))
         nodes[s].b = i32(coerce(last_checked, lt))
+        if path_narrows > 0 and nodes[lhs].kind != .ident or path_narrows > 0 and nodes[lhs].aux == i32(int(SK.global)):
+            key = path_key(lhs)
+            path_forget(key)
+            # x.f = 5 where x.f is int | str: x.f is an int from here on
+            if is_union(lt) and union_index(lt, rt) >= 0 and len(key) > 0: narrow_expr(copy_path(lhs), [rt], nodes[s].pos, intern(key))
+        else if path_narrows > 0 and nodes[lhs].kind == .ident: path_forget(path_key(lhs))
         return s
     l = prune(lt)
     if types[l].kind == .str_ and op == int(Tok.pluseq):

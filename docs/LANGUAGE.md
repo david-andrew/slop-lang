@@ -312,8 +312,17 @@ if r is ParseError: return r
 print(r + 1)                            # r is an int
 ```
 
-Assigning another member to a narrowed variable makes it the whole union again. A union
-value prints as the value it holds. `T | none` is `T?`.
+Ruling a member out narrows to the others: after `if s is Circle: return` in a function taking
+`Circle | Rect | Tri`, `s` is a `Rect | Tri`, and in an `if`/`else if`/`else` chain each branch
+knows what the earlier tests excluded. A `match` arm listing several types (`int, str: ...`)
+sees their union, and `_:` the members no earlier arm matched. Fields and globals narrow the same
+way as variables (`if self.target is Enemy: self.target.hp -= 1`); assigning a member to a field
+narrows it to that member, and passing the value on as a `mut` argument forgets what was known.
+Assigning another member to a narrowed variable makes it the whole union again. A union fits
+any union that has all of its members (`int | str` passes for `int | str | f64`), and a generic
+parameter inside a union stands for the members the union does not name: `value_or[T] = (r: T |
+Err, d: T) -> T` called with an `int | str | Err` has `T = int | str`. A union value prints as
+the value it holds. `T | none` is `T?`.
 
 **Optionals:**
 

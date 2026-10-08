@@ -1780,6 +1780,29 @@ gen_conv = (e: int) -> Val:
         d = vreg(vt_of(to))
         emit(.f2f, vt_of(to), d, v, 0, 0, 0)
         return V(d, false)
+    if cv == .union_:
+        # the same value in a union with other members: the tag maps to the member's new
+        # index and the payload moves along (a member the new union lacks cannot be here)
+        layout(from)
+        layout(to)
+        s = new_temp(to)
+        d = e_slot(s)
+        e_zero(d, tsize(to))
+        src = gen_owned(a).v
+        tag = e_load(VI, src, 0, 4)
+        fsi = int(types[from].st)
+        tsi = int(types[to].st)
+        loop i in 0.. and m in union_members(from):
+            iff(e_bin(.eq, VI, tag, e_iconst(i)))
+            j = union_index(to, m)
+            if j < 0: e_call_nr(rt("__panic_narrow"), [e_daddr(loc_data(nodes[e].pos))], -1)
+            else:
+                e_store(d, 0, e_iconst(j), 4)
+                fo = int(fields[int(variants[int(structs[fsi].variants) + i].fields)].offset)
+                to_off = int(fields[int(variants[int(structs[tsi].variants) + j].fields)].offset)
+                if tsize(m) > 0: e_copy(e_addi(d, to_off), e_addi(src, fo), tsize(m))
+            endc()
+        return Val(d, true, s)
     if cv == .opt:
         inner = int(types[to].elem)
         s = new_temp(to)
