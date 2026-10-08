@@ -299,8 +299,8 @@ fn draw():
 Native games use the system's OpenGL ES driver when there is one. Without it (or with
 `JOT_SOFTWARE=1`) the same program draws with the built-in software renderer, which runs your
 shader functions (see `make_shader`) on the CPU; `soft_rendering()` tells the program which
-is in use, e.g. to draw fewer particles. Frames are rendered at half resolution and paced to
-60 per second.
+is in use, e.g. to draw fewer particles. Frames are rendered at half resolution
+(`JOT_SOFT_SCALE=1` for full resolution) and paced to 60 per second.
 
 Environment variables for testing and tuning: `JOT_SCREENSHOT=out.png` (with `JOT_FRAMES=n`)
 saves frame n and exits — the clock then advances exactly 1/60 s per frame, so the image is

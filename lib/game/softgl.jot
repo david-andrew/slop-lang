@@ -126,6 +126,10 @@ __sp_flat: [str] = [""]
 
 # the window's framebuffer
 fn __sw_init_window(w: int, h: int):
+    if __s_fb_color[0] == 0:
+        # JOT_SOFT_SCALE=1 renders at full resolution (sharper, about 4x the work)
+        if v := env("JOT_SOFT_SCALE"): __soft_scale = clamp(to_float(v) ?? 0.5, 0.1, 1.0)
+        __s_fb_scale[0] = __soft_scale
     iw := max(int(float(w) * __soft_scale), 1)
     ih := max(int(float(h) * __soft_scale), 1)
     if __s_fb_color[0] == 0:
