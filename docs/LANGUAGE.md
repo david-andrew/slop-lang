@@ -386,11 +386,24 @@ cube[1, 2, 3] = 1.0
 layers = cube .* reshape([1.0, 2.0, 3.0, 4.0], 4, 1, 1)   # broadcasting along the first axis
 ```
 
+Ranges among the indexes select parts: `m[i, ..]` is row `i`, `m[.., j]` column `j`,
+`m[1..2, 3..]` a block (ranges include both ends; `a..` runs to the end of the axis, and indexes
+left out at the end mean whole axes). A part is an array of its own; assigning to one writes into
+the array: `m[.., 0] = xs`, `m[0, ..] = 0.0`. `sum(m, axis)`, `mean`, `min` and `max` reduce along
+one axis (`sum(m, 0)` adds up the rows: one sum per column).
+
+```jot
+img = zeros(480, 640, 3)
+img[.., .., 0] = 1.0             # the red channel
+top = img[0..239, ..]
+col_sums = sum(m, 0)
+```
+
 `zeros`, `ones`, `rand` (uniform in [0, 1)) and `randn` (normal) take 1 to 4 dimensions (with
 one, they make a plain `f64[]`); also `eye(n)`, `linspace(a, b, n)`, `reshape(xs, dims...)` or
 `reshape(xs, shape)`, `ndarray(data, shape)`, `transpose` (reverses the axes), `row(m, i)`,
-`col(m, j)`, `flatten`, `size`, `ndim`, `len` (the first dimension), `sum`, `mean`, `dot`,
-`norm`. On 2-D arrays `+ -` work elementwise on equal shapes and `*` is the matrix product.
+`col(m, j)`, `flatten`, `size`, `ndim`, `len` (the first dimension), `sum`, `mean`, `min`,
+`max`, `dot`, `norm`. On 2-D arrays `+ -` work elementwise on equal shapes and `*` is the matrix product.
 Indexing with the wrong number of indexes, and shapes that do not broadcast, are errors when
 the program runs, with the shapes in the message.
 

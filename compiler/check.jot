@@ -1282,6 +1282,16 @@ check_assign = (s: int) -> int:
         bt = prune(check_expr(int(nodes[lhs].a), 0))
         nodes[lhs].a = i32(last_checked)
         if is_soa(bt) and nodes[lhs].b != 0: return soa_assign(s)
+        if types[bt].kind == .struct_ and is_part_index(lhs):
+            # m[.., j] = xs: writes into a part of m
+            if op != int(Tok.assign): fatal(nodes[s].pos, "compound assignment to a part of an array (write m[...] = m[...] .+ x)")
+            recv = int(nodes[lhs].a)
+            add_flag(recv, NF_MUT)
+            call = bc_call("__nd_slice_set", [recv, part_spec(lhs), int(nodes[s].b)], nodes[s].pos)
+            es = mk(.exprstmt, nodes[s].pos)
+            check_expr(call, 0)
+            nodes[es].a = i32(last_checked)
+            return es
         if types[bt].kind == .struct_:
             call = mk(.call, nodes[s].pos)
             callee = mk(.ident, nodes[s].pos)

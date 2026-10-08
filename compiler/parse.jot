@@ -511,6 +511,15 @@ index_end = (pos: int) -> int:
     nodes[b].b = i32(one)
     b
 
+# one of several indexes: an expression, `..` (the whole axis) or `..b`
+parse_index_item = () -> int:
+    if pk() != .dotdot: return parse_expr()
+    r = mk(.range, cur_pos())
+    advance()
+    add_flag(r, NF_INCLUSIVE)
+    if pk() != .comma and pk() != .rbrack: nodes[r].b = i32(parse_expr())
+    r
+
 # a range's closing bracket: ] keeps the end, ) excludes it; lo_open: the range began with (
 range_close = (r: int, pos: int, lo_closed: bool):
     clear_flag(r, NF_BARE)
@@ -638,21 +647,28 @@ parse_postfix = (e0: int) -> int:
             saved_m = p_matrix
             p_matrix = 0
             p_index.push(e)
-            if pk() == .dotdot:
+            if pk() == .dotdot and pkn(1) != .comma:
                 # xs[..b] / xs[..b)
                 advance()
                 r = mk(.range, pos)
                 add_flag(r, NF_INCLUSIVE)
-                if pk() != .rbrack and pk() != .rparen: nodes[r].b = i32(parse_expr())
+                if pk() != .rbrack and pk() != .rparen and pk() != .comma: nodes[r].b = i32(parse_expr())
                 else: clear_flag(r, NF_INCLUSIVE)
-                if pk() == .rparen: clear_flag(r, NF_INCLUSIVE)
-                nodes[ix].b = i32(r)
-                advance()
+                if pk() == .comma:
+                    # m[..b, j]
+                    targs = [r]
+                    loop accept(.comma): targs.push(parse_index_item())
+                    set_list(ix, targs)
+                    expect(.rbrack, "")
+                else:
+                    if pk() == .rparen: clear_flag(r, NF_INCLUSIVE)
+                    nodes[ix].b = i32(r)
+                    advance()
             else:
-                b = parse_expr()
+                b = parse_index_item()
                 if pk() == .comma:
                     targs = [b]
-                    loop accept(.comma): targs.push(parse_expr())
+                    loop accept(.comma): targs.push(parse_index_item())
                     set_list(ix, targs)
                     expect(.rbrack, "")
                 else if nodes[b].kind == .range and has_flag(b, NF_BARE):

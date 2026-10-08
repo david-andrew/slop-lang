@@ -218,6 +218,9 @@ How many dimensions it has is part of the value, as in numpy (T[,,] is the same 
 commas are only for the reader). Write a 2-D one as [1 2; 3 4] (rows separated by ';' or line  
 breaks), stack arrays with [a; b], or make one with zeros(2, 3, 4), ones, eye, rand, reshape.  
 m[i, j] (with as many indexes as dimensions) reads and writes an element; m.shape is its shape.  
+Ranges select parts: m[i, ..] is row i, m[.., j] column j, m[1..2, 0..] a block (ranges include  
+both ends; missing indexes at the end mean whole axes). A part is an array of its own; assigning  
+to one (m[.., 0] = xs, m[0, ..] = 0.0) writes into m.  
   
 The dotted operators work element by element on arrays of any shape, and broadcast like numpy  
 (a dimension of length 1, or a missing leading one, stretches to fit): a .* b, m .+ 1.0, v .^ 2,  
@@ -269,8 +272,14 @@ transpose[T] = (m: NDArray[T]) -> NDArray[T]    # the axes in reverse order (row
 row[T] = (m: NDArray[T], i: int) -> T[]
 col[T] = (m: NDArray[T], j: int) -> T[]
 sum[T] = (m: NDArray[T]) -> T
+min[T] = (m: NDArray[T]) -> T
+max[T] = (m: NDArray[T]) -> T
 mean = (xs: f64[]) -> f64
 mean = (m: NDArray[f64]) -> f64
+sum[T] = (m: NDArray[T], axis: int) -> NDArray[T]    # along one axis: the array without that axis, each element combining the ones along it (sum(m, 0) adds up the rows of a 2-D array: one sum per column)
+min[T] = (m: NDArray[T], axis: int) -> NDArray[T]
+max[T] = (m: NDArray[T], axis: int) -> NDArray[T]
+mean = (m: NDArray[f64], axis: int) -> NDArray[f64]
 dot = (a: f64[], b: f64[]) -> f64
 norm = (a: f64[]) -> f64
 (*)[T] = (a: NDArray[T], b: NDArray[T]) -> NDArray[T]    # matrix product

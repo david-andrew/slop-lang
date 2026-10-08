@@ -543,8 +543,16 @@ class Gen:
             self.emit(f"print({m}, {v})")
         elif c < 0.7:
             self.emit(f"print({m} * transpose({m}), transpose({m}).shape)")
-        elif c < 0.78:
+        elif c < 0.74:
             self.emit(f"print(sum({m}), fsq.({m}), sqrt.(abs.({m})) .> 1.0)")
+        elif c < 0.78:
+            # parts and reductions along an axis
+            i = f"abs({self.iexpr(3)}) % {rows}"
+            j = f"abs({self.iexpr(3)}) % {cols}"
+            lo = r.randint(0, rows - 1)
+            self.emit(f"print({m}[{i}, ..], {m}[.., {j}], {m}[{lo}..{r.randint(lo, rows - 1)}, {r.randint(0, cols - 1)}..], sum({m}, {r.randint(0, 1)}), max({m}, {r.randint(0, 1)}))")
+            if r.random() < 0.5: self.emit(f"{m}[.., {j}] = {self.fexpr(2)}")
+            else: self.emit(f"{m}[{i}, ..] = [{', '.join(self.flit() for _ in range(cols))}]")
         elif c < 0.86 and self.fvs:
             v, n = r.choice(self.fvs)
             w = [x for x, k in self.fvs if k == n]

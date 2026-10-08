@@ -2191,6 +2191,14 @@ check_expr = (n: int, expected: int) -> int:
         b = int(nodes[n].b)
         if bk == .typeval: t = mk_typeval(expr_as_type(n))
         else if b != 0 and nodes[b].kind != .range and is_soa(bt): return check_soa_index(n, expected)
+        else if bk == .struct_ and is_part_index(n):
+            # m[i, ..], m[1..2, 0..]: a part of an n-dimensional array
+            call = bc_call("__nd_slice", [int(nodes[n].a), part_spec(n)], nodes[n].pos)
+            add_flag(int(nodes[n].a), NF_CHECKED)
+            nodes[n] = nodes[call]
+            t = check_expr(n, expected)
+            last_checked = n
+            return t
         else if b != 0 and nodes[b].kind == .range:
             if nodes[b].a != 0: check_to(int(nodes[b].a), T_INT)
             if nodes[b].b != 0: check_to(int(nodes[b].b), T_INT)
@@ -2830,6 +2838,43 @@ check_matrix = (n: int, expected: int) -> int:
 # that are not themselves dotted operations are evaluated once, and the operation applies to their
 # elements, broadcast like numpy (a dimension of length 1, or a missing leading one, stretches).
 bc_count = 0
+
+# m[...] with a range among its indexes (or a single range on an n-dimensional array)
+is_part_index = (n: int) -> bool:
+    b = int(nodes[n].b)
+    if b != 0: return nodes[b].kind == .range
+    loop i in [0..nkids(n)):
+        if nodes[kid(n, i)].kind == .range: return true
+    false
+
+# the indexes of m[...] as (lo, hi, kind) triples for __nd_slice (see lib/std/nd.jot)
+part_spec = (n: int) -> int:
+    pos = nodes[n].pos
+    ixs = kids(n)
+    if nodes[n].b != 0: ixs = [int(nodes[n].b)]
+    elems: int[]
+    loop x in ixs:
+        if nodes[x].kind != .range:
+            elems.push(x)
+            elems.push(bc_int(0, pos))
+            elems.push(bc_int(0, pos))
+            continue
+        if has_flag(x, NF_STEP): fatal(nodes[x].pos, "stepped ranges cannot select parts of arrays")
+        lo = int(nodes[x].a)
+        if lo == 0: lo = bc_int(0, pos)
+        elems.push(lo)
+        hi = int(nodes[x].b)
+        if hi == 0:
+            elems.push(bc_int(0, pos))
+            elems.push(bc_int(2, pos))
+        else:
+            # (m[a..b) leaves out b)
+            if not has_flag(x, NF_INCLUSIVE): hi = bc_bin(.minus, hi, bc_int(1, pos), pos)
+            elems.push(hi)
+            elems.push(bc_int(1, pos))
+    arr = mk(.array, pos)
+    set_list(arr, elems)
+    arr
 
 bc_ident = (name: str, pos: int) -> int:
     n = mk(.ident, pos)

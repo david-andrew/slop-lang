@@ -5,6 +5,9 @@
 # commas are only for the reader). Write a 2-D one as [1 2; 3 4] (rows separated by ';' or line
 # breaks), stack arrays with [a; b], or make one with zeros(2, 3, 4), ones, eye, rand, reshape.
 # m[i, j] (with as many indexes as dimensions) reads and writes an element; m.shape is its shape.
+# Ranges select parts: m[i, ..] is row i, m[.., j] column j, m[1..2, 0..] a block (ranges include
+# both ends; missing indexes at the end mean whole axes). A part is an array of its own; assigning
+# to one (m[.., 0] = xs, m[0, ..] = 0.0) writes into m.
 #
 # The dotted operators work element by element on arrays of any shape, and broadcast like numpy
 # (a dimension of length 1, or a missing leading one, stretches to fit): a .* b, m .+ 1.0, v .^ 2,
@@ -83,6 +86,97 @@ __offset4 = (s: int[], i: int, j: int, k: int, l: int) -> int:
 ([]=)[T] = (m: mut NDArray[T], i: int, j: int, v: T): m.data[__offset2(m.shape, i, j)] = v
 ([]=)[T] = (m: mut NDArray[T], i: int, j: int, k: int, v: T): m.data[__offset3(m.shape, i, j, k)] = v
 ([]=)[T] = (m: mut NDArray[T], i: int, j: int, k: int, l: int, v: T): m.data[__offset4(m.shape, i, j, k, l)] = v
+
+# ---------------- parts (slices) ----------------
+# m[a, b..c, ..] becomes __nd_slice(m, spec): for each index, (lo, hi, kind) with kind 0 a single
+# index (the axis goes away), 1 the range lo..hi, 2 the range from lo to the end of the axis
+
+# the first and last index along each axis, and which axes the result keeps
+__nd_part = (shape: int[], spec: int[]) -> (int[], int[], bool[]):
+    r = shape.len()
+    n = spec.len() / 3
+    if n > r: panic("{n} indexes for an array of shape {__shape_str(shape)}")
+    lo = fill(0, r)
+    hi = fill(0, r)
+    keep = fill(true, r)
+    loop d in [0..r):
+        if d >= n:
+            hi[d] = shape[d] - 1
+            continue
+        a = spec[3 * d]
+        b = spec[3 * d + 1]
+        k = spec[3 * d + 2]
+        if k == 0:
+            if a < 0 or a >= shape[d]: panic("index {a} out of bounds for axis {d} of an array of shape {__shape_str(shape)}")
+            b = a
+            keep[d] = false
+        else:
+            if k == 2: b = shape[d] - 1
+            if a < 0 or b >= shape[d] or a > b + 1: panic("range {a}..{b} out of bounds for axis {d} of an array of shape {__shape_str(shape)}")
+        lo[d] = a
+        hi[d] = b
+    (lo, hi, keep)
+
+# where each run of the part along the last axis starts in m, in order (each is
+# hi - lo + 1 elements long on the last axis)
+__nd_runs = (shape: int[], lo: int[], hi: int[]) -> int[]:
+    out: int[]
+    r = shape.len()
+    if r == 0: return out
+    loop d in [0..r):
+        if hi[d] < lo[d]: return out
+    ix = lo
+    loop:
+        o = 0
+        loop d in [0..r): o = o * shape[d] + ix[d]
+        out.push(o)
+        d = r - 2
+        loop d >= 0:
+            ix[d] += 1
+            if ix[d] <= hi[d]: break
+            ix[d] = lo[d]
+            d -= 1
+        if d < 0: break
+    out
+
+__nd_slice[T] = (m: NDArray[T], spec: int[]) -> NDArray[T]:
+    lo, hi, keep = __nd_part(m.shape, spec)
+    shape: int[]
+    n = 1
+    loop d in 0.. and k in keep:
+        n *= max(hi[d] - lo[d] + 1, 0)
+        if k: shape.push(hi[d] - lo[d] + 1)
+    out: T[]
+    out.reserve(n)
+    if n > 0:
+        run = hi[hi.len() - 1] - lo[lo.len() - 1] + 1
+        loop o in __nd_runs(m.shape, lo, hi):
+            loop i in [o..o + run): out.push(m.data[i])
+    NDArray(out, shape)
+
+# m[part] = x: every element of the part
+__nd_slice_set[T] = (m: mut NDArray[T], spec: int[], x: T):
+    lo, hi, _ = __nd_part(m.shape, spec)
+    if lo.len() == 0: return
+    run = hi[hi.len() - 1] - lo[lo.len() - 1] + 1
+    loop o in __nd_runs(m.shape, lo, hi):
+        loop i in [o..o + run): m.data[i] = x
+
+# m[part] = xs: the part's elements in order (as many as it has)
+__nd_slice_set[T] = (m: mut NDArray[T], spec: int[], xs: T[]):
+    lo, hi, _ = __nd_part(m.shape, spec)
+    n = 1
+    loop d in [0..lo.len()): n *= max(hi[d] - lo[d] + 1, 0)
+    if xs.len() != n: panic("assigning {xs.len()} elements to a part of {n}")
+    if n == 0: return
+    run = hi[hi.len() - 1] - lo[lo.len() - 1] + 1
+    k = 0
+    loop o in __nd_runs(m.shape, lo, hi):
+        loop i in [o..o + run):
+            m.data[i] = xs[k]
+            k += 1
+
+__nd_slice_set[T] = (m: mut NDArray[T], spec: int[], xs: NDArray[T]): __nd_slice_set(m, spec, xs.data)
 
 # ---------------- array literals ----------------
 # [1 2; 3 4]: elements row by row
@@ -274,8 +368,45 @@ col[T] = (m: NDArray[T], j: int) -> T[]:
 
 # ---------------- reductions ----------------
 sum[T] = (m: NDArray[T]) -> T: sum(m.data)
+min[T] = (m: NDArray[T]) -> T: min(m.data)
+max[T] = (m: NDArray[T]) -> T: max(m.data)
 mean = (xs: f64[]) -> f64: sum(xs) / f64(xs.len())
 mean = (m: NDArray[f64]) -> f64: mean(m.data)
+
+# along one axis: the array without that axis, each element combining the ones along it
+# (sum(m, 0) adds up the rows of a 2-D array: one sum per column)
+sum[T] = (m: NDArray[T], axis: int) -> NDArray[T]: __nd_reduce(m, axis, 0)
+min[T] = (m: NDArray[T], axis: int) -> NDArray[T]: __nd_reduce(m, axis, 1)
+max[T] = (m: NDArray[T], axis: int) -> NDArray[T]: __nd_reduce(m, axis, 2)
+mean = (m: NDArray[f64], axis: int) -> NDArray[f64]:
+    s = __nd_reduce(m, axis, 0)
+    s ./ f64(m.shape[axis])
+
+# op: 0 sum, 1 min, 2 max
+__nd_reduce[T] = (m: NDArray[T], axis: int, op: int) -> NDArray[T]:
+    r = m.shape.len()
+    if axis < 0 or axis >= r: panic("axis {axis} of an array of shape {__shape_str(m.shape)}")
+    n = m.shape[axis]
+    if n == 0 and op != 0: panic("min/max along an empty axis")
+    outer = __nd_size(m.shape[..axis))
+    inner = __nd_size(m.shape[axis + 1..])
+    out: T[]
+    if op == 0: out = fill(T(0), outer * inner)
+    else:
+        out.reserve(outer * inner)
+        loop o in [0..outer):
+            loop i in [0..inner): out.push(m.data[o * n * inner + i])
+    loop o in [0..outer):
+        loop k in [0..n):
+            src = (o * n + k) * inner
+            dst = o * inner
+            if op == 0:
+                loop i in [0..inner): out[dst + i] += m.data[src + i]
+            else if op == 1:
+                loop i in [0..inner): out[dst + i] = min(out[dst + i], m.data[src + i])
+            else:
+                loop i in [0..inner): out[dst + i] = max(out[dst + i], m.data[src + i])
+    NDArray(out, m.shape[..axis) + m.shape[axis + 1..])
 
 dot = (a: f64[], b: f64[]) -> f64:
     if a.len() != b.len(): panic("dot: lengths {a.len()} and {b.len()} differ")
