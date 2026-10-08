@@ -19,6 +19,7 @@ for sc in scenes:
 env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
 env.update(JOT_LIB=os.path.join(root, "lib"), JOT_SOFTWARE="1", JOT_FRAMES="60")
 LIMIT = 1.0           # mean absolute difference allowed (0..255), for other CPUs' rounding
+GPU_LIMIT = 2.0       # against a GPU's frame: the software renderer works at half resolution
 failed = 0
 for name, src in games.items():
     exe = f"/tmp/jot-render/{name}"
@@ -55,7 +56,8 @@ for name, src in games.items():
         failed += 1
         continue
     d = sum(abs(a - b) for a, b in zip(got, want)) / len(want)
-    print(f"{'ok  ' if d <= LIMIT else 'FAIL'} {name}: mean abs difference {d:.3f}")
-    failed += d > LIMIT
+    limit = GPU_LIMIT if name in scenes else LIMIT
+    print(f"{'ok  ' if d <= limit else 'FAIL'} {name}: mean abs difference {d:.3f}")
+    failed += d > limit
 print(f"{len(games) - failed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
