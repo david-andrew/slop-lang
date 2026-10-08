@@ -30,3 +30,18 @@ for i in 0..w.len():
     w[i] += 1
     if i == 0: w = [9, 9, 9, 9, 9]
 print(w)
+# mut parameters: only when the function calls nothing that could resize the caller's array
+g: [int] = [1, 2, 3, 4]
+fn bump(xs: mut [int]):
+    n := xs.len()
+    for i in 0..n:
+        for j in i + 1..n: xs[j] += xs[i]
+fn shrink_global(): g.pop()
+fn bump2(xs: mut [int]):
+    for i in 0..xs.len():
+        if i == 0: shrink_global()
+        if i < xs.len(): xs[i] += 1
+bump(mut g)
+print(g)
+bump2(mut g)
+print(g)

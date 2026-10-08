@@ -2320,6 +2320,61 @@ fn gen_vardecl(s: int):
 # bounds: the length is fixed, and an empty (null) A never enters the loop.
 len_of_local: {int: int}        # local n -> local A when n := A.len() and neither ever changes
 safe_index: [(int, int)]        # (array local, loop variable local) pairs proven in bounds
+nonneg_locals: [int]            # loop variables of ranges that start at a value >= 0
+cur_closed := -1                # 1: the function calls nothing and uses no globals (-1: unknown)
+
+# a mut parameter may be the caller's global; it can only be resized behind this function's
+# back by code it calls or by naming that global, so the function must do neither
+fn fn_is_closed() -> bool:
+    if cur_closed < 0:
+        seen := [false; nodes.len()]
+        cur_closed = 0
+        if fns[cur_fn].body != 0 and closed_scan(int(fns[cur_fn].body), seen): cur_closed = 1
+    cur_closed == 1
+
+fn closed_scan(n: int, seen: mut [bool]) -> bool:
+    if n <= 0 or n >= seen.len() or seen[n]: return true
+    seen[n] = true
+    k := nodes[n].kind
+    if k == .call and not harmless_call(n): return false
+    if k == .ident and nodes[n].aux == i32(int(SK.global)): return false
+    # (a `for` keeps local variable numbers in c and d)
+    fs := [int(nodes[n].a), int(nodes[n].b), int(nodes[n].c), int(nodes[n].d)]
+    if k == .for_: fs = [int(nodes[n].a), int(nodes[n].b)]
+    for c in fs:
+        if not closed_scan(c, seen): return false
+    for i in 0..nkids(n):
+        if not closed_scan(kid(n, i), seen): return false
+    for i in 0..nkids2(n):
+        if not closed_scan(kid2(n, i), seen): return false
+    true
+
+# struct construction, or a call into the core library that is given no functions (the core
+# library cannot reach the program's globals otherwise)
+fn harmless_call(n: int) -> bool:
+    aux := int(nodes[n].aux)
+    if aux == 2: return true
+    if aux != 0: return false
+    f := int(nodes[n].sym)
+    if f <= 0 or f >= fns.len() or fns[f].decl == 0: return false
+    fi := pos_file(int(nodes[int(fns[f].decl)].pos))
+    if fi < 0 or fi >= files.len() or find(files[fi].path, "/lib/core/") < 0: return false
+    for i in 0..nkids(n):
+        tk := types[prune(ntype(kid(n, i)))].kind
+        if tk == .fn_ or tk == .cfn: return false
+    true
+
+# e is an integer expression that is never negative
+fn is_nonneg(e: int) -> bool:
+    if e == 0: return false
+    k := nodes[e].kind
+    if k == .int_lit: return nodes[e].ival >= 0
+    if k == .ident and nodes[e].aux == i32(int(SK.local)): return nonneg_locals.contains(int(nodes[e].sym))
+    if k == .intrinsic and (nodes[e].aux as IN) == .len: return true
+    if k == .binary:
+        op := nodes[e].op as Tok
+        if op == .plus or op == .star: return is_nonneg(int(nodes[e].a)) and is_nonneg(int(nodes[e].b))
+    false
 
 # A, if e is A.len() / len(A) for an array local A that is never modified, else -1
 fn fixed_array_len(e: int) -> int:
@@ -2330,13 +2385,14 @@ fn fixed_array_len(e: int) -> int:
     l := int(nodes[a].sym)
     # element writes keep the length; writing the variable itself (or a mut parameter, which
     # could be the caller's global) may not
-    if int(locals[l].flags) & (LF_RESIZED | LF_ALIAS | LF_BYREF | LF_MUTPARAM) != 0: return -1
+    fl := int(locals[l].flags)
+    if fl & (LF_RESIZED | LF_ALIAS | LF_BYREF) != 0: return -1
+    if fl & LF_MUTPARAM != 0 and not fn_is_closed(): return -1
     l
 
 # the array local whose length bounds the range `it`, or -1
 fn range_bounds_array(it: int) -> int:
-    lo := int(nodes[it].a)
-    if lo == 0 or nodes[lo].kind != .int_lit or nodes[lo].ival < 0 or has_flag(it, NF_INCLUSIVE): return -1
+    if not is_nonneg(int(nodes[it].a)) or has_flag(it, NF_INCLUSIVE): return -1
     hi := int(nodes[it].b)
     a := fixed_array_len(hi)
     if a >= 0: return a
@@ -2382,8 +2438,12 @@ fn gen_for(s: int):
         stmt_end()
         sg := types[prune(lt)].sign
         safe_arr := -1
-        if aux == 0: safe_arr = range_bounds_array(int(nodes[s].a))
+        nonneg := false
+        if aux == 0:
+            safe_arr = range_bounds_array(int(nodes[s].a))
+            nonneg = is_nonneg(int(nodes[int(nodes[s].a)].a))
         if safe_arr >= 0: safe_index.push((safe_arr, l))
+        if nonneg: nonneg_locals.push(l)
         blk()
         brk := ctl
         lop()
@@ -2398,6 +2458,7 @@ fn gen_for(s: int):
         gen_loop_body(int(nodes[s].b))
         loops.pop()
         if safe_arr >= 0: safe_index.pop()
+        if nonneg: nonneg_locals.pop()
         endc()
         e_mov(ctr, e_addi(ctr, 1))
         br_to(top)
@@ -2661,6 +2722,7 @@ fn begin_fn(name: str, idx: int):
 fn lower_inst(lf: int, f: int):
     begin_fn(fns[f].sym, lf)
     cur_fn = f
+    cur_closed = -1
     cur_ret = int(fns[f].ret)
     ir.cabi = fns[f].cabi
     ir.export_name = fns[f].export_name

@@ -884,7 +884,9 @@ fn check_for(s: int):
             el := 0
             if is_mut:
                 if k == .str_: fatal(pos, "strings are immutable; 'for mut' needs an array")
+                cp_inner += 1                  # only the elements change, not the array's length
                 check_place(it, true)
+                cp_inner -= 1
                 el = new_local(elname, et, pos)
                 locals[el].flags = i32(int(locals[el].flags) | LF_ALIAS)
                 ix := mk(.index, pos)
