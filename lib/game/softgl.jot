@@ -542,7 +542,14 @@ fn __sw_raster(sv: *f32, stride: int, idx: *i32, ntri: int, shade: fn(int, int, 
     )
 
 # draw a mesh with a Jot shader (called by gpu.jot's draw / draw_instanced in software mode)
-fn __sw_draw_mesh(prog: int, vbo: int, stride: int, nverts: int, ibo: int, nidx: int, uni: *u8, ibuf: int, istride: int, ninst: int):
+__sw_warned_lines := false
+
+fn __sw_draw_mesh(prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo: int, nidx: int, uni: *u8, ibuf: int, istride: int, ninst: int):
+    if mode != GL_TRIANGLES and mode != GL_TRIANGLE_STRIP and mode != GL_TRIANGLE_FAN:
+        if not __sw_warned_lines:
+            __sw_warned_lines = true
+            eprint("note: the software renderer draws triangles only (lines and points are skipped)")
+        return
     if prog <= 0 or prog >= __sp_vs.len() or __sp_vs[prog] == null or nverts == 0: return
     nf := __sp_out[prog] / 4
     vargs := __sp_args[prog]
@@ -561,11 +568,13 @@ fn __sw_draw_mesh(prog: int, vbo: int, stride: int, nverts: int, ibo: int, nidx:
     if __s_buffers[vbo].len() < nverts * stride: return
     vb := data(__s_buffers[vbo])
     ib: *u32 = null
-    ntri := nverts / 3
+    count := nverts
     if nidx > 0:
         if __s_buffers[ibo].len() < nidx * 4: return
         ib = data(__s_buffers[ibo]) as *u32
-        ntri = nidx / 3
+        count = nidx
+    ntri := count / 3
+    if mode != GL_TRIANGLES: ntri = max(count - 2, 0)
     reps := max(ninst, 1)
     instb: *u8 = null
     if ninst > 0:
@@ -607,13 +616,26 @@ fn __sw_draw_mesh(prog: int, vbo: int, stride: int, nverts: int, ibo: int, nidx:
     for inst in 0..reps:
         base := inst * nverts
         for t in 0..ntri:
-            i0 := 3 * t
-            i1 := 3 * t + 1
-            i2 := 3 * t + 2
+            # positions in the index (or vertex) sequence
+            j0 := 3 * t
+            j1 := 3 * t + 1
+            j2 := 3 * t + 2
+            if mode == GL_TRIANGLE_STRIP:
+                # every other strip triangle is reversed to keep the winding
+                j0 = t + (t & 1)
+                j1 = t + 1 - (t & 1)
+                j2 = t + 2
+            else if mode == GL_TRIANGLE_FAN:
+                j0 = 0
+                j1 = t + 1
+                j2 = t + 2
+            i0 := j0
+            i1 := j1
+            i2 := j2
             if ib != null:
-                i0 = int(ib[3 * t])
-                i1 = int(ib[3 * t + 1])
-                i2 = int(ib[3 * t + 2])
+                i0 = int(ib[j0])
+                i1 = int(ib[j1])
+                i2 = int(ib[j2])
             if i0 >= nverts or i1 >= nverts or i2 >= nverts: continue
             i0 += base
             i1 += base

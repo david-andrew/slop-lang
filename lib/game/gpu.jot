@@ -140,7 +140,7 @@ fn draw[U](sh: Shader, m: Mesh, params: U):
     p := params
     when TARGET != "wasm":
         if __soft:
-            if m.mode == GL_TRIANGLES: __sw_draw_mesh(sh.prog, m.vbo, m.stride, m.count, m.ibo, m.index_count, (&p) as *u8, 0, 0, 0)
+            __sw_draw_mesh(sh.prog, m.mode, m.vbo, m.stride, m.count, m.ibo, m.index_count, (&p) as *u8, 0, 0, 0)
             return
     glUseProgram(u32(sh.prog))
     __bind_uniforms_sized(sh, (&p) as *u8)
@@ -163,7 +163,7 @@ fn draw_instanced[U, I](sh: Shader, m: mut Mesh, instances: [I], params: U):
     glBufferData(GL_ARRAY_BUFFER, instances.len() * size_of(I), data(instances) as *u8, GL_STREAM_DRAW)
     when TARGET != "wasm":
         if __soft:
-            if m.mode == GL_TRIANGLES: __sw_draw_mesh(sh.prog, m.vbo, m.stride, m.count, m.ibo, m.index_count, (&p) as *u8, m.instance_vbo, size_of(I), instances.len())
+            __sw_draw_mesh(sh.prog, m.mode, m.vbo, m.stride, m.count, m.ibo, m.index_count, (&p) as *u8, m.instance_vbo, size_of(I), instances.len())
             return
     glUseProgram(u32(sh.prog))
     __bind_uniforms(sh, (&p) as *u8)
