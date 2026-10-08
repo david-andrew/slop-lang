@@ -65,13 +65,14 @@ fn line_col(p: int) -> (int, int):
             if c == '\n': ls.push(i + 1)
         line_starts[f] = ls
     off := pos_off(p)
+    ls := data(line_starts[f])
     lo := 0
     hi := line_starts[f].len() - 1
     while lo < hi:
         mid := (lo + hi + 1) / 2
-        if line_starts[f][mid] <= off: lo = mid
+        if ls[mid] <= off: lo = mid
         else: hi = mid - 1
-    (lo + 1, off - line_starts[f][lo] + 1)
+    (lo + 1, off - ls[lo] + 1)
 
 fn pos_str(p: int) -> str:
     f := pos_file(p)

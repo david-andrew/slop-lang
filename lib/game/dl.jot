@@ -16,7 +16,36 @@ dl_error_fn: cfn() -> *u8 = null
 __dl_ctx: *u8 = null
 __dl_got: *u8 = null
 
-const __LDSO_PATH = "/lib64/ld-linux-x86-64.so.2"
+__ldso_path := "/lib64/ld-linux-x86-64.so.2"
+
+# the program interpreter named by an ELF executable ("" if none)
+fn __elf_interp(path: str) -> str:
+    fd := syscall(2, data(__zstr(path)), 0, 0)
+    if fd < 0: return ""
+    defer syscall(3, fd)
+    b := [u8(0); 4096]
+    n := syscall(0, fd, data(b), 4096)
+    if n < 64 or b[0] != 0x7F or b[1] != 'E' or b[4] != 2: return ""
+    phoff := __rd32(b, 32)
+    phent := __rd16(b, 54)
+    for i in 0..__rd16(b, 56):
+        p := phoff + i * phent
+        if p + 56 > n: return ""
+        if __rd32(b, p) == 3:                     # PT_INTERP
+            size := __rd32(b, p + 32)
+            if size < 2 or size > 1024: return ""
+            name := [u8(0); size]
+            if syscall(17, fd, data(name), size, __rd32(b, p + 8)) != size: return ""      # pread
+            return str_from_bytes(name[..size - 1])
+    ""
+
+# glibc's dynamic linker: the one the system's own programs use (it is not always in /lib64)
+fn __find_ldso() -> bool:
+    for cand in [__elf_interp("/bin/sh"), __elf_interp("/usr/bin/env"), "/lib64/ld-linux-x86-64.so.2"]:
+        if find(cand, "ld-linux-x86-64") >= 0 and file_exists(cand):
+            __ldso_path = cand
+            return true
+    false
 
 fn __rd16(b: [u8], o: int) -> int: int(b[o]) | (int(b[o + 1]) << 8)
 fn __rd32(b: [u8], o: int) -> int: __rd16(b, o) | (__rd16(b, o + 2) << 16)
@@ -181,7 +210,7 @@ fn __build_helper(callback: *u8) -> *u8:
     # PT_PHDR
     __ph(b, 6, 4, 64, 64, phnum * 56, phnum * 56)
     # PT_INTERP
-    __ph(b, 3, 4, interp_off, interp_off, len(__LDSO_PATH) + 1, len(__LDSO_PATH) + 1)
+    __ph(b, 3, 4, interp_off, interp_off, len(__ldso_path) + 1, len(__ldso_path) + 1)
     # PT_LOAD text
     __ph(b, 1, 5, 0, 0, 0x1000, 0x1000)
     # PT_LOAD data
@@ -197,7 +226,7 @@ fn __build_helper(callback: *u8) -> *u8:
     __put32(b, cb_off - (pc + 7))
     __put_bytes(b, [0x48, 0x83, 0xE4, 0xF0, 0xFF, 0xD0, 0x0F, 0x0B])
     while b.len() < interp_off: b.push(0)
-    for c in __LDSO_PATH: b.push(c)
+    for c in __ldso_path: b.push(c)
     b.push(0)
     # copy into image
     for i, c in b: img[i] = c
@@ -249,8 +278,8 @@ fn dl_init() -> bool:
         if dl_ready: return true
         if dl_failed: return false
         dl_failed = true
-        if not file_exists(__LDSO_PATH): return false
-        ld_base, ld_entry := __map_elf(__LDSO_PATH)
+        if not __find_ldso(): return false
+        ld_base, ld_entry := __map_elf(__ldso_path)
         if ld_base == null: return false
         cb: cfn(*u8) = __dl_entry
         img := __build_helper(cb as *u8)

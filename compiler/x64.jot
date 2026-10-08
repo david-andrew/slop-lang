@@ -239,6 +239,7 @@ frame_size := 0
 callee_off: [int]          # save offset per register (0 = not used)
 ra_on := true              # false: spill everything (fast debug codegen)
 callee_pool := [RBX, 12, 13, 14, 15]
+is_callee := [false, false, false, true, false, false, false, false, false, false, false, false, true, true, true, true]
 caller_pool := [RSI, RDI, R8, R9, R10, R11]
 
 vsave: [bool]              # in a caller-saved register, saved/restored around calls
@@ -480,6 +481,7 @@ fn allocate():
     free[XMM + 1] = false
     free[XMM + 15] = false
     active: [int]
+    in_active := [false; nv]
     min_end := INF_POS      # earliest end among active intervals
     for pos in 0..n:
         v := head[pos]
@@ -491,6 +493,7 @@ fn allocate():
                 a := active[k]
                 if v_last[a] < pos:
                     free[vloc[a]] = true
+                    in_active[a] = false
                     active[k] = active[active.len() - 1]
                     active.pop()
                 else:
@@ -501,11 +504,12 @@ fn allocate():
             reg := -1
             # two-operand forms: take over the register of a first operand that dies here
             h := hint_operand(v, pos)
-            if h >= 0 and active.contains(h):
+            if h >= 0 and in_active[h]:
                 reg = vloc[h]
                 active.remove(active.index_of(h))
-                vsave[v] = crosses and (reg >= XMM or not callee_pool.contains(reg))
-                if callee_pool.contains(reg): callee_off[reg] = 1
+                in_active[h] = false
+                vsave[v] = crosses and (reg >= XMM or not is_callee[reg])
+                if reg < XMM and is_callee[reg]: callee_off[reg] = 1
             else if vtype(v) != VI:
                 # all xmm registers are caller-saved: values living across calls are saved around them
                 for x in 2..15:
@@ -537,19 +541,21 @@ fn allocate():
                     if v_last[a] <= v_last[v]: continue
                     ra := vloc[a]
                     if (ra >= XMM) != (vtype(v) != VI): continue
-                    if crosses and ra < XMM and not callee_pool.contains(ra): continue
+                    if crosses and ra < XMM and not is_callee[ra]: continue
                     if best < 0 or v_last[a] > v_last[best]: best = a
                 if best >= 0:
                     reg = vloc[best]
                     vloc[best] = LOC_SPILL
                     vsave[v] = crosses and reg >= XMM
                     active.remove(active.index_of(best))
+                    in_active[best] = false
             if reg >= 0:
                 vloc[v] = reg
                 free[reg] = false
                 active.push(v)
+                in_active[v] = true
                 if v_last[v] < min_end: min_end = v_last[v]
-                if callee_pool.contains(reg): callee_off[reg] = 1
+                if reg < XMM and is_callee[reg]: callee_off[reg] = 1
             else: vloc[v] = LOC_SPILL
             v = nxt[v]
 
