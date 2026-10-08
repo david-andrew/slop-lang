@@ -25,7 +25,7 @@ fn inlinable(f: IrFn) -> bool:
 
 fn defines_value(op: Op) -> bool:
     match op:
-        nop, block, loop, end, else_, br, brif, brtable, if_, ret, trap, store, copy, zero, memcpy, memset, zeroslots, assume: false
+        nop, block, loop, end, else_, br, brif, brtable, if_, ret, trap, store, copy, zero, memcpy, memset, zeroslots, assume, vop: false
         _: true
 
 # copy an argument list (vregs renamed) into the caller's args; returns its start
@@ -58,7 +58,7 @@ fn remap(c0: Ins, callee: IrFn, vm: [int], sm: [int]) -> Ins:
             c.a = i32(vm[a])
             c.b = i32(vm[bb])
             if c.op == .store and int(c.c) & M_INDEX != 0: c.dst = i32(vm[int(c.dst)])
-        memcpy, memset, select:
+        memcpy, memset, select, vop:
             c.a = i32(vm[a])
             c.b = i32(vm[bb])
             c.c = i32(vm[int(c.c)])

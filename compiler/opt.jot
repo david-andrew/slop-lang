@@ -55,7 +55,7 @@ fn o_operands(ins: Ins) -> int:
         zero:
             o_buf.push(a)
             return -1
-        memcpy, memset:
+        memcpy, memset, vop:
             o_buf.push(a)
             o_buf.push(bb)
             o_buf.push(int(ins.c))
@@ -92,7 +92,7 @@ fn o_rewrite(ins: mut Ins):
             ins.a = o_repl[a]
         ret:
             if a >= 0: ins.a = o_repl[a]
-        memcpy, memset, select:
+        memcpy, memset, select, vop:
             ins.a = o_repl[a]
             ins.b = o_repl[bb]
             ins.c = o_repl[int(ins.c)]
@@ -394,7 +394,7 @@ fn cse_op(op: Op) -> bool:
 
 fn o_defines(op: Op) -> bool:
     match op:
-        nop, block, loop, end, else_, br, brif, brtable, if_, ret, trap, store, copy, zero, memcpy, memset, zeroslots, assume: false
+        nop, block, loop, end, else_, br, brif, brtable, if_, ret, trap, store, copy, zero, memcpy, memset, zeroslots, assume, vop: false
         _: true
 
 # append to the output, noting the new definition (invalidates entries that used the old value)
@@ -404,7 +404,7 @@ fn o_push(ins: Ins):
 
 fn kills_memory(op: Op) -> bool:
     match op:
-        store, copy, zero, memcpy, memset, zeroslots, call, calli, callc, syscall, intr: true
+        store, copy, zero, memcpy, memset, zeroslots, call, calli, callc, syscall, intr, vop: true
         _: false
 
 o_cse := false

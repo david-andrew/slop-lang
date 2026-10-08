@@ -291,7 +291,7 @@ fn operands(ins: Ins) -> int:
         zero:
             use_buf.push(a)
             return -1
-        memcpy, memset:
+        memcpy, memset, vop:
             use_buf.push(a)
             use_buf.push(bb)
             use_buf.push(int(ins.c))
@@ -319,6 +319,22 @@ fn operands(ins: Ins) -> int:
             return d
 
 fn fits32(v: int) -> bool: v >= -2147483648 and v <= 2147483647
+
+# a vector operand into xmm x: n f32 lanes from memory, or a scalar repeated in every lane
+fn vop_operand(x: int, v: int, splat: bool, n: int, scratch: int):
+    if splat:
+        s := xreg_of(v, x, VS)
+        if s != x: sse_rr(0, 0x28, x, s)                                 # movaps
+        sse_rr(0, 0xC6, x, x)                                            # shufps x, x, 0
+        b(0)
+        return
+    base, disp := addr_reg(v, scratch)
+    if n == 4: sse_rm(0, 0x10, x, base, disp)                            # movups
+    else:
+        sse_rm(0xF2, 0x10, x, base, disp)                                # movsd
+        if n == 3:
+            sse_rm(0xF3, 0x10, 15, base, disp + 8)                       # movss
+            sse_rr(0, 0x16, x, 15)                                       # movlhps x, xmm15
 
 fn analyze():
     nv := ir.vtypes.len()
@@ -1385,6 +1401,20 @@ fn emit_ins(pos: int, ins: Ins):
                 mov_imm(RCX, size)
                 b(0x31); b(0xC0)
                 b(0xF3); b(0xAA)          # rep stosb
+        vop:
+            # packed float vector arithmetic, memory to memory (xmm0, xmm1, xmm15 are scratch)
+            code := int(ins.imm)
+            n := (code >> 4) & 7
+            vop_operand(0, bb, code & VOP_SPLAT_B != 0, n, RCX)
+            vop_operand(1, int(ins.c), code & VOP_SPLAT_C != 0, n, RAX)
+            sse_rr(0, [0x58, 0x5C, 0x59, 0x5E][code & 3], 0, 1)          # addps subps mulps divps
+            db, dd := addr_reg(a, RDX)
+            if n == 4: sse_rm(0, 0x11, 0, db, dd)                        # movups
+            else:
+                sse_rm(0xF2, 0x11, 0, db, dd)                            # movsd: lanes 0-1
+                if n == 3:
+                    sse_rr(0, 0x12, 15, 0)                               # movhlps xmm15, xmm0
+                    sse_rm(0xF3, 0x11, 15, db, dd + 8)                   # movss: lane 2
         memcpy:
             moves := [PMove(RDI, a), PMove(RSI, bb), PMove(RCX, int(ins.c))]
             emit_parallel(moves)

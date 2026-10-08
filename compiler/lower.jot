@@ -1172,6 +1172,26 @@ fn gen_vec_binary(e: int) -> Val:
     n := vec_comps(t)
     fop := float_op(op)
     if integer: fop = int_op(op, true)
+    # + - * / of float vectors: packed SSE arithmetic
+    vk := -1
+    if op == .plus: vk = 0
+    else if op == .minus: vk = 1
+    else if op == .star: vk = 2
+    else if op == .slash: vk = 3
+    if not integer and vk >= 0 and n >= 2 and n <= 4:
+        if aux == 9:
+            pa := place_addr(gen_place(a, false), t)
+            pb := place_addr(gen_place(b, false), t)
+            e_vop(d, pa, pb, vk, n, 0)
+        else if aux == 10:
+            pa := place_addr(gen_place(a, false), t)
+            y := gen_expr(b).v
+            e_vop(d, pa, y, vk, n, VOP_SPLAT_C)
+        else:
+            x := gen_expr(a).v
+            pb := place_addr(gen_place(b, false), t)
+            e_vop(d, x, pb, vk, n, VOP_SPLAT_B)
+        return Val(d, true, s)
     if aux == 9:
         pa := place_addr(gen_place(a, false), t)
         pb := place_addr(gen_place(b, false), t)

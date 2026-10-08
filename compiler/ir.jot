@@ -13,7 +13,7 @@ enum Op:
     feq, fne, flt, fle, fgt, fge,
     sext8, sext16, sext32, zext8, zext16, zext32,
     i2f, u2f, f2i, f2f, bits2f, f2bits,
-    load, store, slot, gaddr, daddr, faddr, copy, zero, memcpy, memset, zeroslots,
+    load, store, slot, gaddr, daddr, faddr, copy, zero, memcpy, memset, zeroslots, vop,
     call, calli, callc, syscall, intr,
     block, loop, if_, else_, end, br, brif, ret, trap, select,
     assume,           # a = vreg, imm = A_* fact (no code)
@@ -171,6 +171,12 @@ fn e_slot(s: int) -> int:
     d
 
 fn e_copy(dst: int, src: int, size: int): emit(.copy, VI, 0, dst, src, 0, size)
+
+# float vector arithmetic: dst[0..n] = b[0..n] op c[0..n] (f32 lanes); b or c may instead be a
+# scalar f32 vreg used for every lane (VOP_SPLAT_B / VOP_SPLAT_C). op: 0 add, 1 sub, 2 mul, 3 div
+const VOP_SPLAT_B = 0x100
+const VOP_SPLAT_C = 0x200
+fn e_vop(dst: int, bsrc: int, csrc: int, kind: int, n: int, flags: int): emit(.vop, VI, 0, dst, bsrc, csrc, kind | (n << 4) | flags)
 fn e_zero(dst: int, size: int): emit(.zero, VI, 0, dst, 0, 0, size)
 
 fn e_call(f: int, args: [int], rt: int) -> int:

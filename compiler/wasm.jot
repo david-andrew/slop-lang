@@ -456,6 +456,25 @@ fn emit_wins(ins: Ins):
             uleb(wb, 10)
             op(0)
             op(0)
+        vop:
+            # one f32 lane at a time
+            code := int(ins.imm)
+            n := (code >> 4) & 7
+            for i in 0..n:
+                addr32(a)
+                if code & VOP_SPLAT_B != 0: lget(bb)
+                else:
+                    addr32(bb)
+                    op(0x2A)
+                    memarg(2, 4 * i)
+                if code & VOP_SPLAT_C != 0: lget(int(ins.c))
+                else:
+                    addr32(int(ins.c))
+                    op(0x2A)
+                    memarg(2, 4 * i)
+                op([0x92, 0x93, 0x94, 0x95][code & 3])                   # f32.add sub mul div
+                op(0x38)                                                 # f32.store
+                memarg(2, 4 * i)
         memset:
             addr32(a)
             addr32(bb)
