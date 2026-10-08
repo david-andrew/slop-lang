@@ -1,0 +1,7 @@
+# error: must not change the global 'total'
+total = 0
+count_it = (x: int) -> int:
+    total += x
+    x
+helper = (x: int) -> int: count_it(x) + 1
+print(parallel_map([1, 2, 3], helper))

@@ -99,6 +99,7 @@ struct FnInst:
     locals: int[]
     fntype: i32
     cabi: bool
+    parallel: bool      # @parallel: the functions it is given run on many threads at once
     export_name: str
     aux_void: bool
     clib: str
@@ -756,6 +757,7 @@ get_fn_inst = (decl: int, targs: int[], use_pos: int) -> int:
             at = kid(ab, i)
             an = name_of(int(nodes[at].name))
             if an == "cabi": fns[f].cabi = true
+            else if an == "parallel": fns[f].parallel = true
             else if an == "lib":
                 if nodes[at].a == 0 or nodes[int(nodes[at].a)].kind != .str_lit: fatal(nodes[at].pos, "@lib needs a library name, e.g. @lib(\"libGL.so.1\")")
                 fns[f].clib = name_of(int(nodes[int(nodes[at].a)].sval))

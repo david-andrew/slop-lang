@@ -496,7 +496,9 @@ rows = parallel_range(height, (y): render_row(y))     # [loop i in [0..n): f(i)]
 ```
 
 The function runs on many threads at once: it may read anything, but it must not change
-globals or the variables it captured (that would be a data race). Return results instead.
+globals or the variables it captured (that would be a data race). Return results instead. The
+compiler checks this, also in the functions it calls, and names the variable. (Writing through a
+raw pointer is left to the program: it is how disjoint parts of one buffer are filled in parallel.)
 Web builds run the same code on one thread.
 
 ## 12. Programs and the game loop

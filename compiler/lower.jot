@@ -706,6 +706,66 @@ inst_mutmask = (f: int) -> int:
         if has_flag(kid(d, i), NF_MUT): mm |= 1 << i
     mm
 
+# ---------------- data races ----------------
+# A function given to a @parallel function (parallel_map...) runs on many threads at once: it
+# must not change the variables it captured, or globals -- also not in the functions it calls.
+race_done: {int: bool} = {}     # named functions known not to change globals
+
+race_check = (callee: int, args: int[]):
+    who = name_of(int(nodes[int(fns[callee].decl)].name))
+    loop a in args:
+        if tkind(ntype(a)) != .fn_: continue
+        k = nodes[a].kind
+        if k == .lambda: race_scan(int(fns[int(nodes[a].sym)].body), int(nodes[a].sym), who, true)
+        else if k == .fnref: race_named(int(nodes[a].sym), who)
+
+race_named = (f: int, who: str):
+    if race_done.contains(f) or fns[f].body == 0: return
+    race_done[f] = true
+    # (the core and standard libraries take care of threads themselves)
+    if fns[f].decl != 0:
+        fi = pos_file(int(nodes[int(fns[f].decl)].pos))
+        if fi >= 0 and fi < files.len() and (find(files[fi].path, "/lib/core/") >= 0 or find(files[fi].path, "/lib/std/") >= 0): return
+    race_scan(int(fns[f].body), f, who, false)
+
+# a place that changes: the variable it belongs to, if that is shared with other threads
+race_target = (t: int, f: int, who: str, captures: bool, pos: int):
+    n = t
+    loop nodes[n].kind == .field or nodes[n].kind == .index:
+        # (writing through a pointer changes memory the program manages itself, not the variable)
+        if tkind(ntype(int(nodes[n].a))) == .ptr: return
+        n = int(nodes[n].a)
+    if nodes[n].kind != .ident: return
+    nm = name_of(int(nodes[n].name))
+    if nodes[n].aux == i32(int(SK.global)):
+        fatal(pos, "{who} runs this function on many threads at once, so it must not change the global '{nm}' (a data race): return values instead")
+    if captures and nodes[n].aux == i32(int(SK.local)):
+        l = int(nodes[n].sym)
+        if int(locals[l].owner) != f or int(locals[l].flags) & LF_CAPTURE != 0:
+            fatal(pos, "{who} runs this function on many threads at once, so it must not change '{nm}', a variable it captured (a data race): return values instead")
+
+race_scan = (n: int, f: int, who: str, captures: bool):
+    if n == 0: return
+    k = nodes[n].kind
+    if k == .lambda: return
+    if k == .assign: race_target(int(nodes[n].a), f, who, captures, nodes[n].pos)
+    else if k == .intrinsic and nkids(n) > 0:
+        id = nodes[n].aux as IN
+        if id == .push or id == .pop or id == .insert or id == .remove or id == .clear or id == .reserve or id == .resize or id == .truncate or id == .extend:
+            race_target(kid(n, 0), f, who, captures, nodes[n].pos)
+    else if k == .call:
+        loop i in [0..nkids(n)):
+            if has_flag(kid(n, i), NF_MUT): race_target(kid(n, i), f, who, captures, nodes[kid(n, i)].pos)
+        if nodes[n].aux == 0 and nodes[n].sym > 0: race_named(int(nodes[n].sym), who)
+    else if k == .for_ and has_flag(n, NF_MUT): race_target(int(nodes[n].a), f, who, captures, nodes[n].pos)
+    race_scan(int(nodes[n].a), f, who, captures)
+    race_scan(int(nodes[n].b), f, who, captures)
+    if k != .for_:
+        race_scan(int(nodes[n].c), f, who, captures)
+        if k != .partial: race_scan(int(nodes[n].d), f, who, captures)
+    loop i in [0..nkids(n)): race_scan(kid(n, i), f, who, captures)
+    loop i in [0..nkids2(n)): race_scan(kid2(n, i), f, who, captures)
+
 gen_direct_call = (f: int, args: int[]) -> Val:
     ret = int(fns[f].ret)
     rslot = -1
@@ -1895,6 +1955,7 @@ gen_expr = (e: int) -> Val:
     if k == .call:
         aux = int(nodes[e].aux)
         if aux == 0:
+            if fns[int(nodes[e].sym)].parallel: race_check(int(nodes[e].sym), kids(e))
             r = gen_direct_call(int(nodes[e].sym), kids(e))
             if vc(t) == VC_VOID: return V(-1, false)
             return r

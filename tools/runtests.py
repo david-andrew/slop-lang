@@ -79,5 +79,16 @@ if compiler != "jot0" and target == "native":
         else:
             print(f"FAIL {name}\n{r.stdout}{r.stderr}")
             failed += 1
+    # programs the compiler must reject: tests/errors/*.jot start with `# error: <part of the message>`
+    for t in sorted(glob.glob(os.path.join(root, "tests", "errors", "*.jot"))):
+        name = "errors/" + os.path.basename(t)[:-4]
+        if pattern not in name: continue
+        want = open(t).readline().split("# error:", 1)[-1].strip()
+        r = subprocess.run([jot, "build", t, "-o", "/tmp/jot-tests/error_case"], capture_output=True, text=True,
+                           env=dict(os.environ, JOT_LIB=os.path.join(root, "lib")), timeout=60)
+        if r.returncode != 0 and want in r.stderr: passed += 1
+        else:
+            print(f"FAIL {name}: expected an error containing {want!r}\n{r.stderr}")
+            failed += 1
 print(f"{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

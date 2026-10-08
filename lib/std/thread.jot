@@ -122,7 +122,8 @@ __parallel_run = (total: int, f: (int, int) -> void):
         __mt_active = false
         __job = __job_idle_c
 
-# [loop x in xs: f(x)], computed in parallel
+# [loop x in xs: f(x)], computed in parallel (f must not change globals or what it captured)
+@parallel
 parallel_map[T, U] = (xs: T[], f: (T) -> U) -> U[]:
     out: U[]
     n = xs.len()
@@ -136,6 +137,7 @@ parallel_map[T, U] = (xs: T[], f: (T) -> U) -> U[]:
     out
 
 # xs[i] = f(xs[i]) for every element, in parallel
+@parallel
 parallel_update[T] = (xs: mut T[], f: (T) -> T):
     n = xs.len()
     if n == 0: return
@@ -146,6 +148,7 @@ parallel_update[T] = (xs: mut T[], f: (T) -> T):
     )
 
 # [loop i in [0..n): f(i)], computed in parallel
+@parallel
 parallel_range[U] = (n: int, f: (int) -> U) -> U[]:
     out: U[]
     if n <= 0: return out

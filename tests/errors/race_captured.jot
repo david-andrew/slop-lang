@@ -1,0 +1,7 @@
+# error: must not change 'acc', a variable it captured
+main = ():
+    acc = 0
+    print(parallel_map([1, 2, 3], (x):
+        acc += x
+        x
+    ))

@@ -1,0 +1,6 @@
+# error: must not change the global 'seen'
+seen: int[] = []
+print(parallel_range(4, (i):
+    seen.push(i)
+    i
+))
