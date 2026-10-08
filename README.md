@@ -148,7 +148,7 @@ examples/      demos: lumen (2D), dunes (3D), shapes, cube, scene3d
 tests/         test programs with expected output (tools/runtests.py), render references
 bench/         benchmarks (Jot and equivalent C)
 tools/         bootstrap, test runner, render test, differential fuzzer, language server test,
-               report, profiler, instruction counter
+               headless GNOME screenshots (gnomeshot.py), report, profiler, instruction counter
 ```
 
 Testing: `tools/runtests.py` runs the test programs in each mode (native/web, debug/release,
@@ -168,15 +168,17 @@ bounds-check and copy-on-write-check elimination, inlining of small functions, a
 array indexing into x86 addressing modes.
 
 Native programs are static executables that make Linux system calls directly. Programs that
-open a window speak the Wayland protocol directly over its socket when a Wayland session is
-running (rendering with EGL into an offscreen buffer that is shared with the compositor);
-otherwise they load the system's X11, EGL and OpenGL ES libraries at run time with a tiny
-in-process loader (the static binary maps the system dynamic linker and asks it for the
-libraries), so nothing is loaded at all by programs that do not use graphics, and a missing
+open a window load the system's libraries for it at run time with a tiny in-process loader (the
+static binary maps the system dynamic linker and asks it for the libraries): libwayland-client
+and libdecor in a Wayland session (so windows get the desktop's own decorations; frames are
+rendered with EGL into an offscreen buffer shared with the compositor), otherwise X11; and EGL
+and OpenGL ES. Nothing is loaded at all by programs that do not use graphics, and a missing
 library is a run-time decision instead of a load-time failure: without an OpenGL ES driver
 (or with `JOT_SOFTWARE=1`) games draw with a software renderer (`lib/game/softgl.jot`) that
-runs the Jot shader functions on the CPU in parallel, at half resolution; without libX11 the
-window is opened by speaking the X11 protocol over the socket (`lib/game/x11.jot`). The
+runs the Jot shader functions on the CPU in parallel, at half resolution; without
+libwayland-client or libX11 the window is opened by speaking the Wayland or X11 protocol over
+the socket (`lib/game/wayland.jot`, `lib/game/x11.jot`), and without libdecor the program
+draws its own title bar. The
 software frames match the GPU's within about 1/255 per channel (`tools/rendertest.py` checks
 them against references, with no GPU or display needed).
 

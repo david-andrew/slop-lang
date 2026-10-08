@@ -545,7 +545,13 @@ stay sharp (in the browser too). The rendered frame goes to the compositor witho
 through the CPU.
 
 Native games open a Wayland window when `WAYLAND_DISPLAY` is set and an X11 window otherwise
-(`JOT_PLATFORM=x11|wayland` chooses). They use the system's OpenGL ES driver when there is
+(`JOT_PLATFORM=x11|wayland` chooses). Windows have the desktop's own decorations: on GNOME they
+are drawn by libdecor (with GTK, as other apps' title bars are), elsewhere by the compositor
+(xdg-decoration) or the X11 window manager; without libdecor (or with `JOT_LIBDECOR=0`) the
+program draws a plain title bar itself. A window's title is the program's name unless
+`window(title)` gives one. Everything a game loads at run time is optional: without
+libwayland-client (or with `JOT_WAYLAND=protocol`) it speaks the Wayland protocol itself, and
+without libX11 the X11 protocol. They use the system's OpenGL ES driver when there is
 one. Without it (or with `JOT_SOFTWARE=1`) the same program draws with the built-in software
 renderer, which runs your shader functions (see `make_shader`) on the CPU; `soft_rendering()`
 tells the program which is in use, e.g. to draw fewer particles. Frames are rendered at half

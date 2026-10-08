@@ -16,7 +16,7 @@ const __NKEYS = 128
 __win_open = false
 __win_w = 1280
 __win_h = 720
-__win_title = "jot"
+__win_title = ""                # "": the program's name
 __win_close = false
 __key_down: bool[]
 __key_pressed: bool[]
@@ -166,16 +166,30 @@ is_fullscreen = () -> bool: __fullscreen
 clipboard = () -> str: __platform_clipboard()
 set_clipboard = (s: str): __platform_set_clipboard(s)
 
+# the program's name (shapes for shapes.jot), for a window without a title of its own
+__program_name = () -> str:
+    a = args()
+    if a.len() == 0: return "jot"
+    n = a[0]
+    s = rfind(n, "/")
+    if s >= 0: n = n[s + 1..]
+    loop ext in [".bin", ".test", ".jot", ".html"]:
+        if ends_with(n, ext): n = n[..len(n) - len(ext))
+    if len(n) == 0: return "jot"
+    n
+
 # Open the game window (called automatically when the program defines update/draw).
-window = (title: str = "jot", width: int = 1280, height: int = 720):
+window = (title: str = "", width: int = 1280, height: int = 720):
     __input_init()
+    name = title
+    if len(name) == 0: name = __program_name()
     if __win_open:
         # already opened (e.g. by creating a mesh first): just take the new title
-        if title != __win_title:
-            __win_title = title
+        if name != __win_title:
+            __win_title = name
             __platform_title()
         return
-    __win_title = title
+    __win_title = name
     __win_w = width
     __win_h = height
     __design_w = width
@@ -755,8 +769,11 @@ __present_how = () -> str:
     else:
         if __soft: return "software renderer"
         if __wayland:
-            if __wl_gpu > 0: return "wayland dma-buf, scale {__wl_scale:.3}"
-            return "wayland shared memory copy, scale {__wl_scale:.3}"
+            how = "wayland"
+            if not __lw_on: how = "wayland protocol"
+            else if __ld_frame != null: how = "wayland+libdecor"
+            if __wl_gpu > 0: return "{how} dma-buf, scale {__wl_scale:.3}"
+            return "{how} shared memory copy, scale {__wl_scale:.3}"
         "egl window surface"
 
 # testing aid: JOT_SCREENSHOT=out.png [JOT_FRAMES=n] saves frame n and exits
