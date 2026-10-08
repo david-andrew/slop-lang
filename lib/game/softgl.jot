@@ -122,6 +122,7 @@ __sp_vs: [*u8] = [null]
 __sp_fs: [*u8] = [null]
 __sp_out: [int] = [0]
 __sp_args: [int] = [0]
+__sp_flat: [str] = [""]
 
 # the window's framebuffer
 fn __sw_init_window(w: int, h: int):
@@ -282,6 +283,7 @@ fn sgl_create_program() -> int:
     __sp_fs.push(null)
     __sp_out.push(0)
     __sp_args.push(0)
+    __sp_flat.push("")
     __sp_vs.len() - 1
 
 # shader functions of a program made by make_shader
@@ -291,6 +293,7 @@ fn __sw_program_info(prog: int, src: ShaderSource):
     __sp_fs[prog] = src.cpu_fs
     __sp_out[prog] = src.out_size
     __sp_args[prog] = src.vs_args
+    __sp_flat[prog] = src.flat
 
 # read the window (or bound target) as RGBA bytes, bottom row first, scaled to w x h
 fn sgl_read_pixels(x: int, y: int, w: int, h: int, out: *u8):
@@ -546,6 +549,15 @@ fn __sw_draw_mesh(prog: int, vbo: int, stride: int, nverts: int, ibo: int, nidx:
     vs2 := __sp_vs[prog] as cfn(*u8, *u8, *u8)
     vs3 := __sp_vs[prog] as cfn(*u8, *u8, *u8, *u8)
     fs := __sp_fs[prog] as cfn(*u8, *u8, *u8)
+    # slots holding integers are not interpolated: they come from the triangle's last vertex
+    flat := [false; nf]
+    any_flat := false
+    fl := __sp_flat[prog]
+    for f in 0..min(nf, len(fl)):
+        if fl[f] == 'i':
+            flat[f] = true
+            any_flat = true
+    fp := data(flat)
     if __s_buffers[vbo].len() < nverts * stride: return
     vb := data(__s_buffers[vbo])
     ib: *u32 = null
@@ -588,7 +600,7 @@ fn __sw_draw_mesh(prog: int, vbo: int, stride: int, nverts: int, ibo: int, nidx:
             v := g % nverts
             if vargs == 3: vs3(o as *u8, vb + v * stride, instb + (g / nverts) * istride, uni)
             else: vs2(o as *u8, vb + v * stride, uni)
-            __sw_project(o, pvp + g * pstride, nf, vx, vy, vw, vh)
+            __sw_project(o, pvp + g * pstride, nf, vx, vy, vw, vh, fp)
     )
     # triangles, clipped against the near plane z >= -w where needed
     tris: [i32]
@@ -614,7 +626,7 @@ fn __sw_draw_mesh(prog: int, vbo: int, stride: int, nverts: int, ibo: int, nidx:
                 tris.push(i32(i1))
                 tris.push(i32(i2))
             else if d0 >= 0.0 or d1 >= 0.0 or d2 >= 0.0:
-                __sw_clip_tri(clip, pv, tris, [i0, i1, i2], [d0, d1, d2], nf, vx, vy, vw, vh)
+                __sw_clip_tri(clip, pv, tris, [i0, i1, i2], [d0, d1, d2], nf, vx, vy, vw, vh, fp)
                 clp = data(clip)
     ntris := tris.len() / 3
     if ntris == 0: return
@@ -655,6 +667,9 @@ fn __sw_draw_mesh(prog: int, vbo: int, stride: int, nverts: int, ibo: int, nidx:
             iw := w0 + dw * k
             rw := 1.0 / iw
             for f in 0..nf: vin[f] = (s0[f] + sd[f] * k) * rw
+            if any_flat:
+                for f in 0..nf:
+                    if fp[f]: vin[f] = c2[4 + f]
             # like gl_FragCoord: window pixel center (at the size the program sees), depth, 1/w
             vin[0] = (f32(x) + 0.5) * inv_scale
             vin[1] = (f32(y) + 0.5) * inv_scale
@@ -665,7 +680,7 @@ fn __sw_draw_mesh(prog: int, vbo: int, stride: int, nverts: int, ibo: int, nidx:
     )
 
 # clip-space vertex (position first) -> screen position, depth, 1/w and varyings / w
-fn __sw_project(q: *f32, o: *f32, nf: int, vx: float, vy: float, vw: float, vh: float):
+fn __sw_project(q: *f32, o: *f32, nf: int, vx: float, vy: float, vw: float, vh: float, flat: *bool):
     w := q[3]
     iw: f32 = 0.0
     if w != 0.0: iw = 1.0 / w
@@ -673,11 +688,13 @@ fn __sw_project(q: *f32, o: *f32, nf: int, vx: float, vy: float, vw: float, vh: 
     o[1] = f32(vy + (float(q[1] * iw) * 0.5 + 0.5) * vh)
     o[2] = q[2] * iw * 0.5 + 0.5
     o[3] = iw
-    for f in 0..nf: o[4 + f] = q[f] * iw
+    for f in 0..nf:
+        if flat[f]: o[4 + f] = q[f]
+        else: o[4 + f] = q[f] * iw
 
 # Sutherland-Hodgman against the near plane for a triangle with 1 or 2 corners behind it;
 # new vertices are appended to clip and pv, the resulting triangles to tris
-fn __sw_clip_tri(clip: mut [f32], pv: mut [f32], tris: mut [i32], ix: [int], ds: [f32], nf: int, vx: float, vy: float, vw: float, vh: float):
+fn __sw_clip_tri(clip: mut [f32], pv: mut [f32], tris: mut [i32], ix: [int], ds: [f32], nf: int, vx: float, vy: float, vw: float, vh: float, flat: *bool):
     poly: [int]
     for i in 0..3:
         j := (i + 1) % 3
@@ -687,9 +704,11 @@ fn __sw_clip_tri(clip: mut [f32], pv: mut [f32], tris: mut [i32], ix: [int], ds:
             n := clip.len() / nf
             a := ix[i] * nf
             b := ix[j] * nf
-            for f in 0..nf: clip.push(clip[a + f] + (clip[b + f] - clip[a + f]) * t)
+            for f in 0..nf:
+                if flat[f]: clip.push(clip[ix[2] * nf + f])
+                else: clip.push(clip[a + f] + (clip[b + f] - clip[a + f]) * t)
             pv.resize(pv.len() + 4 + nf)
-            __sw_project(data(clip) + n * nf, data(pv) + n * (4 + nf), nf, vx, vy, vw, vh)
+            __sw_project(data(clip) + n * nf, data(pv) + n * (4 + nf), nf, vx, vy, vw, vh, flat)
             poly.push(n)
     for k in 1..poly.len() - 1:
         tris.push(i32(poly[0]))

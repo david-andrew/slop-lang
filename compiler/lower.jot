@@ -1565,10 +1565,32 @@ fn gen_intrinsic(e: int) -> Val:
             e_store(d, int(fields[fo + 4].offset), e_faddr(lf_of_inst(fsf)), ptr_size)
             e_store(d, int(fields[fo + 5].offset), e_iconst(tsize(int(fns[vsf].ret))), 8)
             e_store(d, int(fields[fo + 6].offset), e_iconst(fns[vsf].ptypes.len()), 8)
+            if int(structs[si].nfields) >= 8:
+                # per 4-byte slot of the output: 'i' if it holds integer (or f64) data, which is
+                # passed on unchanged ("flat") instead of interpolated
+                rt := int(fns[vsf].ret)
+                mask := [u8('f'); max(tsize(rt) / 4, 1)]
+                flat_slots(rt, 0, mask)
+                e_store(d, int(fields[fo + 7].offset), e_daddr(str_data(str_from_bytes(mask))), ptr_size)
         return Val(d, true, s)
     if id == .vec_ctor: return gen_vec_ctor(e)
     fatal(nodes[e].pos, "intrinsic not supported in codegen")
     V(-1, false)
+
+fn flat_slots(t0: int, base: int, mask: mut [u8]):
+    t := prune(t0)
+    k := types[t].kind
+    if k == .float_ and int(types[t].bits) == 32: return
+    if k == .vec and not types[t].sign: return
+    if k == .struct_:
+        si := int(types[t].st)
+        layout(t)
+        for i in 0..int(structs[si].nfields):
+            f := fields[int(structs[si].fields) + i]
+            flat_slots(int(f.type), base + int(f.offset), mask)
+        return
+    for b in base / 4..(base + tsize(t) + 3) / 4:
+        if b < mask.len(): mask[b] = 'i'
 
 fn gen_fmt_struct(e: int) -> Val:
     args := kids(e)

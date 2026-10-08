@@ -18,6 +18,7 @@ struct ShaderSource:
     cpu_fs: *u8
     out_size: int         # bytes of the vertex function's result
     vs_args: int          # 2: vs(vertex, uniforms), 3: vs(vertex, instance, uniforms)
+    flat: str             # per 4 bytes of that result: 'f' interpolated, 'i' passed on unchanged
 
 struct ShaderAttrib:
     comps: int
