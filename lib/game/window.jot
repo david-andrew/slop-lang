@@ -124,11 +124,16 @@ fn quit(): __win_close = true
 
 # Open the game window (called automatically when the program defines update/draw).
 fn window(title: str = "jot", width: int = 1280, height: int = 720):
+    __input_init()
+    if __win_open:
+        # already opened (e.g. by creating a mesh first): just take the new title
+        if title != __win_title:
+            __win_title = title
+            __platform_title()
+        return
     __win_title = title
     __win_w = width
     __win_h = height
-    __input_init()
-    if __win_open: return
     __platform_open()
     __win_open = true
     __time0 = time()
@@ -137,7 +142,10 @@ when TARGET == "wasm":
     extern fn __web_canvas_open(title: *u8, title_len: i32, w: i32, h: i32)
     extern fn __web_canvas_size(out: *i32)
 
+    extern fn __web_set_title(title: *u8, title_len: i32)
+
     fn __platform_open(): __web_canvas_open(data(__win_title), i32(len(__win_title)), i32(__win_w), i32(__win_h))
+    fn __platform_title(): __web_set_title(data(__win_title), i32(len(__win_title)))
 
     # the page calls this every animation frame
     __web_update: fn(float)
@@ -297,6 +305,12 @@ else:
                 eprint("note: {why}; using the software renderer")
                 __soft = true
         if __soft: __sw_init_window(__win_w, __win_h)
+
+    fn __platform_title():
+        if __xproto: __xp_property(39, 31, 8, bytes(__win_title))         # WM_NAME, STRING
+        else if __xdpy != null:
+            XStoreName(__xdpy, __xwin, data(__zstr(__win_title)))
+            XFlush(__xdpy)
 
     # set up OpenGL ES on the window; returns why that is impossible, or ""
     fn __egl_open() -> str:
