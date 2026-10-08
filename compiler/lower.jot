@@ -285,7 +285,10 @@ fn borrow(val: Val, t: int):
         reg_temp_slot(val.slot, t)
     else:
         # copy into a fresh vreg so later reassignment of the original can't confuse release
-        reg_temp_vreg(val.v, t)
+        # (the value may sit in a local's own vreg, which statement cleanup must not touch)
+        c := vreg(VI)
+        e_mov(c, val.v)
+        reg_temp_vreg(c, t)
 
 fn own(val: Val, t: int) -> Val:
     if val.owned: return val
@@ -448,6 +451,13 @@ fn bounds_check(arr: int, idx: int, pos: int):
     e_call_nr(rt("__panic_bounds"), [idx, n, e_daddr(loc)], -1)
     endc()
 
+# the part of a bounds check that later checks build on: the array exists (release builds
+# then know this for the rest of the scope)
+fn null_check(arr: int, idx: int, pos: int):
+    iff(e_bin(.eq, VI, arr, e_iconst(0)))
+    e_call_nr(rt("__panic_bounds"), [idx, e_iconst(0), e_daddr(loc_data(pos))], -1)
+    endc()
+
 # rodata offset of the "file:line" string for a position (consecutive checks share a line)
 loc_last_file := -1
 loc_last_line := -1
@@ -562,7 +572,9 @@ fn gen_place(e: int, write: bool) -> Place:
             else:
                 arr = gen_borrowed(a).v
                 idx = gen_expr(int(nodes[e].b)).v
-            if not index_is_safe(a, int(nodes[e].b)): bounds_check(arr, idx, nodes[e].pos)
+            safety := index_safety(a, int(nodes[e].b))
+            if safety == 0: bounds_check(arr, idx, nodes[e].pos)
+            else if safety == 2 and opt_release: null_check(arr, idx, nodes[e].pos)
             sz := tsize(int(types[bt].elem))
             return Place(true, e_bin(.add, VI, e_addi(arr, 24), e_bin(.mul, VI, idx, e_iconst(sz))))
         if bk == .str_:
@@ -2305,8 +2317,11 @@ fn gen_vardecl(s: int):
     t := int(locals[l].type)
     pl := local_place(l, true)
     if nodes[s].b != 0:
-        a := fixed_array_len(int(nodes[s].b))
+        iv := int(nodes[s].b)
+        a := fixed_array_len(iv)
         if a >= 0 and int(locals[l].flags) & LF_ASSIGNED == 0: len_of_local[l] = a
+        # A := [x; E]: A's length is E for as long as A is not resized
+        if nodes[iv].kind == .array and nodes[iv].b != 0 and fixed_array_local(l): array_len_expr[l] = int(nodes[iv].b)
         val := gen_owned(int(nodes[s].b))
         write_place(pl, t, val.v)
     else:
@@ -2319,7 +2334,7 @@ fn gen_vardecl(s: int):
 # as `n := A.len()` and never changed) where A is never modified in the function, A[j] is in
 # bounds: the length is fixed, and an empty (null) A never enters the loop.
 len_of_local: {int: int}        # local n -> local A when n := A.len() and neither ever changes
-safe_index: [(int, int)]        # (array local, loop variable local) pairs proven in bounds
+safe_index: [(int, int, bool)]  # (array local, loop variable local, keep its null check)
 nonneg_locals: [int]            # loop variables of ranges that start at a value >= 0
 cur_closed := -1                # 1: the function calls nothing and uses no globals (-1: unknown)
 
@@ -2383,32 +2398,90 @@ fn fixed_array_len(e: int) -> int:
     if nodes[a].kind != .ident or nodes[a].aux != i32(int(SK.local)): return -1
     if types[prune(ntype(a))].kind != .array: return -1
     l := int(nodes[a].sym)
+    if not fixed_array_local(l): return -1
+    l
+
+# the length of array local l cannot change during this function
+fn fixed_array_local(l: int) -> bool:
     # element writes keep the length; writing the variable itself (or a mut parameter, which
     # could be the caller's global) may not
     fl := int(locals[l].flags)
-    if fl & (LF_RESIZED | LF_ALIAS | LF_BYREF) != 0: return -1
-    if fl & LF_MUTPARAM != 0 and not fn_is_closed(): return -1
-    l
+    if fl & (LF_RESIZED | LF_ALIAS | LF_BYREF) != 0: return false
+    if fl & LF_MUTPARAM != 0 and not fn_is_closed(): return false
+    true
 
-# the array local whose length bounds the range `it`, or -1
-fn range_bounds_array(it: int) -> int:
-    if not is_nonneg(int(nodes[it].a)) or has_flag(it, NF_INCLUSIVE): return -1
+array_len_expr: {int: int}      # array local A -> E when A := [x; E] and A is never resized
+
+# x and y always have the same value: literals, unchanging locals and + - * of those
+fn same_value(x: int, y: int) -> bool:
+    if x == 0 or y == 0 or nodes[x].kind != nodes[y].kind: return false
+    k := nodes[x].kind
+    if k == .int_lit: return nodes[x].ival == nodes[y].ival
+    if k == .ident:
+        if nodes[x].aux != i32(int(SK.local)) or nodes[y].aux != i32(int(SK.local)) or nodes[x].sym != nodes[y].sym: return false
+        return int(locals[int(nodes[x].sym)].flags) & LF_ASSIGNED == 0
+    if k == .binary:
+        op := nodes[x].op as Tok
+        if nodes[y].op != nodes[x].op or (op != .plus and op != .minus and op != .star): return false
+        return same_value(int(nodes[x].a), int(nodes[y].a)) and same_value(int(nodes[x].b), int(nodes[y].b))
+    if k == .intrinsic:
+        a := fixed_array_len(x)
+        return a >= 0 and a == fixed_array_len(y)
+    false
+
+# the array locals whose length bounds the range `it`
+fn range_bounds_arrays(it: int) -> [int]:
+    out: [int]
+    if not is_nonneg(int(nodes[it].a)) or has_flag(it, NF_INCLUSIVE): return out
     hi := int(nodes[it].b)
+    if hi == 0: return out
     a := fixed_array_len(hi)
-    if a >= 0: return a
-    if hi != 0 and nodes[hi].kind == .ident and nodes[hi].aux == i32(int(SK.local)):
+    if a >= 0: out.push(a)
+    if nodes[hi].kind == .ident and nodes[hi].aux == i32(int(SK.local)):
         n := int(nodes[hi].sym)
-        if int(locals[n].flags) & LF_ASSIGNED == 0: return len_of_local.get(n) ?? -1
-    -1
+        if int(locals[n].flags) & LF_ASSIGNED == 0:
+            if b := len_of_local.get(n):
+                if fixed_array_local(b): out.push(b)
+    for arr, e in array_len_expr:
+        if int(locals[arr].owner) == cur_fn and fixed_array_local(arr) and same_value(hi, e): out.push(arr)
+    out
 
-fn index_is_safe(arr: int, idx: int) -> bool:
-    if safe_index.len() == 0: return false
-    if nodes[arr].kind != .ident or nodes[idx].kind != .ident: return false
-    if nodes[arr].aux != i32(int(SK.local)) or nodes[idx].aux != i32(int(SK.local)): return false
+# 0: needs a bounds check, 1: in bounds, 2: in bounds but keep the null check (other
+# accesses to the array in the loop are checked and can build on it)
+fn index_safety(arr: int, idx: int) -> int:
+    if safe_index.len() == 0: return 0
+    if nodes[arr].kind != .ident or nodes[idx].kind != .ident: return 0
+    if nodes[arr].aux != i32(int(SK.local)) or nodes[idx].aux != i32(int(SK.local)): return 0
     a := int(nodes[arr].sym)
     j := int(nodes[idx].sym)
     for p in safe_index:
-        if p.0 == a and p.1 == j: return true
+        if p.0 == a and p.1 == j:
+            if p.2: return 2
+            return 1
+    0
+
+# does the loop body index array local a with anything but the loop variables in `ok`
+# (this loop's, and those of nested loops that are in bounds for a too)?
+fn other_index_of(n: int, a: int, ok: [int], seen: mut [bool]) -> bool:
+    if n <= 0 or n >= seen.len() or seen[n]: return false
+    seen[n] = true
+    k := nodes[n].kind
+    if k == .index:
+        b := int(nodes[n].a)
+        if nodes[b].kind == .ident and nodes[b].aux == i32(int(SK.local)) and int(nodes[b].sym) == a:
+            ix := int(nodes[n].b)
+            if not (nodes[ix].kind == .ident and nodes[ix].aux == i32(int(SK.local)) and ok.contains(int(nodes[ix].sym))): return true
+    if k == .for_:
+        inner := ok
+        it := int(nodes[n].a)
+        if int(nodes[n].aux) == 0 and range_bounds_arrays(it).contains(a): inner.push(int(nodes[n].sym))
+        return other_index_of(it, a, ok, seen) or other_index_of(int(nodes[n].b), a, inner, seen)
+    for c in [int(nodes[n].a), int(nodes[n].b), int(nodes[n].c), int(nodes[n].d)]:
+        if other_index_of(c, a, ok, seen): return true
+    for i in 0..nkids(n):
+        if other_index_of(kid(n, i), a, ok, seen): return true
+    for i in 0..nkids2(n):
+        if other_index_of(kid2(n, i), a, ok, seen): return true
     false
 
 fn gen_loop_body(b: int):
@@ -2437,13 +2510,19 @@ fn gen_for(s: int):
             e_mov(endv, e_load(VI, r, 8, 8))
         stmt_end()
         sg := types[prune(lt)].sign
-        safe_arr := -1
+        safe_arrs: [int]
         nonneg := false
         if aux == 0:
-            safe_arr = range_bounds_array(int(nodes[s].a))
+            safe_arrs = range_bounds_arrays(int(nodes[s].a))
             nonneg = is_nonneg(int(nodes[int(nodes[s].a)].a))
-        if safe_arr >= 0: safe_index.push((safe_arr, l))
         if nonneg: nonneg_locals.push(l)
+        for sa in safe_arrs:
+            seen := [false; nodes.len()]
+            # indexes by enclosing loops' variables that are in bounds for sa are fine too
+            ok := [l]
+            for p in safe_index:
+                if p.0 == sa: ok.push(p.1)
+            safe_index.push((sa, l, other_index_of(int(nodes[s].b), sa, ok, seen)))
         blk()
         brk := ctl
         lop()
@@ -2457,7 +2536,7 @@ fn gen_for(s: int):
         loops.push(LoopInfo(brk, cont, scope_locals.len()))
         gen_loop_body(int(nodes[s].b))
         loops.pop()
-        if safe_arr >= 0: safe_index.pop()
+        for sa in safe_arrs: safe_index.pop()
         if nonneg: nonneg_locals.pop()
         endc()
         e_mov(ctr, e_addi(ctr, 1))
@@ -2597,10 +2676,18 @@ fn uq_begin(s: int) -> int:
         fl := int(locals[l].flags)
         if fl & (LF_ALIAS | LF_CAPTURE | LF_BYREF) != 0: continue
         if fl & LF_PARAM != 0 and fl & LF_MUTPARAM == 0: continue
+        # only variables that exist before the loop: one declared inside it gets a new value
+        # (maybe a shared or read-only one) on every iteration
+        if fl & LF_PARAM == 0 and not declared_in_scope(l): continue
         arr_unique(local_place(l, true), t)
         uniq_locals.push(l)
         added += 1
     added
+
+fn declared_in_scope(l: int) -> bool:
+    for sl in scope_locals:
+        if sl.contains(l): return true
+    false
 
 fn uq_end(n: int):
     for _ in 0..n: uniq_locals.pop()

@@ -104,6 +104,11 @@ for label, args in [("native, debug", []), ("native, release", ["--release"]),
     r = run(cmd)
     last = (r.stdout.strip().splitlines() or ["?"])[-1]
     say(f"| {label} | {last} |")
+r = run(["python3", "tools/rendertest.py"], timeout=1200)
+say(f"| rendering (software renderer vs references, no GPU or display) | {(r.stdout.strip().splitlines() or ['?'])[-1]} |")
+if not QUICK:
+    r = run(["python3", "tools/fuzz.py", "60"], timeout=3000)
+    say(f"| differential fuzzing: random programs built 4 ways + by the C bootstrap compiler | {(r.stdout.strip().splitlines() or ['?'])[-1]} |")
 say()
 
 # ---------------- compile speed ----------------

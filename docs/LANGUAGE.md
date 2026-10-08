@@ -265,6 +265,12 @@ and bounds-check fast paths and runs the optimizer (constant folding, copy propa
 common subexpressions, redundant load and bounds-check elimination). Debug builds compile
 faster; both have identical behavior, including bounds checks.
 
+Array indexing is always checked, except where the check cannot fail: in
+`for i in 0..xs.len()` (or `for i in 0..n` with `n := xs.len()`, or `xs := [v; n]` and
+`for i in 0..n`, starting from any expression that cannot be negative) `xs[i]` has no check,
+as long as the function never resizes `xs` — writing its elements is fine. So the usual
+index loop costs what it would in C.
+
 ## 10. Parallelism
 
 Data-parallel helpers run a function over many elements on all CPU cores (fork-join):

@@ -9,6 +9,7 @@ import os, random, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JOT = os.path.join(ROOT, "bin", "jot")
+JOT0 = os.path.join(ROOT, "stage0", "jot0")      # the C bootstrap compiler: an independent implementation
 ENV = dict(os.environ, JOT_LIB=os.path.join(ROOT, "lib"))
 OUT = os.path.join(ROOT, "build", "fuzz")
 os.makedirs(OUT, exist_ok=True)
@@ -30,6 +31,7 @@ class Gen:
         self.vecs = []      # (name, lanes) of vec2/vec3/vec4 variables
         self.varrs = []     # (name, lanes) of arrays of 3 vectors
         self.depth = 0
+        self.use_vec = rnd.random() < 0.5     # half the programs stay in the bootstrap compiler's subset
         self.fns = []       # (name, nparams) of helper functions: int -> int
         self.n = 0
 
@@ -72,7 +74,7 @@ class Gen:
         if op == "if": return f"(if {self.cond(d + 1)}: {a} else: {b})"
         if op == "min": return f"min({a}, {b})"
         if op == "cmpsel": return f"int({a} < {b}) + int({a} == {b}) * 2"
-        if op == "float" and self.floats: return f"int({r.choice(self.floats)} * 3.0) % 100000"
+        if op == "float" and self.floats: return f"fi({r.choice(self.floats)} * 3.0) % 100000"
         if op == "match" and d <= 1 and self.ints:
             arms = []
             vals = r.sample(range(-3, 12), r.randint(1, 5))
@@ -165,8 +167,15 @@ class Gen:
 
     def stmt(self):
         r = self.r
-        if r.random() < 0.1:
+        if self.use_vec and r.random() < 0.1:
             self.vstmt()
+            return
+        if r.random() < 0.04 and self.arrays and self.depth < 3:
+            a = r.choice(self.arrays)
+            v = self.fresh("b")
+            op = r.choice(["or", "and"])
+            self.emit(f"{v} := mh({self.iexpr(2)}, {a}, macc) {op} mh({self.iexpr(2)}, {r.choice(self.arrays)}, macc)")
+            self.emit(f"print({v}, {a}, macc.len())")
             return
         if r.random() < 0.05 and self.arrays and self.depth < 3:
             # index loops over a whole array (their bounds checks may be removed)
@@ -281,7 +290,15 @@ class Gen:
 
     def program(self):
         r = self.r
-        out = ["struct P:", "    a: int", "    b: float", ""]
+        out = ["struct P:", "    a: int", "    b: float", "",
+               "# takes an array and a mut array: used inside and/or, where temporaries are conditional",
+               "fn mh(n: int, xs: [int], acc: mut [int]) -> bool:",
+               "    if acc.len() < 50: acc.push(n + xs.len())",
+               "    n % 3 == 0", "",
+               "# float to int where every compiler agrees (the C bootstrap compiler does not saturate)",
+               "fn fi(x: float) -> int:",
+               "    if x == x and abs(x) < 1000000000000000.0: return int(x)",
+               "    0", ""]
         # helper functions first
         for fi in range(r.randint(1, 4)):
             name = f"h{fi}"
@@ -293,6 +310,7 @@ class Gen:
             self.vecs, self.varrs = [], []
             self.ro = set(params)
             self.depth = 1
+            self.emit("macc: [int]")
             for _ in range(r.randint(1, 5)): self.stmt()
             body = self.lines
             ret = self.iexpr()
@@ -306,6 +324,7 @@ class Gen:
         self.strs, self.structs, self.parrs, self.closures, self.maps = [], [], [], [], []
         self.vecs, self.varrs = [], []
         self.depth = 1
+        self.emit("macc: [int]")
         for _ in range(r.randint(10, 40)): self.stmt()
         if self.vecs: self.emit(f"print({', '.join(v for v, _ in self.vecs[-4:])})")
         self.emit(f"print({', '.join(self.ints[-6:]) or '0'})")
@@ -342,6 +361,14 @@ def check(seed, wasm=True, keep=False):
         else:
             code, o, e = run([exe])
         outs[name] = o + (f"[exit {code}] {e[:200]}" if code != 0 else "")
+    # the bootstrap compiler shares no code with the self-hosted one, so it catches mistakes all
+    # of the self-hosted builds make alike (when the program stays within its language subset)
+    if os.path.exists(JOT0) and "vec" not in src:
+        exe = os.path.join(OUT, f"p{seed}_jot0")
+        code, _, err = run([JOT0, path, "-o", exe])
+        if code == 0:
+            code, o, e = run([exe])
+            outs["jot0"] = o + (f"[exit {code}] {e[:200]}" if code != 0 else "")
     vals = list(outs.values())
     ok = all(v == vals[0] for v in vals) and not vals[0].startswith("COMPILE ERROR")
     if not ok:
