@@ -1266,8 +1266,13 @@ parse_simple_stmt = () -> int:
     if is_assign_op(pk()):
         a = mk(.assign, cur_pos())
         opk = toks[advance()].kind
+        if opk == .kw_and or opk == .kw_or or opk == .kw_xor:
+            # and= or= xor= (bitwise on integers, logical on bools)
+            advance()
+            if opk == .kw_and: opk = .ampeq
+            else if opk == .kw_or: opk = .pipeeq
+            else: opk = .careteq
         nodes[a].op = i32(int(opk))
-        if opk == .kw_and or opk == .kw_or or opk == .kw_xor: advance()
         nodes[a].a = i32(e)
         v = parse_expr()
         if pk() == .comma: v = tuple_from(v)

@@ -47,6 +47,7 @@ typedef enum {
   TK_FN, TK_STRUCT, TK_ENUM, TK_IF, TK_ELSE, TK_FOR, TK_IN, TK_WHILE, TK_BREAK, TK_CONTINUE,
   TK_RETURN, TK_MATCH, TK_IMPORT, TK_AS, TK_CONST, TK_TRUE, TK_FALSE, TK_NONE, TK_NULL,
   TK_AND, TK_OR, TK_NOT, TK_MUT, TK_WHEN, TK_DEFER, TK_EXTERN, TK_TEST, TK_BUILD, TK_USE, TK_PASS,
+  TK_LOOP, TK_LET, TK_XOR, TK_IS,
   TK_LPAREN, TK_RPAREN, TK_LBRACK, TK_RBRACK, TK_LBRACE, TK_RBRACE,
   TK_COMMA, TK_COLON, TK_SEMI, TK_DOT, TK_DOTDOT, TK_DOTDOTEQ, TK_ARROW, TK_DECL,
   TK_ASSIGN, TK_PLUSEQ, TK_MINUSEQ, TK_STAREQ, TK_SLASHEQ, TK_PERCENTEQ, TK_AMPEQ, TK_PIPEEQ,
@@ -56,7 +57,7 @@ typedef enum {
   TK__COUNT
 } TokKind;
 
-enum { STRF_RAW = 1, STRF_TRIPLE = 2, INTF_CHAR = 4 };
+enum { STRF_RAW = 1, STRF_TRIPLE = 2, INTF_CHAR = 4, TF_SPACE = 8 };  // TF_SPACE: whitespace before the token
 
 typedef struct {
   uint8_t kind, flags;
@@ -104,6 +105,8 @@ enum { // node flags
   NF_TYPED = 512,
   NF_CONSTVAL = 1024,
   NF_GLOBAL = 2048,  // top-level variable declaration (global)
+  NF_BARE = 4096,    // a..b not (yet) closed by brackets
+  NF_CHARLIKE = 8192, // one-character string literal (may stand for its character code)
 };
 
 struct Node {
@@ -277,7 +280,7 @@ enum {
   IN_STR, IN_EMBED, IN_STRDATA, IN_FROM_BYTES, IN_TO_BYTES, IN_ARGV, IN_ENVP, IN_SETLEN,
   IN_TRUNCATE, IN_RESIZE, IN_FMT, IN_EQ, IN_CMP, IN_HASH, IN_ALIGNOF, IN_UNREACHABLE,
   IN_ARRCAP, IN_FMT_STRUCT, IN_SQRT, IN_FBITS, IN_FFROMBITS, IN_ATOMIC_ADD, IN_ATOMIC_CAS,
-  IN_STACK_PTR,
+  IN_STACK_PTR, IN_FILL,
 };
 
 // conversions

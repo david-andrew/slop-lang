@@ -111,10 +111,40 @@ static void eval_when_toplevel(Module *m, Node *w, NodeList *init_stmts) {
   register_decls(m, &l, init_stmts);
 }
 
+// `x = value` where no variable x exists yet is a declaration
+// (m != NULL: at the top level of module m, where only that module's globals count)
+static bool name_assignable(Scope *sc, Str name, Module *m) {
+  Sym *s = m ? scope_lookup_here(m->scope, name) : scope_lookup(sc, name);
+  if (!s) return false;
+  return s->kind == S_GLOBAL || (!m && s->kind == S_LOCAL);
+}
+static bool assign_declares(Node *s, Scope *sc, Module *m) {
+  if (s->kind != N_ASSIGN || s->op != TK_ASSIGN) return false;
+  Node *lhs = s->a;
+  if (lhs->kind == N_IDENT) return !name_assignable(sc, lhs->name, m);
+  if (lhs->kind != N_TUPLE) return false;
+  bool any = false;
+  for (int i = 0; i < lhs->list.len; i++) {
+    Node *e = lhs->list.data[i];
+    if (e->kind == N_HOLE) continue;
+    if (e->kind != N_IDENT || name_assignable(sc, e->name, m)) return false;
+    any = true;
+  }
+  return any;
+}
+static void assign_to_decl(Node *s) {
+  Node *lhs = s->a;
+  s->kind = N_VARDECL;
+  s->a = NULL;
+  if (lhs->kind == N_IDENT) s->name = lhs->name;
+  else s->list = lhs->list;
+}
+
 static void register_decls(Module *m, NodeList *decls, NodeList *init_stmts) {
   for (int i = 0; i < decls->len; i++) {
     Node *d = decls->data[i];
     d->mod = m;
+    if (assign_declares(d, m->scope, m)) assign_to_decl(d);
     switch (d->kind) {
     case N_FN:
       scope_add(m->scope, d->name, S_FNS, NULL, d);
@@ -129,9 +159,15 @@ static void register_decls(Module *m, NodeList *decls, NodeList *init_stmts) {
     }
     case N_IMPORT: {
       char path[1024];
-      snprintf(path, sizeof path, "%s/%.*s.jot", m->dir, d->sval.len, d->sval.p);
-      if (access(path, R_OK) != 0) snprintf(path, sizeof path, "%s/%.*s.jot", g_lib_dir, d->sval.len, d->sval.p);
-      if (access(path, R_OK) != 0) fatal(d->pos, "cannot find module '%.*s'", d->sval.len, d->sval.p);
+      if (d->aux2) { // use 'file.jot': relative to the importing file
+        if (d->sval.len && d->sval.p[0] == '/') snprintf(path, sizeof path, "%.*s", d->sval.len, d->sval.p);
+        else snprintf(path, sizeof path, "%s/%.*s", m->dir, d->sval.len, d->sval.p);
+        if (access(path, R_OK) != 0) fatal(d->pos, "cannot find '%.*s' (looked for %s)", d->sval.len, d->sval.p, path);
+      } else {
+        snprintf(path, sizeof path, "%s/%.*s.jot", m->dir, d->sval.len, d->sval.p);
+        if (access(path, R_OK) != 0) snprintf(path, sizeof path, "%s/%.*s.jot", g_lib_dir, d->sval.len, d->sval.p);
+        if (access(path, R_OK) != 0) fatal(d->pos, "cannot find module '%.*s'", d->sval.len, d->sval.p);
+      }
       Module *im = load_module(path, false, d->pos);
       if (d->aux) {
         Scope *s = m->scope;
@@ -891,7 +927,10 @@ void check_stmt(FnCtx *c, Node **ps) {
     s->kind = N_BLOCK; s->list.len = 0; // becomes a no-op
     break;
   }
-  case N_ASSIGN: check_assign(c, ps); break;
+  case N_ASSIGN:
+    if (assign_declares(s, c->scope, NULL)) { assign_to_decl(s); check_vardecl(c, s); }
+    else check_assign(c, ps);
+    break;
   case N_EXPRSTMT: {
     if (s->flags & NF_CHECKED) break;
     if (s->a->kind == N_MATCH) s->a->flags |= NF_STMT;

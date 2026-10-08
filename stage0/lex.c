@@ -4,7 +4,7 @@ static const char *tok_names[TK__COUNT] = {
   "end of file", "newline", "indent", "dedent", "identifier", "integer", "float", "string",
   "fn", "struct", "enum", "if", "else", "for", "in", "while", "break", "continue", "return",
   "match", "import", "as", "const", "true", "false", "none", "null", "and", "or", "not", "mut",
-  "when", "defer", "extern", "test", "build", "use", "pass",
+  "when", "defer", "extern", "test", "build", "use", "pass", "loop", "let", "xor", "is",
   "(", ")", "[", "]", "{", "}", ",", ":", ";", ".", "..", "..=", "->", ":=",
   "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
   "+", "-", "*", "/", "%", "&", "|", "^", "~", "<<", ">>", "==", "!=", "<", "<=", ">", ">=",
@@ -20,6 +20,7 @@ static struct { const char *s; int k; } keywords[] = {
   {"null", TK_NULL}, {"and", TK_AND}, {"or", TK_OR}, {"not", TK_NOT}, {"mut", TK_MUT},
   {"when", TK_WHEN}, {"defer", TK_DEFER}, {"extern", TK_EXTERN}, {"test", TK_TEST},
   {"build", TK_BUILD}, {"use", TK_USE}, {"pass", TK_PASS},
+  {"loop", TK_LOOP}, {"let", TK_LET}, {"xor", TK_XOR}, {"is", TK_IS},
 };
 
 typedef struct { bool block; int base; } Ctx;
@@ -39,6 +40,7 @@ static Pos lpos(Lexer *L, const char *at) { return (Pos){L->file, L->line, (int)
 static void emit(Lexer *L, int kind, const char *start, int len) {
   Token t = {0};
   t.kind = kind; t.pos = lpos(L, start); t.start = start; t.len = len;
+  if (start > L->src && (start[-1] == ' ' || start[-1] == '\t' || start[-1] == '\n' || start[-1] == '\r')) t.flags = TF_SPACE;
   vpush(L->toks, t);
 }
 static int last_kind(Lexer *L) { return L->toks.len ? L->toks.data[L->toks.len - 1].kind : TK_NEWLINE; }
@@ -155,52 +157,27 @@ static void lex_number(Lexer *L) {
   L->toks.data[L->toks.len - 1].ival = v;
 }
 
-static int lex_escape(Lexer *L, const char **pp) {
-  const char *p = *pp; // points after backslash
-  int c = *p++;
-  int r;
-  switch (c) {
-  case 'n': r = '\n'; break; case 't': r = '\t'; break; case 'r': r = '\r'; break;
-  case '0': r = 0; break; case '\\': r = '\\'; break; case '"': r = '"'; break;
-  case '\'': r = '\''; break; case '{': r = '{'; break; case '}': r = '}'; break;
-  case 'e': r = 27; break;
-  case 'x': {
-    r = 0;
-    for (int i = 0; i < 2; i++) {
-      int d = *p++;
-      if (d >= '0' && d <= '9') d -= '0'; else if (d >= 'a' && d <= 'f') d -= 'a' - 10;
-      else if (d >= 'A' && d <= 'F') d -= 'A' - 10; else fatal(lpos(L, p), "bad \\x escape");
-      r = r * 16 + d;
-    }
-    break;
-  }
-  default: fatal(lpos(L, p - 1), "unknown escape sequence \\%c", c);
-  }
-  *pp = p;
-  return r;
-}
-
 static void lex_string(Lexer *L, bool raw) {
   const char *s = L->p; // at opening quote
-  bool triple = s[0] == '"' && s[1] == '"' && s[2] == '"';
+  char q = s[0];
+  bool triple = q == '"' && s[1] == '"' && s[2] == '"';
   const char *p = s + (triple ? 3 : 1);
   const char *start = p;
   int depth = 0;
   for (;;) {
     if (*p == 0) fatal(lpos(L, s), "unterminated string");
-    if (!triple && *p == '\n' && depth == 0) fatal(lpos(L, s), "unterminated string (use \"\"\" for multi-line strings)");
     if (*p == '\n') { L->line++; L->line_start = p + 1; }
     if (depth == 0) {
       if (*p == '\\' && !raw) { p += 2; continue; }
-      if (triple ? (p[0] == '"' && p[1] == '"' && p[2] == '"') : *p == '"') break;
+      if (triple ? (p[0] == '"' && p[1] == '"' && p[2] == '"') : *p == q) break;
       if (!raw && *p == '{') { if (p[1] == '{') { p += 2; continue; } depth = 1; p++; continue; }
       p++;
     } else {
       if (*p == '{') depth++;
       else if (*p == '}') depth--;
-      else if (*p == '"') { // nested string inside interpolation
-        p++;
-        while (*p && *p != '"') { if (*p == '\\') p++; p++; }
+      else if (*p == '"' || *p == '\'') { // nested string inside interpolation
+        char nq = *p++;
+        while (*p && *p != nq) { if (*p == '\\') p++; p++; }
       }
       p++;
     }
@@ -208,6 +185,7 @@ static void lex_string(Lexer *L, bool raw) {
   Token t = {0};
   t.kind = TK_STR; t.pos = lpos(L, s); t.start = start; t.len = p - start;
   t.flags = (raw ? STRF_RAW : 0) | (triple ? STRF_TRIPLE : 0);
+  if (s > L->src && (s[-1] == ' ' || s[-1] == '\t' || s[-1] == '\n' || s[-1] == '\r')) t.flags |= TF_SPACE;
   // compute position based on start of string (line may have advanced for triple strings)
   vpush(L->toks, t);
   L->p = p + (triple ? 3 : 1);
@@ -235,7 +213,7 @@ Token *lex_file(int file, int *ntok) {
       continue;
     }
     if (is_ident_start(c)) {
-      if (c == 'r' && p[1] == '"') { L.p++; lex_string(&L, true); continue; }
+      if (c == 'r' && (p[1] == '"' || p[1] == '\'')) { L.p++; lex_string(&L, true); continue; }
       const char *s = p;
       while (is_ident_char(*p)) p++;
       L.p = p;
@@ -247,28 +225,7 @@ Token *lex_file(int file, int *ntok) {
     }
     if (c >= '0' && c <= '9') { lex_number(&L); continue; }
     if (c == '"') { lex_string(&L, false); continue; }
-    if (c == '\'') {
-      const char *s = p; p++;
-      int v;
-      if (*p == '\\') { p++; v = lex_escape(&L, &p); }
-      else {
-        // utf-8 decode
-        unsigned char b = *p;
-        if (b < 0x80) { v = b; p++; }
-        else {
-          int n = b >= 0xf0 ? 3 : b >= 0xe0 ? 2 : 1;
-          v = b & (0x3f >> n);
-          p++;
-          for (int i = 0; i < n; i++) v = (v << 6) | (*p++ & 0x3f);
-        }
-      }
-      if (*p != '\'') fatal(lpos(&L, s), "unterminated character literal");
-      L.p = p + 1;
-      emit(&L, TK_INT, s, L.p - s);
-      L.toks.data[L.toks.len - 1].ival = v;
-      L.toks.data[L.toks.len - 1].flags = INTF_CHAR;
-      continue;
-    }
+    if (c == '\'') { lex_string(&L, false); continue; }
     // punctuation
     int k = -1, n = 1;
     char c1 = p[1];

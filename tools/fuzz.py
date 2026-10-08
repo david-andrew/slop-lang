@@ -60,10 +60,10 @@ class Gen:
                 a = r.choice(self.parrs)
                 return f"{a}[abs({self.iexpr(d + 2)}) % {a}.len()].a"
             return str(r.choice([0, 1, 2, 3, 7, -1, -5, 100, 255, 1000, -32768, 65537, 2147483647, -2147483648]))
-        op = r.choice(["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "call", "neg", "if", "min", "cmpsel", "float", "match"])
+        op = r.choice(["+", "-", "*", "/", "%", "&", "|", "xor", "<<", ">>", "call", "neg", "if", "min", "cmpsel", "float", "match"])
         a = self.iexpr(d + 1)
         b = self.iexpr(d + 1)
-        if op in "+-*&|^": return f"({a} {op} {b})"
+        if op in ("+", "-", "*", "&", "|", "xor"): return f"({a} {op} {b})"
         if op in ("/", "%"): return f"({a} {op} (abs({b}) % 9 + 1))"
         if op in ("<<", ">>"): return f"({a} {op} (abs({b}) % 13))"
         if op == "neg": return f"(0 - {a})"
@@ -80,6 +80,7 @@ class Gen:
             vals = r.sample(range(-3, 12), r.randint(1, 5))
             for v in vals: arms.append(f"{v}: {self.iexpr(4)}")
             if r.random() < 0.5: arms.append(f"20..30: {self.iexpr(4)}")
+            if r.random() < 0.3: arms.append(f"'a', 'z': {self.iexpr(4)}")
             arms.append(f"_: {self.iexpr(4)}")
             return "(match " + r.choice(self.ints) + ":\n" + "".join("    " * (self.depth + 2) + arm + "\n" for arm in arms) + "    " * (self.depth + 1) + ")"
         return a
@@ -94,7 +95,7 @@ class Gen:
         b = self.fexpr(d + 1)
         if op in "+-*": return f"({a} {op} {b})"
         if op == "/": return f"({a} / (abs({b}) + 1.0))"
-        if op == "int": return f"float({self.iexpr(d + 2)} % 1000)"
+        if op == "int": return f"f64({self.iexpr(d + 2)} % 1000)"
         if op == "sqrt": return f"sqrt(abs({a}))"
         if op == "abs": return f"abs({a})"
         return f"floor({a})"
@@ -106,15 +107,15 @@ class Gen:
         c = r.randint(0, 5)
         if c == 0:
             v = self.fresh("nn")
-            self.emit(f"{v} := [{a}, [{self.iexpr(2)}], {a}]")
+            self.emit(f"{v} = [{a}, [{self.iexpr(2)}], {a}]")
             self.emit(f"{v}[{r.randint(0, 2)}].push({self.iexpr(2)})")
             self.emit(f"{v}[0][0] = {self.iexpr(2)}")
             self.emit(f"print({v}, {a})")
         elif c == 1:
             v = self.fresh("qq")
-            self.emit(f"{v} := Q({a}, {a}.len())")
+            self.emit(f"{v} = Q({a}, {a}.len())")
             w = self.fresh("qq")
-            self.emit(f"{w} := {v}")
+            self.emit(f"{w} = {v}")
             self.emit(f"{w}.xs[abs({self.iexpr(2)}) % {w}.xs.len()] = {self.iexpr(2)}")
             self.emit(f"if {v}.xs.len() < 40: {v}.xs.push({self.iexpr(2)})")
             self.emit(f"print({v}, {w}, {a})")
@@ -124,19 +125,19 @@ class Gen:
             self.emit(f"print({b})")
         elif c == 3:
             v = self.fresh("rv")
-            self.emit(f"{v} := rev({a})")
+            self.emit(f"{v} = rev({a})")
             self.emit(f"{v}[0] = {self.iexpr(2)}")
             self.emit(f"print({v}, {a}, rev({v}) == {a})")
         elif c == 4:
             v = self.fresh("cap")
-            self.emit(f"{v} := fn(i: int) -> int: {a}[abs(i) % {a}.len()] + {a}.len()")
+            self.emit(f"{v} = (i: int) -> int: {a}[abs(i) % {a}.len()] + {a}.len()")
             self.emit(f"print({v}({self.iexpr(2)}))")
             if a not in self.ro:
                 self.emit(f"{a}[0] = {self.iexpr(2)}")
                 self.emit(f"print({v}(0), {a}[0])")
         else:
             v = self.fresh("sw")
-            self.emit(f"{v} := {a}")
+            self.emit(f"{v} = {a}")
             if a not in self.ro:
                 self.emit(f"{a}, {v} = {v}, [{self.iexpr(2)}]")
             self.emit(f"print({a}, {v})")
@@ -172,11 +173,11 @@ class Gen:
         arrs = [v for v, k in self.varrs if k == n]
         if c < 0.3 or not same:
             v = self.fresh("v")
-            self.emit(f"{v} := {self.vexpr(n)}")
+            self.emit(f"{v} = {self.vexpr(n)}")
             self.vecs.append((v, n))
         elif c < 0.45:
             v = self.fresh("va")
-            self.emit(f"{v} := [{self.vexpr(n, 2)}, {self.vexpr(n, 2)}, {self.vexpr(n, 2)}]")
+            self.emit(f"{v} = [{self.vexpr(n, 2)}, {self.vexpr(n, 2)}, {self.vexpr(n, 2)}]")
             self.varrs.append((v, n))
         elif c < 0.65:
             v = r.choice(same)
@@ -219,7 +220,7 @@ class Gen:
             a = r.choice(self.arrays)
             v = self.fresh("b")
             op = r.choice(["or", "and"])
-            self.emit(f"{v} := mh({self.iexpr(2)}, {a}, macc) {op} mh({self.iexpr(2)}, {r.choice(self.arrays)}, macc)")
+            self.emit(f"{v} = mh({self.iexpr(2)}, {a}, macc) {op} mh({self.iexpr(2)}, {r.choice(self.arrays)}, macc)")
             self.emit(f"print({v}, {a}, macc.len())")
             return
         if r.random() < 0.05 and self.arrays and self.depth < 3:
@@ -227,34 +228,39 @@ class Gen:
             arr = r.choice(self.arrays)
             k = self.fresh("j")
             acc = self.fresh("sum")
-            self.emit(f"{acc} := 0")
-            if r.random() < 0.5:
-                self.emit(f"for {k} in 0..{arr}.len(): {acc} += {arr}[{k}] * {r.randint(1, 5)}")
-            else:
+            self.emit(f"{acc} = 0")
+            c = r.random()
+            if c < 0.35:
+                self.emit(f"loop {k} in [0..{arr}.len()): {acc} += {arr}[{k}] * {r.randint(1, 5)}")
+            elif c < 0.6:
                 n = self.fresh("n")
-                self.emit(f"{n} := {arr}.len()")
-                self.emit(f"for {k} in 0..{n}: {acc} ^= {arr}[{k}]")
+                self.emit(f"{n} = {arr}.len()")
+                self.emit(f"loop {k} in 0..{n} - 1: {acc} xor= {arr}[{k}]")
+            else:
+                # counting alongside the elements
+                x = self.fresh("x")
+                self.emit(f"loop {k} in 0.. and {x} in {arr}: {acc} += ({k} + 1) * {x}")
             self.emit(f"print({acc})")
             return
         c = r.random()
         if c < 0.2 or not self.ints:
             v = self.fresh("i")
-            self.emit(f"{v} := {self.iexpr()}")
+            self.emit(f"{v} = {self.iexpr()}")
             self.ints.append(v)
         elif c < 0.3:
             v = self.fresh("fl")
-            self.emit(f"{v} := {self.fexpr()}")
+            self.emit(f"{v} = {self.fexpr()}")
             self.floats.append(v)
         elif c < 0.38:
             v = self.fresh("a")
             n = r.randint(1, 6)
-            self.emit(f"{v} := [{', '.join(self.iexpr(2) for _ in range(n))}]")
+            self.emit(f"{v} = [{', '.join(self.iexpr(2) for _ in range(n))}]")
             self.arrays.append(v)
         elif c < 0.42 and r.random() < 0.5:
             self.new_value()
         elif c < 0.55 and [x for x in self.ints if x not in self.ro]:
             v = r.choice([x for x in self.ints if x not in self.ro])
-            self.emit(f"{v} {r.choice(['=', '+=', '-=', '^='])} {self.iexpr()}")
+            self.emit(f"{v} {r.choice(['=', '+=', '-=', 'xor='])} {self.iexpr()}")
         elif c < 0.62 and self.floats:
             v = r.choice(self.floats)
             self.emit(f"{v} = {self.fexpr()}")
@@ -270,22 +276,22 @@ class Gen:
                 self.block(r.randint(1, 3))
         elif c < 0.85 and self.depth < 3:
             k = self.fresh("k")
-            self.emit(f"for {k} in 0..{r.randint(1, 12)}:")
+            self.emit(f"loop {k} in " + r.choice([f"[0..{r.randint(1, 12)})", f"1..{r.randint(1, 12)}", f"[2..{r.randint(1, 12)}]"]) + ":")
             self.ints.append(k)
             self.ro.add(k)
             self.block(r.randint(1, 4))
             self.ints.remove(k)
         elif c < 0.9 and self.depth < 3 and self.arrays:
             x = self.fresh("x")
-            self.emit(f"for {x} in {r.choice(self.arrays)}:")
+            self.emit(f"loop {x} in {r.choice(self.arrays)}:")
             self.ints.append(x)
             self.ro.add(x)
             self.block(r.randint(1, 3))
             self.ints.remove(x)
         elif c < 0.94 and self.depth < 3:
             w = self.fresh("w")
-            self.emit(f"{w} := 0")
-            self.emit(f"while {w} < {r.randint(1, 9)} and ({self.cond()}):")
+            self.emit(f"{w} = 0")
+            self.emit(f"loop {w} < {r.randint(1, 9)} and ({self.cond()}):")
             self.depth += 1
             self.emit(f"{w} += 1")
             self.depth -= 1
@@ -298,61 +304,61 @@ class Gen:
         k = r.randint(0, 5)
         if k == 0:
             v = self.fresh("s")
-            self.emit(f'{v} := "{r.choice(["ab", "", "xyz", "hello"])}" + "{{{self.iexpr(2)}}}"')
+            self.emit(f'{v} = "{r.choice(["ab", "", "xyz", "hello"])}" + "{{{self.iexpr(2)}}}"')
             self.strs.append(v)
         elif k == 1 and self.strs:
             v = r.choice(self.strs)
             self.emit(f'if len({v}) < 40: {v} = {v} + "{r.choice("abc")}"')
-            self.emit(f"print({v}, len({v}), {v}.find(\"a\"), {v}[0..min(2, len({v}))])")
+            self.emit(f"print({v}, len({v}), {v}.find(\"a\"), {v}[0..min(2, len({v})))], {v}[1..], {v}.count('a'))")
         elif k == 2:
             v = self.fresh("q")
-            self.emit(f"{v} := P({self.iexpr(2)}, {self.fexpr(2)})")
+            self.emit(f"{v} = P({self.iexpr(2)}, {self.fexpr(2)})")
             self.structs.append(v)
             if r.random() < 0.5:
                 self.emit(f"{v}.a += {self.iexpr(2)}")
                 self.emit(f"print({v})")
         elif k == 3:
             v = self.fresh("pa")
-            self.emit(f"{v} := [P({self.iexpr(2)}, 1.5), P({self.iexpr(2)}, -2.0)]")
+            self.emit(f"{v} = [P({self.iexpr(2)}, 1.5), P({self.iexpr(2)}, -2.0)]")
             self.parrs.append(v)
             if r.random() < 0.6:
-                self.emit(f"for mut it in {v}:")
+                self.emit(f"loop mut it in {v}:")
                 self.emit(f"    it.a = it.a * 3 + {self.iexpr(3)}")
                 self.emit(f"    it.b = it.b * 0.5")
             self.emit(f"print({v})")
         elif k == 4:
             v = self.fresh("cl")
             cap = self.iexpr(2)
-            self.emit(f"{v}k := {cap}")
-            self.emit(f"{v} := fn(x: int) -> int: x * 3 + {v}k")
+            self.emit(f"{v}k = {cap}")
+            self.emit(f"{v} = (x: int) -> int: x * 3 + {v}k")
             self.closures.append(v)
         else:
             v = self.fresh("m")
             self.emit(f"{v}: {{int: int}} = {{}}")
-            self.emit(f"for mk in 0..{r.randint(1, 20)}: {v}[(mk * 7) % 13] = mk + {self.iexpr(3)}")
+            self.emit(f"loop mk in [0..{r.randint(1, 20)}): {v}[(mk * 7) % 13] = mk + {self.iexpr(3)}")
             self.emit(f"print({v}.len())")
             self.maps.append(v)
 
     def program(self):
         r = self.r
-        out = ["struct P:", "    a: int", "    b: float", "",
+        out = ["struct P:", "    a: int", "    b: f64", "",
                "# takes an array and a mut array: used inside and/or, where temporaries are conditional",
-               "fn mh(n: int, xs: [int], acc: mut [int]) -> bool:",
+               "mh = (n: int, xs: int[], acc: mut int[]) -> bool:",
                "    if acc.len() < 50: acc.push(n + xs.len())",
                "    n % 3 == 0", "",
-               "struct Q:", "    xs: [int]", "    n: int", "",
-               "fn grow(xs: mut [int], k: int):",
+               "struct Q:", "    xs: int[]", "    n: int", "",
+               "grow = (xs: mut int[], k: int):",
                "    if xs.len() < 40: xs.push(k)",
                "    xs[0] += k", "",
-               "fn rev(xs: [int]) -> [int]:",
-               "    out: [int]",
-               "    i := xs.len() - 1",
-               "    while i >= 0:",
+               "rev = (xs: int[]) -> int[]:",
+               "    out: int[]",
+               "    i = xs.len() - 1",
+               "    loop i >= 0:",
                "        out.push(xs[i])",
                "        i -= 1",
                "    out", "",
                "# float to int where every compiler agrees (the C bootstrap compiler does not saturate)",
-               "fn fi(x: float) -> int:",
+               "fi = (x: f64) -> int:",
                "    if x == x and abs(x) < 1000000000000000.0: return int(x)",
                "    0", ""]
         # helper functions first
@@ -366,11 +372,11 @@ class Gen:
             self.vecs, self.varrs = [], []
             self.ro = set(params)
             self.depth = 1
-            self.emit("macc: [int]")
+            self.emit("macc: int[]")
             for _ in range(r.randint(1, 5)): self.stmt()
             body = self.lines
             ret = self.iexpr()
-            out.append(f"fn {name}({', '.join(p + ': int' for p in params)}) -> int:")
+            out.append(f"{name} = ({', '.join(p + ': int' for p in params)}) -> int:")
             out.extend(body)
             out.append(f"    {ret}")
             out.append("")
@@ -380,13 +386,13 @@ class Gen:
         self.strs, self.structs, self.parrs, self.closures, self.maps = [], [], [], [], []
         self.vecs, self.varrs = [], []
         self.depth = 1
-        self.emit("macc: [int]")
+        self.emit("macc: int[]")
         for _ in range(r.randint(10, 40)): self.stmt()
         if self.vecs: self.emit(f"print({', '.join(v for v, _ in self.vecs[-4:])})")
         self.emit(f"print({', '.join(self.ints[-6:]) or '0'})")
         if self.floats: self.emit(f"print({', '.join(self.floats[-4:])})")
         if self.arrays: self.emit(f"print({self.arrays[-1]})")
-        out.append("fn main():")
+        out.append("main = ():")
         out.extend(self.lines)
         return "\n".join(out) + "\n"
 

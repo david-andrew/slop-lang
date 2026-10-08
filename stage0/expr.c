@@ -33,7 +33,7 @@ static struct { const char *name; int id; bool arr_domain; } intrinsics[] = {
   {"unreachable", IN_UNREACHABLE, false}, {"sqrt", IN_SQRT, false}, {"__fmt_fields", IN_FMT_STRUCT, false},
   {"__hash_value", IN_HASH, false}, {"__set_len", IN_SETLEN, false},
   {"__atomic_add", IN_ATOMIC_ADD, false}, {"__atomic_cas", IN_ATOMIC_CAS, false},
-  {"__stack_ptr", IN_STACK_PTR, false},
+  {"__stack_ptr", IN_STACK_PTR, false}, {"fill", IN_FILL, false},
 };
 
 void register_intrinsics(Scope *s) {
@@ -50,6 +50,17 @@ static int intrinsic_id(Str name, bool *arr_domain) {
 Sym *lookup_value(FnCtx *c, Str name) { return scope_lookup(c->scope, name); }
 
 static bool is_lit(Node *n) { return n->flags & NF_LITERAL; }
+
+// a one-character string literal standing for its character code
+static bool charlike(Node *n) { return n->kind == N_STR && (n->flags & NF_CHARLIKE); }
+static void charlike_to_int(Node *n) {
+  const unsigned char *s = (const unsigned char *)n->sval.p;
+  int len = n->sval.len;
+  int64_t v = s[0];
+  if (len > 1) { v &= 0x3f >> (len - 1); for (int i = 1; i < len; i++) v = (v << 6) | (s[i] & 0x3f); }
+  n->kind = N_INT; n->ival = v; n->aux = 1; n->type = NULL;
+  n->flags = (n->flags & ~(NF_CHARLIKE | NF_CHECKED)) | NF_LITERAL;
+}
 static Type *lit_default(Node *n) { return n->kind == N_FLOAT ? t_float : t_int; }
 
 static void wrap_conv(Node **pn, int cv, Type *to) {
@@ -98,6 +109,7 @@ void coerce(FnCtx *c, Node **pn, Type *target) {
   Node *n = *pn;
   Type *from = prune(n->type), *to = prune(target);
   if (!to) return;
+  if (charlike(n) && to->kind == TY_INT) { charlike_to_int(n); n->type = t_int; from = t_int; }
   if (!from) fatal(n->pos, "internal: unchecked expression");
   if (from == t_never) return;
   if (is_lit(n)) {
@@ -397,7 +409,7 @@ static int arg_cost(Node *a, Type *pat, Type **binds) {
   if (ctx_dependent(a)) {
     switch (a->kind) {
     case N_HOLE: return 0;
-    case N_IDENT: return p->kind == TY_FN ? 0 : -1;
+    case N_IDENT: return p->kind == TY_FN ? 0 : p->kind == TY_PARAM ? 3 : -1;
     case N_LAMBDA:
       if (p->kind == TY_PARAM) return a->list.len && a->list.data[0]->a ? 3 : -1;
       if (p->kind != TY_FN || p->nargs != a->list.len) return -1;
@@ -415,6 +427,7 @@ static int arg_cost(Node *a, Type *pat, Type **binds) {
     default: return -1;
     }
   }
+  if (charlike(a) && p->kind == TY_INT) return 1;
   if (is_lit(a)) {
     if (p->kind == TY_PARAM) {
       Type *b = binds[p->id];
@@ -757,6 +770,7 @@ static Type *conversion(FnCtx *c, Node **pn, Type *to, Node **args, int nargs) {
     *pn = s;
     return check_expr(c, pn, NULL);
   }
+  if (charlike(args[0]) && to->kind == TY_INT) charlike_to_int(args[0]);
   Node *a = args[0];
   Type *ft = check_expr(c, &args[0], NULL);
   a = args[0];
@@ -973,6 +987,14 @@ static Type *check_intrinsic(FnCtx *c, Node **pn, int id, Node **args, int nargs
   n->a = NULL;
   Type *r = t_void;
   switch (id) {
+  case IN_FILL: { // fill(x, n): an array of n copies of x
+    nargs_check(n, nargs, 2, 2, "fill");
+    n->kind = N_ARRAY;
+    n->aux = 0;
+    n->b = args[1];
+    n->list.len = 1;
+    return check_expr(c, pn, expected);
+  }
   case IN_LEN: case IN_ARRCAP: {
     nargs_check(n, nargs, 1, 1, "len");
     Type *t = arg_type(c, args, 0, NULL);
@@ -1217,6 +1239,19 @@ static bool is_struct_like(Type *t) {
 static Type *check_binary(FnCtx *c, Node **pn, Type *expected) {
   Node *n = *pn;
   int op = n->op;
+  if (op == TK_XOR) {
+    // logical on bools (a != b), bitwise on integers
+    Type *ta = prune(check_expr(c, &n->a, NULL));
+    n->a->flags |= NF_CHECKED;
+    n->op = ta->kind == TY_BOOL ? TK_NE : TK_CARET;
+    return check_binary(c, pn, expected);
+  }
+  // 'a' == c: the literal is a character code when the other side is an integer
+  if (charlike(n->a) && !charlike(n->b) && op != TK_PLUS) {
+    Type *tb = prune(check_expr(c, &n->b, NULL));
+    n->b->flags |= NF_CHECKED;
+    if (is_int(tb) || is_lit(n->b)) charlike_to_int(n->a);
+  }
   if (op == TK_IN) {
     // a in b  ->  contains(b, a)
     Node *call = new_node(N_CALL, n->pos);
@@ -1544,6 +1579,7 @@ Type *check_expr(FnCtx *c, Node **pn, Type *expected) {
     n->flags |= NF_LITERAL;
     break;
   case N_STR:
+    if (charlike(n) && ex && ex->kind == TY_INT) { charlike_to_int(n); return check_expr(c, pn, expected); }
     if (n->aux) {
       for (int i = 0; i < n->list.len; i++) {
         Node *part = n->list.data[i];
@@ -1704,15 +1740,20 @@ Type *check_expr(FnCtx *c, Node **pn, Type *expected) {
     t = check_binary(c, pn, expected);
     n = *pn;
     break;
-  case N_AND: case N_OR:
-    check_expr_to(c, &n->a, t_bool);
-    check_expr_to(c, &n->b, t_bool);
+  case N_AND: case N_OR: case N_NOT: {
+    // logical on bools, bitwise on integers
+    Type *ta = prune(check_expr(c, &n->a, ex && is_int(ex) ? ex : NULL));
+    if (is_int(ta) || (is_lit(n->a) && n->a->kind == N_INT)) {
+      n->a->flags |= NF_CHECKED;
+      if (n->kind == N_NOT) { n->kind = N_UNARY; n->op = TK_TILDE; }
+      else { n->op = n->kind == N_AND ? TK_AMP : TK_PIPE; n->kind = N_BINARY; }
+      return check_expr(c, pn, expected);
+    }
+    coerce(c, &n->a, t_bool);
+    if (n->b) check_expr_to(c, &n->b, t_bool);
     t = t_bool;
     break;
-  case N_NOT:
-    check_expr_to(c, &n->a, t_bool);
-    t = t_bool;
-    break;
+  }
   case N_COALESCE: {
     Type *at = prune(check_expr(c, &n->a, ex ? (ex->kind == TY_OPT ? ex : mk_opt(ex)) : NULL));
     if (at->kind != TY_OPT) fatal(n->pos, "'?\?' needs an optional on the left, found %s", type_str(at));
@@ -1745,13 +1786,15 @@ Type *check_expr(FnCtx *c, Node **pn, Type *expected) {
       t = ex;
       break;
     }
-    Type *elt = NULL; bool anyfloat = false;
+    Type *elt = NULL; bool anyfloat = false, allchar = true;
     for (int i = 0; i < n->list.len; i++) {
+      Node *e = n->list.data[i];
       Type *it = check_expr(c, &n->list.data[i], elt);
-      if (is_lit(n->list.data[i])) { if (n->list.data[i]->kind == N_FLOAT) anyfloat = true; }
-      else if (!elt) elt = it;
+      if (!charlike(e)) allchar = false;
+      if (is_lit(e)) { if (e->kind == N_FLOAT) anyfloat = true; }
+      else if (!elt && !charlike(e)) elt = it;
     }
-    if (!elt) elt = anyfloat ? t_float : t_int;
+    if (!elt) elt = allchar ? t_str : anyfloat ? t_float : t_int;
     for (int i = 0; i < n->list.len; i++) coerce(c, &n->list.data[i], elt);
     t = mk_array(elt);
     break;
