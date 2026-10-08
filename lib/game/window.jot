@@ -282,7 +282,10 @@ else:
             if len(why) == 0:
                 __wayland = true
                 if not __soft:
-                    why2 = __egl_open_surfaceless()
+                    # (GPU arrays may have made the context already: keep it, their data lives there)
+                    why2 = ""
+                    if __egl_dpy == null: why2 = __egl_open_surfaceless()
+                    else: __gl_screen_resize(__win_w, __win_h)
                     if len(why2) > 0:
                         eprint("note: {why2}; using the software renderer")
                         __soft = true

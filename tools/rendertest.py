@@ -2,7 +2,9 @@
 """Render regression test: draw frame 60 of the example games with the software renderer (no
 GPU, no display) and compare with the reference frames in tests/render. The small scenes in
 tests/render/*.jot check shader semantics: their references were rendered by a GPU.
-usage: rendertest.py [--update]   (--update rewrites the references; scenes need a display)"""
+With a display (or --gpu), each frame is also rendered on the GPU and compared with the same
+references, which catches shader code that only the GPU driver compiles.
+usage: rendertest.py [--update] [--gpu | --no-gpu]   (--update rewrites the references; scenes need a display)"""
 import os, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pngutil import downsample, png_rows, write_png
@@ -11,6 +13,9 @@ root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 jot = os.path.join(root, "bin", "jot")
 refdir = os.path.join(root, "tests", "render")
 update = "--update" in sys.argv
+has_display = bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+gpu_too = ("--gpu" in sys.argv or has_display) and "--no-gpu" not in sys.argv and not update
+GPU_FRAME_LIMIT = 4.0   # a whole game frame on a GPU (different rasterization and precision)
 os.makedirs("/tmp/jot-render", exist_ok=True)
 games = {"cube": "examples/cube.jot", "lumen": "examples/lumen/lumen.jot", "dunes": "examples/dunes/dunes.jot"}
 scenes = sorted(f[:-4] for f in os.listdir(refdir) if f.endswith(".jot"))
@@ -59,5 +64,26 @@ for name, src in games.items():
     limit = GPU_LIMIT if name in scenes else LIMIT
     print(f"{'ok  ' if d <= limit else 'FAIL'} {name}: mean abs difference {d:.3f}")
     failed += d > limit
-print(f"{len(games) - failed} passed, {failed} failed")
+    if gpu_too:
+        gpng = f"/tmp/jot-render/{name}_gpu.png"
+        if os.path.exists(gpng): os.remove(gpng)
+        genv = dict(os.environ, JOT_LIB=os.path.join(root, "lib"), JOT_FRAMES="60", JOT_SCREENSHOT=gpng)
+        genv.pop("JOT_SOFTWARE", None)
+        r = subprocess.run([exe], env=genv, capture_output=True, text=True, timeout=300)
+        if r.returncode != 0 or not os.path.exists(gpng):
+            print(f"FAIL {name} (GPU): render failed\n{r.stderr[-2000:]}")
+            failed += 1
+            continue
+        if "software renderer" in r.stderr:
+            print(f"skip {name} (GPU): no GPU driver")
+            continue
+        w2, h2, got2 = downsample(gpng, 4)
+        if (w2, h2) != (rw, rh):
+            print(f"FAIL {name} (GPU): size {w2}x{h2}, reference {rw}x{rh}")
+            failed += 1
+            continue
+        d2 = sum(abs(a - b) for a, b in zip(got2, want)) / len(want)
+        print(f"{'ok  ' if d2 <= GPU_FRAME_LIMIT else 'FAIL'} {name} (GPU): mean abs difference {d2:.3f}")
+        failed += d2 > GPU_FRAME_LIMIT
+print(f"{len(games) * (2 if gpu_too else 1) - failed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
