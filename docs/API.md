@@ -857,6 +857,10 @@ const WLK_VIEWPORTER = 22
 const WLK_VIEWPORT = 23
 const WLK_FRAC_MGR = 24        # wp_fractional_scale_manager_v1
 const WLK_FRAC = 25
+const WLK_DDM = 26             # wl_data_device_manager (the clipboard)
+const WLK_DDEV = 27
+const WLK_DSOURCE = 28
+const WLK_DOFFER = 29
 const WL_BAR = 30
 const WL_EDGE = 8              # pixels along the window's border that resize it
 ```
@@ -872,6 +876,7 @@ enum Mouse: left, middle, right
 key_down = (k: Key) -> bool    # true while the key is held
 key_pressed = (k: Key) -> bool    # true only in the frame the key was pressed
 key_released = (k: Key) -> bool
+key_typed = (k: Key) -> bool    # true in the frame the key was pressed, and again each time it repeats while held down (for moving through text or menus); characters typed arrive through text_input()
 mouse_pos = () -> vec2    # (in the 2D units of the screen: see screen_size)
 mouse_delta = () -> vec2
 mouse_wheel = () -> f64
@@ -890,6 +895,11 @@ fps = () -> f64
 elapsed = () -> f64
 frame_number = () -> int
 quit = ()
+set_fullscreen = (on: bool = true)
+toggle_fullscreen = ()
+is_fullscreen = () -> bool
+clipboard = () -> str    # the text on the system clipboard ("" if none, or not text). In a web page the browser lets a page read it only as it is pasted: this is the text last pasted (ctrl+V) into the page.
+set_clipboard = (s: str)
 window = (title: str = "jot", width: int = 1280, height: int = 720)    # Open the game window (called automatically when the program defines update/draw).
 ```
 

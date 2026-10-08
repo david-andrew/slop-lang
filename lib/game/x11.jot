@@ -241,6 +241,28 @@ __xp_open = (title: str, w: int, h: int) -> str:
     __xp_send(m)
     ""
 
+# ask the window manager for fullscreen (_NET_WM_STATE): a ClientMessage sent to the root window
+__xp_fullscreen = (on: bool):
+    state = __xp_intern("_NET_WM_STATE")
+    full = __xp_intern("_NET_WM_STATE_FULLSCREEN")
+    b: u8[]
+    b.push(25)                                      # SendEvent
+    b.push(0)
+    __put16(b, 11)
+    __put32(b, __xp_root)
+    __put32(b, 0x180000)                            # SubstructureRedirect | SubstructureNotify
+    b.push(33)                                      # ClientMessage
+    b.push(32)
+    __put16(b, 0)
+    __put32(b, __xp_win)
+    __put32(b, state)
+    __put32(b, int(on))                             # add / remove
+    __put32(b, full)
+    __put32(b, 0)
+    __put32(b, 1)
+    __put32(b, 0)
+    __xp_send(b)
+
 # show w x h pixels (32-bit BGRX rows, top first), split into requests the server accepts
 __xp_put_image = (pixels: u8[], w: int, h: int):
     rows = max((__xp_maxreq * 4 - 24) / (w * 4), 1)
@@ -294,6 +316,7 @@ __xp_poll = ():
             break
         __xp_in = __xp_in + buf[..r)
     k = 0
+    repeat = false
     loop k + 32 <= __xp_in.len():
         e = __xp_in[k..k + 32)
         kind = int(e[0]) & 0x7F
@@ -301,12 +324,19 @@ __xp_poll = ():
         if kind == 35 or kind == 1: n += __xp_u32(e, 4) * 4         # generic events and replies carry more
         if k + n > __xp_in.len(): break
         k += n
+        if kind == 3 and k + 32 <= __xp_in.len():
+            # a release at once followed by a press of the same key (same time): held down, repeating
+            nx = __xp_in[k..k + 32)
+            if int(nx[0]) & 0x7F == 2 and nx[1] == e[1] and __xp_u32(nx, 4) == __xp_u32(e, 4):
+                repeat = true
+                continue
         if kind == 2 or kind == 3:
             sym = __xp_keysym(int(e[1]), false)
-            __key_event(__xkey(sym), kind == 2)
+            __key_event(__xkey(sym), kind == 2, repeat)
+            repeat = false
             if kind == 2:
                 ch = __xp_keysym(int(e[1]), __xp_u16(e, 28) & 1 != 0)
-                if ch >= 32 and ch < 127: __text_input += chr(ch)
+                if ch >= 32 and ch < 127 and __xp_u16(e, 28) & 4 == 0: __text_input += chr(ch)
         else if kind == 4 or kind == 5:
             btn = int(e[1])
             if btn == 1: __mouse_event(0, kind == 4)

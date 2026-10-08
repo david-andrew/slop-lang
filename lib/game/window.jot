@@ -21,6 +21,7 @@ __win_close = false
 __key_down: bool[]
 __key_pressed: bool[]
 __key_released: bool[]
+__key_typed: bool[]             # pressed, or repeated by holding it down
 __mouse_x = 0.0
 __mouse_y = 0.0
 __mouse_dx = 0.0
@@ -41,14 +42,17 @@ __input_init = ():
         __key_down = fill(false, __NKEYS)
         __key_pressed = fill(false, __NKEYS)
         __key_released = fill(false, __NKEYS)
+        __key_typed = fill(false, __NKEYS)
         __mouse_btn = fill(false, 8)
         __mouse_pressed = fill(false, 8)
         __mouse_released = fill(false, 8)
 
-__key_event = (k: int, down: bool):
+# (repeat: the key was held down long enough to repeat, as in a text field)
+__key_event = (k: int, down: bool, repeat: bool = false):
     if k <= 0 or k >= __NKEYS: return
     if down:
         if not __key_down[k]: __key_pressed[k] = true
+        if not __key_down[k] or repeat: __key_typed[k] = true
         __key_down[k] = true
     else:
         if __key_down[k]: __key_released[k] = true
@@ -66,6 +70,7 @@ __mouse_event = (b: int, down: bool):
 __input_end_frame = ():
     loop mut x in __key_pressed: x = false
     loop mut x in __key_released: x = false
+    loop mut x in __key_typed: x = false
     loop mut x in __mouse_pressed: x = false
     loop mut x in __mouse_released: x = false
     __mouse_dx = 0.0
@@ -85,6 +90,11 @@ key_pressed = (k: Key) -> bool:
 key_released = (k: Key) -> bool:
     __input_init()
     __key_released[int(k)]
+# true in the frame the key was pressed, and again each time it repeats while held down (for
+# moving through text or menus); characters typed arrive through text_input()
+key_typed = (k: Key) -> bool:
+    __input_init()
+    __key_typed[int(k)]
 # (in the 2D units of the screen: see screen_size)
 mouse_pos = () -> vec2:
     s = __view_scale()
@@ -142,6 +152,20 @@ elapsed = () -> f64:
 frame_number = () -> int: __frame_count
 quit = (): __win_close = true
 
+# fill the screen with the window (and back); also in a web page
+__fullscreen = false
+set_fullscreen = (on: bool = true):
+    if not __win_open or on == __fullscreen: return
+    __fullscreen = on
+    __platform_fullscreen(on)
+toggle_fullscreen = (): set_fullscreen(not __fullscreen)
+is_fullscreen = () -> bool: __fullscreen
+
+# the text on the system clipboard ("" if none, or not text). In a web page the browser lets a
+# page read it only as it is pasted: this is the text last pasted (ctrl+V) into the page.
+clipboard = () -> str: __platform_clipboard()
+set_clipboard = (s: str): __platform_set_clipboard(s)
+
 # Open the game window (called automatically when the program defines update/draw).
 window = (title: str = "jot", width: int = 1280, height: int = 720):
     __input_init()
@@ -165,6 +189,20 @@ when TARGET == "wasm":
     extern __web_canvas_size = (out: *i32)
 
     extern __web_set_title = (title: *u8, title_len: i32)
+    extern __web_fullscreen = (on: i32)
+    extern __web_is_fullscreen = () -> i32
+    extern __web_clipboard_get = (out: *u8, cap: i32) -> i32
+    extern __web_clipboard_set = (p: *u8, n: i32)
+
+    __platform_fullscreen = (on: bool): __web_fullscreen(i32(int(on)))
+    __platform_clipboard = () -> str:
+        buf = fill(u8(0), 4096)
+        n = int(__web_clipboard_get(data(buf), 4096))
+        if n > 4096:
+            buf = fill(u8(0), n)
+            __web_clipboard_get(data(buf), i32(n))
+        str_from_bytes(buf[..n))
+    __platform_set_clipboard = (s: str): __web_clipboard_set(data(s), i32(len(s)))
 
     __platform_open = (): __web_canvas_open(data(__win_title), i32(len(__win_title)), i32(__win_w), i32(__win_h))
     __platform_title = (): __web_set_title(data(__win_title), i32(len(__win_title)))
@@ -184,10 +222,12 @@ when TARGET == "wasm":
         __web_canvas_size(&sz as *i32)
         __win_w = int(sz.0)
         __win_h = int(sz.1)
+        __fullscreen = __web_is_fullscreen() != 0          # (the browser leaves it on Escape)
         __run_frame(dt, __web_update, __web_draw)
 
+    # down: 0 released, 1 pressed, 2 repeated (held down)
     @export("__key")
-    __web_key = (k: i32, down: i32): __key_event(int(k), down != 0)
+    __web_key = (k: i32, down: i32): __key_event(int(k), down != 0, down == 2)
 
     @export("__mouse")
     __web_mouse = (kind: i32, x: f32, y: f32, b: i32):
@@ -252,6 +292,20 @@ else:
     extern XSync = (d: *u8, discard: i32) -> i32
     @lib("libX11.so.6")
     extern XFree = (p: *u8) -> i32
+    @lib("libX11.so.6")
+    extern XkbSetDetectableAutoRepeat = (d: *u8, detectable: i32, supported: *i32) -> i32
+    @lib("libX11.so.6")
+    extern XSendEvent = (d: *u8, w: int, propagate: i32, mask: int, ev: *u8) -> i32
+    @lib("libX11.so.6")
+    extern XSetSelectionOwner = (d: *u8, selection: int, owner: int, time: int) -> i32
+    @lib("libX11.so.6")
+    extern XGetSelectionOwner = (d: *u8, selection: int) -> int
+    @lib("libX11.so.6")
+    extern XConvertSelection = (d: *u8, selection: int, target: int, property: int, requestor: int, time: int) -> i32
+    @lib("libX11.so.6")
+    extern XChangeProperty = (d: *u8, w: int, property: int, ty: int, format: i32, mode: i32, data: *u8, n: i32) -> i32
+    @lib("libX11.so.6")
+    extern XGetWindowProperty = (d: *u8, w: int, property: int, offset: int, length: int, delete: i32, req_type: int, actual_type: *int, actual_format: *i32, nitems: *int, bytes_after: *int, prop: **u8) -> i32
 
     @lib("libEGL.so.1")
     extern eglGetDisplay = (native: *u8) -> *u8
@@ -337,6 +391,7 @@ else:
         XSelectInput(__xdpy, __xwin, 0x1 | 0x2 | 0x4 | 0x8 | 0x40 | 0x20000 | 0x200000)
         __wm_delete = XInternAtom(__xdpy, data("WM_DELETE_WINDOW"), 0)
         XSetWMProtocols(__xdpy, __xwin, &__wm_delete, 1)
+        XkbSetDetectableAutoRepeat(__xdpy, 1, null)       # (a held key repeats presses only)
         XMapWindow(__xdpy, __xwin)
         XFlush(__xdpy)
         __xev = __alloc(256)
@@ -476,37 +531,143 @@ else:
         if __xdpy == null: return
         loop XPending(__xdpy) > 0:
             XNextEvent(__xdpy, __xev)
-            ev = __xev as *i32
-            kind = int(ev[0])
-            if kind == 2 or kind == 3:
-                sym = XLookupKeysym(__xev, 0)
-                __key_event(__xkey(sym), kind == 2)
-                if kind == 2:
-                    buf = __alloc(16)
-                    n = XLookupString(__xev, buf, 15, null, null)
-                    if n == 1 and buf[0] >= 32 and buf[0] < 127: __text_input += chr(int(buf[0]))
-                    __free(buf)
-            else if kind == 4 or kind == 5:
-                btn = int(ev[21])
-                if btn == 1: __mouse_event(0, kind == 4)
-                else if btn == 2: __mouse_event(1, kind == 4)
-                else if btn == 3: __mouse_event(2, kind == 4)
-                else if btn == 4 and kind == 4: __mouse_wheel += 1.0
-                else if btn == 5 and kind == 4: __mouse_wheel -= 1.0
-            else if kind == 6:
-                x = f64(ev[16])
-                y = f64(ev[17])
-                __mouse_dx += x - __mouse_x
-                __mouse_dy += y - __mouse_y
-                __mouse_x = x
-                __mouse_y = y
-            else if kind == 22:
-                __win_w = int(ev[14])
-                __win_h = int(ev[15])
-            else if kind == 33:
-                if (__xev as *int)[7] == __wm_delete: __win_close = true
-            else if kind == 10:
-                loop mut kd in __key_down: kd = false
+            __x_event(__xev)
+
+    __x_event = (evp: *u8):
+        ev = evp as *i32
+        kind = int(ev[0])
+        if kind == 2 or kind == 3:
+            sym = XLookupKeysym(evp, 0)
+            k = __xkey(sym)
+            # (a press of a key already down: held, repeating)
+            __key_event(k, kind == 2, kind == 2 and k > 0 and __key_down[k])
+            if kind == 2 and int(ev[20]) & 4 == 0:
+                buf = __alloc(16)
+                n = XLookupString(evp, buf, 15, null, null)
+                if n == 1 and buf[0] >= 32 and buf[0] < 127: __text_input += chr(int(buf[0]))
+                __free(buf)
+        else if kind == 4 or kind == 5:
+            btn = int(ev[21])
+            if btn == 1: __mouse_event(0, kind == 4)
+            else if btn == 2: __mouse_event(1, kind == 4)
+            else if btn == 3: __mouse_event(2, kind == 4)
+            else if btn == 4 and kind == 4: __mouse_wheel += 1.0
+            else if btn == 5 and kind == 4: __mouse_wheel -= 1.0
+        else if kind == 6:
+            x = f64(ev[16])
+            y = f64(ev[17])
+            __mouse_dx += x - __mouse_x
+            __mouse_dy += y - __mouse_y
+            __mouse_x = x
+            __mouse_y = y
+        else if kind == 22:
+            __win_w = int(ev[14])
+            __win_h = int(ev[15])
+        else if kind == 33:
+            if (evp as *int)[7] == __wm_delete: __win_close = true
+        else if kind == 10:
+            loop mut kd in __key_down: kd = false
+        else if kind == 30: __x_selection_request(evp)
+        else if kind == 31:
+            __x_sel_done = true
+            __x_sel_prop = (evp as *int)[7]
+
+    # ---- fullscreen and the clipboard (libX11) ----
+    __x_atoms: {str: int} = {}
+    __x_atom = (name: str) -> int:
+        if let a = __x_atoms.get(name): return a
+        a = XInternAtom(__xdpy, data(__zstr(name)), 0)
+        __x_atoms[name] = a
+        a
+
+    __x_fullscreen = (on: bool):
+        ev = fill(0, 24)                       # an XClientMessageEvent to the root window
+        ev[0] = 33
+        ev[4] = __xwin
+        ev[5] = __x_atom("_NET_WM_STATE")
+        ev[6] = 32
+        ev[7] = int(on)
+        ev[8] = __x_atom("_NET_WM_STATE_FULLSCREEN")
+        ev[10] = 1
+        XSendEvent(__xdpy, XRootWindow(__xdpy, __xscr), 0, 0x180000, data(ev) as *u8)
+        XFlush(__xdpy)
+
+    __x_clip_text = ""
+    __x_sel_done = false
+    __x_sel_prop = 0
+
+    __x_set_clipboard = (s: str):
+        __x_clip_text = s
+        XSetSelectionOwner(__xdpy, __x_atom("CLIPBOARD"), __xwin, 0)
+        XFlush(__xdpy)
+
+    # another program asks for the clipboard we own: put the text on its window, and say so
+    __x_selection_request = (evp: *u8):
+        e = evp as *int
+        requestor = e[5]
+        target = e[7]
+        prop = e[8]
+        if prop == 0: prop = target
+        utf8 = __x_atom("UTF8_STRING")
+        if target == __x_atom("TARGETS"):
+            ts = [__x_atom("TARGETS"), utf8, 31]
+            XChangeProperty(__xdpy, requestor, prop, 4, 32, 0, data(ts) as *u8, 3)
+        else if target == utf8 or target == 31:
+            b = bytes(__x_clip_text)
+            XChangeProperty(__xdpy, requestor, prop, target, 8, 0, data(b), i32(b.len()))
+        else: prop = 0
+        r = fill(0, 24)                        # an XSelectionEvent
+        r[0] = 31
+        r[4] = requestor
+        r[5] = e[6]
+        r[6] = target
+        r[7] = prop
+        r[8] = e[9]
+        XSendEvent(__xdpy, requestor, 0, 0, data(r) as *u8)
+        XFlush(__xdpy)
+
+    __x_get_clipboard = () -> str:
+        cb = __x_atom("CLIPBOARD")
+        owner = XGetSelectionOwner(__xdpy, cb)
+        if owner == __xwin: return __x_clip_text
+        if owner == 0: return ""
+        prop = __x_atom("JOT_CLIPBOARD")
+        __x_sel_done = false
+        XConvertSelection(__xdpy, cb, __x_atom("UTF8_STRING"), prop, __xwin, 0)
+        XFlush(__xdpy)
+        t0 = time()
+        loop not __x_sel_done and time() - t0 < 0.5:
+            if XPending(__xdpy) > 0:
+                XNextEvent(__xdpy, __xev)
+                __x_event(__xev)
+            else: sleep(0.002)
+        if not __x_sel_done or __x_sel_prop == 0: return ""
+        ty = 0
+        fmt: i32 = 0
+        n = 0
+        after = 0
+        p: *u8 = null
+        XGetWindowProperty(__xdpy, __xwin, prop, 0, 1 << 24, 1, 0, &ty, &fmt, &n, &after, &p)
+        if p == null: return ""
+        out = fill(u8(0), n)
+        mem_copy(data(out), p, n)
+        XFree(p)
+        str_from_bytes(out)
+
+    # the clipboard where the platform has none of its own (the X11 protocol path): this program's
+    __local_clip = ""
+    __platform_fullscreen = (on: bool):
+        if __wayland: __wl_set_fullscreen(on)
+        else if __xproto: __xp_fullscreen(on)
+        else if __xdpy != null: __x_fullscreen(on)
+    __platform_clipboard = () -> str:
+        if __wayland: return __wl_get_clipboard()
+        if __xdpy != null: return __x_get_clipboard()
+        __local_clip
+    __platform_set_clipboard = (s: str):
+        if __wayland: __wl_set_clipboard(s)
+        else if __xdpy != null: __x_set_clipboard(s)
+        else: __local_clip = s
 
     __platform_present = ():
         if __wayland:

@@ -512,6 +512,19 @@ draw = ():
     circle(pos, 20, rgb(1, 0.5, 0.2))
 ```
 
+**Input.** `key_down(k)` is true while a key is held, `key_pressed(k)` / `key_released(k)` in
+the frame it goes down or up, and `key_typed(k)` when pressed and again as it repeats while held
+(at the desktop's repeat rate: for moving through text or menus). `text_input()` is the text
+typed this frame, repeats included. Likewise `mouse_down`, `mouse_pressed`, `mouse_pos()`,
+`mouse_wheel()`, and gamepads (`gamepad_down`, `left_stick()`); `input_axis()` combines arrows,
+WASD and the left stick.
+
+**Fullscreen and the clipboard.** `set_fullscreen(true)`, `toggle_fullscreen()` and
+`is_fullscreen()` (in a browser, the page asks for fullscreen; it leaves on Escape).
+`clipboard()` reads the system clipboard's text and `set_clipboard(s)` replaces it. A web page
+may read the clipboard only as something is pasted, so there `clipboard()` is the text last
+pasted (ctrl+V) into the page; the X11 fallback without libX11 keeps the text within the program.
+
 **Window size.** `window("Title", 1280, 720)` (called for you with those defaults) sets the
 window's starting size and the program's 2D coordinate space: 2D drawing and `mouse_pos()` are in
 those units however large the window becomes — resized, maximized, or a browser page, which the
