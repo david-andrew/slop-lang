@@ -498,6 +498,11 @@ area: `visible_rect()` is the part of the plane on screen (draw backgrounds over
 `screen_size()` is the size given to `window()`, `pixel_size()` the real size. 3D rendering
 uses the whole window.
 
+Window sizes are in the desktop's logical units, and frames are rendered at the display's real
+resolution: on a screen scaled by 1.67, a 1280x720 window has 2133x1200 pixels, so text and edges
+stay sharp (in the browser too). The rendered frame goes to the compositor without being copied
+through the CPU.
+
 Native games open a Wayland window when `WAYLAND_DISPLAY` is set and an X11 window otherwise
 (`JOT_PLATFORM=x11|wayland` chooses). They use the system's OpenGL ES driver when there is
 one. Without it (or with `JOT_SOFTWARE=1`) the same program draws with the built-in software
@@ -509,7 +514,9 @@ Environment variables for testing and tuning: `JOT_SCREENSHOT=out.png` (with `JO
 saves frame n and exits — the clock then advances exactly 1/60 s per frame, so the image is
 reproducible, and with `JOT_SOFTWARE=1` no display is needed at all; `JOT_INPUT="5:space+,9:space-"`
 presses and releases keys at given frames; `JOT_THREADS=n` caps the threads used by the
-parallel functions.
+parallel functions; `JOT_SCALE=1` renders at the logical size and lets the compositor scale
+it up; `JOT_FRAME_STATS=1` (with `JOT_SCREENSHOT`) reports frame times and how frames reach the
+screen.
 
 ```
 jot file.jot [args]     compile and run (wasm target: opens the browser)

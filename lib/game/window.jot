@@ -283,6 +283,7 @@ else:
     __wm_delete = 0
     __egl_dpy: *u8 = null
     __egl_surf: *u8 = null
+    __egl_ctx: *u8 = null
     __xev: *u8 = null
     __xscr: i32 = 0
     __xproto = false             # connected through x11.jot instead of libX11
@@ -370,6 +371,7 @@ else:
         cattrs: i32[] = [0x3098, 3, 0x30FB, 0, 0x3038]
         ctx = eglCreateContext(__egl_dpy, cfg, null, data(cattrs))
         if ctx == null: return "eglCreateContext failed (OpenGL ES 3 needed)"
+        __egl_ctx = ctx
         if eglMakeCurrent(__egl_dpy, null, null, ctx) == 0: return "the GL driver cannot render without a window surface"
         __gl_screen_resize(__win_w, __win_h)
         ""
@@ -509,7 +511,7 @@ else:
     __platform_present = ():
         if __wayland:
             if __soft: __wl_present((out: *u8, w: int, h: int): __sw_present_pixels(out, w, h))
-            else: __wl_present((out: *u8, w: int, h: int): __gl_screen_copy(out, w, h))
+            else if not __wl_present_gpu(): __wl_present((out: *u8, w: int, h: int): __gl_screen_copy(out, w, h))
         else if __soft: __sw_present()
         else: eglSwapBuffers(__egl_dpy, __egl_surf)
 
@@ -526,7 +528,9 @@ else:
             if __soft: __sw_init_window(__win_w, __win_h)
             else if __wayland: __gl_screen_resize(__win_w, __win_h)
             __run_frame(dt, update, draw)
+            t0 = time()
             __platform_present()
+            __frame_present += time() - t0
             # without vsync, software frames are paced to 60 per second
             if __soft and not __fixed_step:
                 left = 1.0 / 60.0 - (time() - now)
@@ -579,6 +583,17 @@ __run_frame = (dt: f64, update: (f64) -> void, draw: () -> void):
     __frame_count += 1
 
 __frame_cpu = 0.0
+__frame_present = 0.0         # time spent handing frames to the screen (and waiting for vsync)
+
+# how frames reach the screen (for diagnostics)
+__present_how = () -> str:
+    when TARGET == "wasm": return "webgl"
+    else:
+        if __soft: return "software renderer"
+        if __wayland:
+            if __wl_gpu > 0: return "wayland dma-buf, scale {__wl_scale:.3}"
+            return "wayland shared memory copy, scale {__wl_scale:.3}"
+        "egl window surface"
 
 # testing aid: JOT_SCREENSHOT=out.png [JOT_FRAMES=n] saves frame n and exits
 # (JOT_FRAME_STATS=1 also reports the average CPU time of a frame: update + draw + submit)
@@ -589,5 +604,5 @@ __maybe_screenshot = ():
             if __frame_count == n:
                 save_png(screenshot(), path)
                 if env("JOT_FRAME_STATS") != none:
-                    eprint("frame cpu: {__frame_cpu * 1000.0 / f64(n + 1):.2} ms average over {n + 1} frames")
+                    eprint("frame cpu: {__frame_cpu * 1000.0 / f64(n + 1):.2} ms average over {n + 1} frames, present {__frame_present * 1000.0 / f64(n):.2} ms; {__win_w}x{__win_h} pixels, {__present_how()}")
                 exit(0)

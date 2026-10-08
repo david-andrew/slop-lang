@@ -48,7 +48,7 @@ for name, src in games.items():
                 print(f"skipped {name} (needs a display)")
                 continue
             gpu = f"/tmp/jot-render/{name}_gpu.png"
-            genv = dict(os.environ, JOT_LIB=os.path.join(root, "lib"), JOT_FRAMES="60", JOT_SCREENSHOT=gpu)
+            genv = dict(os.environ, JOT_LIB=os.path.join(root, "lib"), JOT_FRAMES="60", JOT_SCREENSHOT=gpu, JOT_SCALE="1")
             subprocess.run([exe], env=genv, capture_output=True, timeout=120)
             w, h, got = downsample(gpu, 4)
         write_png(ref, w, h, got)
@@ -67,7 +67,7 @@ for name, src in games.items():
     if gpu_too:
         gpng = f"/tmp/jot-render/{name}_gpu.png"
         if os.path.exists(gpng): os.remove(gpng)
-        genv = dict(os.environ, JOT_LIB=os.path.join(root, "lib"), JOT_FRAMES="60", JOT_SCREENSHOT=gpng)
+        genv = dict(os.environ, JOT_LIB=os.path.join(root, "lib"), JOT_FRAMES="60", JOT_SCREENSHOT=gpng, JOT_SCALE="1")
         genv.pop("JOT_SOFTWARE", None)
         r = subprocess.run([exe], env=genv, capture_output=True, text=True, timeout=300)
         if r.returncode != 0 or not os.path.exists(gpng):

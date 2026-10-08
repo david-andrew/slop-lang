@@ -1,7 +1,9 @@
 # A Wayland client speaking the wire protocol directly (no libwayland): a window from
-# xdg-shell, frames presented through shared memory (wl_shm), keyboard and pointer input from
-# wl_seat, and server-side decorations where the compositor offers them (a small title bar
-# drawn here otherwise).
+# xdg-shell, GPU frames handed over as dma-bufs (zwp_linux_dmabuf_v1, see dmabuf.jot) or else
+# presented through shared memory (wl_shm), keyboard and pointer input from wl_seat, and
+# server-side decorations where the compositor offers them (a small title bar drawn here
+# otherwise). Windows render at the display's real resolution: the window's size is in the
+# compositor's logical units, scaled by the output's (possibly fractional) scale.
 
 __wl_fd = -1
 __wl_next_id = 2              # 1 is wl_display
@@ -32,6 +34,12 @@ const WLK_DECORATION = 16
 const WLK_FRAME = 17           # a frame callback
 const WLK_CURSOR_MGR = 18      # wp_cursor_shape_manager_v1
 const WLK_CURSOR_DEV = 19
+const WLK_DMABUF = 20          # zwp_linux_dmabuf_v1
+const WLK_DMABUF_PARAMS = 21
+const WLK_VIEWPORTER = 22
+const WLK_VIEWPORT = 23
+const WLK_FRAC_MGR = 24        # wp_fractional_scale_manager_v1
+const WLK_FRAC = 25
 
 __wl_registry = 0
 __wl_compositor = 0
@@ -46,6 +54,13 @@ __wl_pointer = 0
 __wl_keyboard = 0
 __wl_cursor_mgr = 0
 __wl_cursor_dev = 0
+__wl_dmabuf = 0
+__wl_viewporter = 0
+__wl_viewport = 0
+__wl_frac_mgr = 0
+__wl_frac = 0
+__wl_compositor_ver = 1
+__wl_srv_kind: int[]            # objects the compositor made (ids from 0xff000000) -> interface
 __wl_sync_done = false
 __wl_configured = false
 __wl_pending_w = 0
@@ -67,6 +82,16 @@ __wl_last_bar_click = -1.0
 const WL_EDGE = 8              # pixels along the window's border that resize it
 __wl_shift = false
 
+# sizes: the window's content in logical units, and the scale to pixels (__win_w and __win_h
+# are pixels; the title bar is __wl_bar_px pixels above them)
+__wl_lw = 0
+__wl_lh = 0
+__wl_scale = 1.0
+__wl_bar_px = 0
+__wl_set_buffer_scale = 1       # (integer scales, when there is no fractional scaling)
+__wl_dest_w = 0
+__wl_dest_h = 0
+
 # shared-memory buffers: three, so one can be drawn while the compositor holds the others
 struct __WlBuf:
     id: int
@@ -79,6 +104,15 @@ __wl_pool_mem: *u8 = null
 __wl_pool_size = 0
 __wl_buf_w = 0
 __wl_buf_h = 0
+
+# GPU buffers (dma-bufs): 0 untried, 1 in use, -1 unavailable (shared memory instead)
+__wl_gpu = 0
+__wl_gbufs: __WlBuf[]
+__wl_gbuf_w = 0
+__wl_gbuf_h = 0
+__wl_dmabuf_mods: int[]         # (format, modifier) pairs the compositor accepts
+__wl_params_result = 0          # a dma-buf buffer being made: 0 waiting, its id, or -1
+__wl_bar_key = ""               # the title bar last uploaded for GPU frames
 
 __wl_new = (kind: int) -> int:
     id = __wl_next_id
@@ -195,7 +229,9 @@ __wl_take_fd = () -> int:
 
 __wl_event = (obj: int, op: int, a: u8[]):
     kind = WLK_NONE
-    if obj < __wl_kind.len(): kind = __wl_kind[obj]
+    if obj >= 0xff000000:
+        if obj - 0xff000000 < __wl_srv_kind.len(): kind = __wl_srv_kind[obj - 0xff000000]
+    else if obj < __wl_kind.len(): kind = __wl_kind[obj]
     if kind == WLK_DISPLAY:
         if op == 0:
             msg, _ = __wl_str(a, 8)
@@ -204,16 +240,22 @@ __wl_event = (obj: int, op: int, a: u8[]):
         else if op == 1:
             id = __wl_u32(a, 0)
             if id < __wl_kind.len(): __wl_kind[id] = WLK_NONE
+            else if id >= 0xff000000 and id - 0xff000000 < __wl_srv_kind.len(): __wl_srv_kind[id - 0xff000000] = WLK_NONE
     else if kind == WLK_REGISTRY and op == 0:
         name = __wl_u32(a, 0)
         iface, q = __wl_str(a, 4)
         ver = __wl_u32(a, q)
-        if iface == "wl_compositor": __wl_compositor = __wl_bind(name, iface, min(ver, 4), WLK_COMPOSITOR)
+        if iface == "wl_compositor":
+            __wl_compositor_ver = min(ver, 6)
+            __wl_compositor = __wl_bind(name, iface, __wl_compositor_ver, WLK_COMPOSITOR)
         else if iface == "wl_shm": __wl_shm = __wl_bind(name, iface, 1, WLK_SHM)
         else if iface == "xdg_wm_base": __wl_wm_base = __wl_bind(name, iface, 1, WLK_WM_BASE)
         else if iface == "wl_seat" and __wl_seat == 0: __wl_seat = __wl_bind(name, iface, min(ver, 5), WLK_SEAT)
         else if iface == "zxdg_decoration_manager_v1": __wl_deco_mgr = __wl_bind(name, iface, 1, WLK_DECO_MANAGER)
         else if iface == "wp_cursor_shape_manager_v1": __wl_cursor_mgr = __wl_bind(name, iface, 1, WLK_CURSOR_MGR)
+        else if iface == "zwp_linux_dmabuf_v1" and ver >= 3: __wl_dmabuf = __wl_bind(name, iface, 3, WLK_DMABUF)
+        else if iface == "wp_viewporter": __wl_viewporter = __wl_bind(name, iface, 1, WLK_VIEWPORTER)
+        else if iface == "wp_fractional_scale_manager_v1": __wl_frac_mgr = __wl_bind(name, iface, 1, WLK_FRAC_MGR)
     else if kind == WLK_CALLBACK and op == 0: __wl_sync_done = true
     else if kind == WLK_FRAME and op == 0:
         __wl_frame_pending = false
@@ -229,8 +271,9 @@ __wl_event = (obj: int, op: int, a: u8[]):
         __wl_end()
         __wl_configured = true
         if __wl_pending_w > 0 and __wl_pending_h > 0:
-            __win_w = __wl_pending_w
-            __win_h = __wl_pending_h
+            __wl_lw = __wl_pending_w
+            __wl_lh = __wl_pending_h
+            __wl_apply_size()
     else if kind == WLK_TOPLEVEL:
         if op == 0:
             w = __wl_i32(a, 0)
@@ -249,6 +292,20 @@ __wl_event = (obj: int, op: int, a: u8[]):
     else if kind == WLK_BUFFER and op == 0:
         loop mut b in __wl_bufs:
             if b.id == obj: b.busy = false
+        loop mut b in __wl_gbufs:
+            if b.id == obj: b.busy = false
+    else if kind == WLK_DMABUF and op == 1:
+        __wl_dmabuf_mods.push(__wl_u32(a, 0))
+        __wl_dmabuf_mods.push((__wl_u32(a, 4) << 32) | __wl_u32(a, 8))
+    else if kind == WLK_DMABUF_PARAMS:
+        if op == 0:
+            id = __wl_u32(a, 0)
+            loop __wl_srv_kind.len() <= id - 0xff000000: __wl_srv_kind.push(WLK_NONE)
+            __wl_srv_kind[id - 0xff000000] = WLK_BUFFER
+            __wl_params_result = id
+        else if op == 1: __wl_params_result = -1
+    else if kind == WLK_FRAC and op == 0: __wl_set_scale(f64(__wl_u32(a, 0)) / 120.0)
+    else if kind == WLK_SURFACE and op == 2 and __wl_frac == 0: __wl_set_scale(f64(__wl_i32(a, 0)))
     else if kind == WLK_SEAT and op == 0:
         caps = __wl_u32(a, 0)
         if caps & 1 != 0 and __wl_pointer == 0:
@@ -312,10 +369,13 @@ __wl_pointer_event = (op: int, a: u8[]):
         __wl_pointer_y = y
         __wl_pointer_in_bar = __wl_csd and y < 0.0
         if not __wl_pointer_in_bar:
-            __mouse_dx += x - __mouse_x
-            __mouse_dy += y - __mouse_y
-            __mouse_x = x
-            __mouse_y = y
+            # (the program sees pixels)
+            px = x * f64(__win_w) / f64(max(__wl_lw, 1))
+            py = y * f64(__win_h) / f64(max(__wl_lh, 1))
+            __mouse_dx += px - __mouse_x
+            __mouse_dy += py - __mouse_y
+            __mouse_x = px
+            __mouse_y = py
     else if op == 3:
         serial = __wl_u32(a, 0)
         btn = __wl_u32(a, 8)
@@ -330,7 +390,7 @@ __wl_pointer_event = (op: int, a: u8[]):
             return
         if __wl_pointer_in_bar:
             if down and btn == 0x110:
-                if __wl_pointer_x >= f64(__win_w - WL_BAR): __win_close = true
+                if __wl_pointer_x >= f64(__wl_lw - WL_BAR): __win_close = true
                 else if time() - __wl_last_bar_click < 0.4:
                     # double click: maximize, or back
                     __wl_last_bar_click = -1.0
@@ -358,8 +418,8 @@ __wl_pointer_event = (op: int, a: u8[]):
 # position (x, y): only with our own decorations, and not when maximized
 __wl_edges = (x: f64, y: f64) -> int:
     if not __wl_csd or __wl_maximized: return 0
-    w = f64(__win_w)
-    h = f64(__win_h + WL_BAR)
+    w = f64(__wl_lw)
+    h = f64(__wl_lh + WL_BAR)
     e = 0
     b = f64(WL_EDGE)
     if y < b: e |= 1
@@ -512,10 +572,24 @@ __wl_connect = () -> str:
 __wl_open = (title: str, w: int, h: int) -> str:
     why = __wl_connect()
     if len(why) > 0: return why
+    __wl_lw = w
+    __wl_lh = h
     __wl_surface = __wl_new(WLK_SURFACE)
     __wl_begin(__wl_compositor, 0)
     __wl_u(__wl_surface)
     __wl_end()
+    if __wl_viewporter != 0 and __wl_frac_mgr != 0:
+        # fractional scales: buffers of the real pixel size, shown at the logical size
+        __wl_viewport = __wl_new(WLK_VIEWPORT)
+        __wl_begin(__wl_viewporter, 1)         # get_viewport
+        __wl_u(__wl_viewport)
+        __wl_u(__wl_surface)
+        __wl_end()
+        __wl_frac = __wl_new(WLK_FRAC)
+        __wl_begin(__wl_frac_mgr, 1)           # get_fractional_scale
+        __wl_u(__wl_frac)
+        __wl_u(__wl_surface)
+        __wl_end()
     __wl_xdg_surface = __wl_new(WLK_XDG_SURFACE)
     __wl_begin(__wl_wm_base, 2)
     __wl_u(__wl_xdg_surface)
@@ -549,8 +623,47 @@ __wl_open = (title: str, w: int, h: int) -> str:
         tries += 1
     if len(__wl_failed) > 0: return __wl_failed
     if not __wl_configured: return "the compositor did not configure the window"
+    __wl_apply_size()
     __wl_flush()
     ""
+
+# the window's pixel size from its logical size and the scale
+__wl_px = (v: int) -> int: int(f64(v) * __wl_scale + 0.5)
+__wl_apply_size = ():
+    bar = 0
+    if __wl_csd: bar = WL_BAR
+    __wl_bar_px = __wl_px(bar)
+    __win_w = max(__wl_px(__wl_lw), 1)
+    __win_h = max(__wl_px(__wl_lh + bar) - __wl_bar_px, 1)
+
+__wl_set_scale = (preferred: f64):
+    s = preferred
+    # (JOT_SCALE=1 renders at the logical size, scaled up by the compositor)
+    if let f = to_float(env("JOT_SCALE") ?? ""): s = f
+    if s <= 0.0 or s == __wl_scale: return
+    __wl_scale = s
+    __wl_apply_size()
+
+# before a commit: how the buffer maps to the window's logical size
+__wl_set_size = ():
+    if __wl_viewport != 0:
+        w = __wl_lw
+        h = __wl_lh
+        if __wl_csd: h += WL_BAR
+        if w != __wl_dest_w or h != __wl_dest_h:
+            __wl_dest_w = w
+            __wl_dest_h = h
+            __wl_begin(__wl_viewport, 2)       # set_destination
+            __wl_u(w)
+            __wl_u(h)
+            __wl_end()
+    else if __wl_compositor_ver >= 3:
+        k = int(__wl_scale)
+        if k != __wl_set_buffer_scale:
+            __wl_set_buffer_scale = k
+            __wl_begin(__wl_surface, 8)        # set_buffer_scale
+            __wl_u(k)
+            __wl_end()
 
 __wl_set_title = (title: str):
     if __wl_toplevel == 0: return
@@ -601,62 +714,155 @@ __wl_ensure_buffers = (w: int, h: int):
     __wl_buf_h = h
     __wl_flush()
 
-# show a frame: fill(pixels, width) writes the window's pixels (BGRX rows, top first)
+# show a frame: fill(pixels, width, height) writes the window's pixels (BGRX rows, top first)
 __wl_present = (fill: (*u8, int, int) -> void):
     w = __win_w
     ch = __win_h
-    h = ch
-    if __wl_csd: h += WL_BAR
+    h = ch + __wl_bar_px
     __wl_ensure_buffers(w, h)
-    # wait for the previous frame to be shown (pacing) and for a free buffer
-    tries = 0
-    loop (__wl_frame_pending or __wl_free_buffer() < 0) and tries < 10 and not __win_close:
-        __wl_read(8)
-        tries += 1
-    k = __wl_free_buffer()
+    k = __wl_wait_buffer(false)
     if k < 0: return
     mem = __wl_pool_mem + __wl_bufs[k].offset
-    if __wl_csd:
-        __wl_draw_bar(mem, w)
-        fill(mem + w * WL_BAR * 4, w, ch)
+    if __wl_bar_px > 0:
+        __wl_draw_bar(mem, w, false)
+        fill(mem + w * __wl_bar_px * 4, w, ch)
     else: fill(mem, w, ch)
     __wl_bufs[k].busy = true
+    __wl_commit(__wl_bufs[k].id)
+
+# show the GPU's frame without copying it through the CPU; false if that is not possible here
+__wl_present_gpu = () -> bool:
+    if __wl_gpu < 0: return false
+    w = __win_w
+    h = __win_h + __wl_bar_px
+    if not __wl_ensure_gpu_buffers(w, h):
+        __wl_gpu = -1
+        __swap_free()
+        return false
+    __wl_gpu = 1
+    if __wl_bar_px > 0:
+        key = "{w} {__wl_bar_px} {__wl_lw}"
+        if key != __wl_bar_key:
+            __wl_bar_key = key
+            bar = fill(u8(0), w * __wl_bar_px * 4)
+            __wl_draw_bar(data(bar), w, true)
+            __swap_bar(bar, w, __wl_bar_px)
+    k = __wl_wait_buffer(true)
+    if k < 0: return true
+    __swap_draw(k, w, __win_h, __wl_bar_px)
+    __wl_gbufs[k].busy = true
+    __wl_commit(__wl_gbufs[k].id)
+    true
+
+# wait for the previous frame to be shown (pacing) and for a free buffer; its index, or -1
+__wl_wait_buffer = (gpu: bool) -> int:
+    tries = 0
+    loop (__wl_frame_pending or __wl_free_buffer(gpu) < 0) and tries < 10 and not __win_close:
+        __wl_read(8)
+        tries += 1
+    __wl_free_buffer(gpu)
+
+__wl_commit = (buffer: int):
     cb = __wl_new(WLK_FRAME)
     __wl_begin(__wl_surface, 3)                # frame
     __wl_u(cb)
     __wl_end()
     __wl_frame_pending = true
+    __wl_set_size()
     __wl_begin(__wl_surface, 1)                # attach
-    __wl_u(__wl_bufs[k].id)
+    __wl_u(buffer)
     __wl_u(0)
     __wl_u(0)
     __wl_end()
-    __wl_begin(__wl_surface, 2)                # damage
+    __wl_begin(__wl_surface, 2)                # damage (all of it)
     __wl_u(0)
     __wl_u(0)
-    __wl_u(w)
-    __wl_u(h)
+    __wl_u(0x7FFFFFFF)
+    __wl_u(0x7FFFFFFF)
     __wl_end()
     __wl_begin(__wl_surface, 6)                # commit
     __wl_end()
     __wl_flush()
 
-__wl_free_buffer = () -> int:
+# dma-buf buffers of w x h pixels, made once per size
+__wl_ensure_gpu_buffers = (w: int, h: int) -> bool:
+    if __wl_gbuf_w == w and __wl_gbuf_h == h and __wl_gbufs.len() > 0: return true
+    if __wl_dmabuf == 0 or (env("JOT_PRESENT") ?? "") == "copy": return false
+    loop b in __wl_gbufs:
+        __wl_begin(b.id, 0)                    # wl_buffer.destroy
+        __wl_end()
+    __wl_gbufs.clear()
+    if not __swap_make(3, w, h): return false
+    loop k in 0.. and img in __swap:
+        # the same layout without alpha, where the compositor takes it (frames are opaque)
+        format = img.fourcc
+        if format == 0x34324241 and __wl_accepts(0x34324258, img.modifier): format = 0x34324258      # AB24 -> XB24
+        else if format == 0x34325241 and __wl_accepts(0x34325258, img.modifier): format = 0x34325258   # AR24 -> XR24
+        params = __wl_new(WLK_DMABUF_PARAMS)
+        __wl_begin(__wl_dmabuf, 1)             # create_params
+        __wl_u(params)
+        __wl_end()
+        __wl_begin(params, 1)                  # add (the fd travels alongside)
+        __wl_u(0)
+        __wl_u(img.offset)
+        __wl_u(img.stride)
+        __wl_u((img.modifier >> 32) & 0xFFFFFFFF)
+        __wl_u(img.modifier & 0xFFFFFFFF)
+        __wl_end()
+        __wl_out_fds.push(img.fd)
+        __wl_begin(params, 2)                  # create (answered by created or failed)
+        __wl_u(w)
+        __wl_u(h)
+        __wl_u(format)
+        __wl_u(0)
+        __wl_end()
+        __wl_params_result = 0
+        __wl_flush()
+        tries = 0
+        loop __wl_params_result == 0 and len(__wl_failed) == 0 and tries < 200:
+            __wl_read(10)
+            tries += 1
+        __wl_begin(params, 0)                  # destroy
+        __wl_end()
+        if __wl_params_result <= 0:
+            __wl_flush()
+            return false
+        __wl_gbufs.push(__WlBuf(__wl_params_result, false, k))
+    __wl_gbuf_w = w
+    __wl_gbuf_h = h
+    __wl_flush()
+    true
+
+__wl_accepts = (format: int, modifier: int) -> bool:
+    loop i in [0..__wl_dmabuf_mods.len() / 2):
+        if __wl_dmabuf_mods[2 * i] == format and __wl_dmabuf_mods[2 * i + 1] == modifier: return true
+    false
+
+__wl_free_buffer = (gpu: bool) -> int:
+    if gpu:
+        loop i in 0.. and b in __wl_gbufs:
+            if not b.busy: return i
+        return -1
     loop i in 0.. and b in __wl_bufs:
         if not b.busy: return i
     -1
 
-# a plain title bar with a close button at the right
-__wl_draw_bar = (mem: *u8, w: int):
+# a plain title bar with a close button at the right, __wl_bar_px pixels tall and w wide
+# (BGRX pixels, or RGBA with rgba)
+__wl_draw_bar = (mem: *u8, w: int, rgba: bool):
     row = mem as *u32
-    loop y in [0..WL_BAR):
+    sc = __wl_scale
+    bar = f64(WL_BAR)
+    left = f64(__wl_lw - WL_BAR)
+    loop y in [0..__wl_bar_px):
+        ly = (f64(y) + 0.5) / sc
         loop x in [0..w):
             c = u32(0x2B2B30)
-            if y == WL_BAR - 1: c = 0x1A1A1E
-            else if x >= w - WL_BAR:
+            lx = (f64(x) + 0.5) / sc
+            if y >= __wl_bar_px - max(int(sc + 0.5), 1): c = 0x1A1A1E
+            else if lx >= left:
                 # the close cross
-                cx = x - (w - WL_BAR)
-                d1 = cx - y
-                d2 = cx + y - WL_BAR
-                if cx > 9 and cx < WL_BAR - 9 and y > 9 and y < WL_BAR - 9 and (abs(d1) <= 1 or abs(d2 + 1) <= 1): c = 0xE0E0E0
+                cx = lx - left
+                if cx > 9.5 and cx < bar - 9.5 and ly > 9.5 and ly < bar - 9.5 and (abs(cx - ly) <= 1.0 or abs(cx + ly - bar) <= 1.0): c = 0xE0E0E0
+            if rgba: c = ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF) | 0xFF000000
             row[y * w + x] = c
