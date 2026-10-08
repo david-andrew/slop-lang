@@ -202,7 +202,6 @@ compile = (path: str, out0: str) -> str:
     out
 
 main = ():
-    migrate_info = env("JOT_MIGRATE") != none
     a = args()
     if a.len() < 2: usage()
     lib_dir = find_lib_dir()

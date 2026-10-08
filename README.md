@@ -87,7 +87,6 @@ bin/jot check file.jot        # type check only
 ## Documentation
 
 - [docs/LANGUAGE.md](docs/LANGUAGE.md) — the language
-- [docs/MIGRATING.md](docs/MIGRATING.md) — moving code from the first version of the syntax
 - [docs/API.md](docs/API.md) — the standard library (generated from `lib/`)
 - [docs/REPORT.md](docs/REPORT.md) — measured results for the design goals (`tools/report.py`)
 

@@ -84,7 +84,6 @@ expect_name = (what: str) -> int:
     expect_ident(what)
 
 # old syntax gets a pointer to the new
-old_syntax = (pos: int, what: str): fatal(pos, what)
 skip_newlines = ():
     loop pk() == .newline: advance()
 
@@ -114,7 +113,6 @@ parse_type_primary = () -> int:
         add_flag(t, NF_SOA)
         return t
     if k == .ident:
-        if toks[ti].ival == id_float: fatal(pos, "there is no 'float' type: use f64 (or f32)")
         n = mk(.tname, pos)
         nodes[n].name = i32(expect_ident(""))
         if accept(.dot):
@@ -179,7 +177,6 @@ parse_type_primary = () -> int:
         n = mk(.tname, pos)
         nodes[n].name = i32(intern("none"))
         return n
-    if k == .kw_fn: fatal(pos, "function types are written (A, B) -> R")
     fatal(pos, "expected a type, found {tok_name(k)}")
     0
 
@@ -394,7 +391,6 @@ parse_args = (call: int):
     set_list(call, args)
 
 # names the parser recognizes (interned once)
-id_float = 0
 id_void = 0
 id_cfn = 0
 id_end = 0
@@ -493,7 +489,6 @@ parse_primary = () -> int:
         return n
     if k == .kw_if: return parse_if()
     if k == .kw_match: return parse_match()
-    if k == .kw_fn: old_syntax(pos, "functions are written name = (a: T, b: T) -> R: body, and lambdas (x): x * 2")
     if k == .ident or k == .int_lit: fatal(pos, "unexpected '{tok_src(t)}'")
     if k == .indent: fatal(pos, "unexpected indentation (this line is indented deeper than the lines around it)")
     if k == .newline or k == .eof: fatal(prev_end(), "expected an expression here")
@@ -815,7 +810,6 @@ parse_power = () -> int:
     base = parse_postfix(parse_primary())
     k = pk()
     if k != .caret:
-        if k == .starstar: old_syntax(cur_pos(), "the power operator is ^")
         return base
     if p_matrix > 0 and space_before(ti) and not space_before(ti + 1): return base
     pos = cur_pos()
@@ -869,7 +863,6 @@ parse_binary = (minprec: int) -> int:
             if k == .dotop:
                 if pkn(1) == .assign and not space_before(ti + 1): return lhs      # xs .+= 1
                 prec = dotop_prec(ti)
-            else if k == .dotdoteq: old_syntax(cur_pos(), "ranges include their end: write a..b (or [a..b) to exclude it)")
             if prec < minprec: return lhs
         # inside array brackets, `a -b` is two elements (a space before the sign and none after)
         if p_matrix > 0 and (k == .minus or k == .plus) and space_before(ti) and not space_before(ti + 1): return lhs
@@ -1053,7 +1046,6 @@ parse_if = () -> int:
     pos = cur_pos()
     expect(.kw_if, "")
     n = mk(.if_, pos)
-    if pk() == .ident and pkn(1) == .decl: old_syntax(cur_pos(), "write `if let x = value:`")
     if accept(.kw_let):
         nodes[n].kind = .iflet
         nodes[n].name = i32(expect_ident("variable name"))
@@ -1335,7 +1327,6 @@ parse_simple_stmt = () -> int:
         nodes[b].b = i32(parse_expr())
         nodes[a].b = i32(b)
         return a
-    if pk() == .decl: old_syntax(cur_pos(), "variables are declared with `x = value` (or `let x = value` to shadow an outer x)")
     if is_assign_op(pk()):
         a = mk(.assign, cur_pos())
         opk = toks[advance()].kind
@@ -1832,8 +1823,6 @@ parse_stmt = () -> int:
             term = has_flag(s, NF_TERMINATED)
             s = desugar_loopx(s)
             if term: add_flag(s, NF_TERMINATED)
-    else if k == .kw_while or k == .kw_for: old_syntax(pos, "loops are written `loop cond:`, `loop x in xs:` or `loop i in [0..n):`")
-    else if k == .kw_fn: old_syntax(pos, "functions are written name = (a: T, b: T) -> R: body")
     else if k == .kw_match:
         s = mk(.exprstmt, pos)
         m = parse_match()
@@ -1975,8 +1964,7 @@ parse_toplevel = () -> int:
         skip_newlines()
     k = pk()
     d = 0
-    if k == .kw_fn: old_syntax(pos, "functions are written name = (a: T, b: T) -> R: body")
-    else if k == .ident and toks[ti].ival == id_type and pkn(1) == .ident and (pkn(2) == .assign or pkn(2) == .lbrack): d = parse_type_alias()
+    if k == .ident and toks[ti].ival == id_type and pkn(1) == .ident and (pkn(2) == .assign or pkn(2) == .lbrack): d = parse_type_alias()
     else if (k == .lparen or (k == .ident and (pkn(1) == .assign or pkn(1) == .lbrack))) and fn_decl_ahead(): d = parse_fn_decl(false)
     else if k == .kw_extern:
         advance()
@@ -2041,8 +2029,7 @@ parse_toplevel = () -> int:
 stop_after = ""
 
 parse_file = (file: int) -> int[]:
-    if id_float == 0:
-        id_float = intern("float")
+    if id_void == 0:
         id_void = intern("void")
         id_cfn = intern("cfn")
         id_end = intern("end")

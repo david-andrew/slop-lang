@@ -14,9 +14,6 @@ Design goals, in priority order:
 4. **Programs keep working.** Native executables are fully static (they make Linux
    syscalls directly), web builds are a single self-contained `.html` file.
 
-(Programs written for the first version of the syntax can be converted with
-`tools/migrate/convert.py`; see [MIGRATING.md](MIGRATING.md).)
-
 ---
 
 ## 1. A taste

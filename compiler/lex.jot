@@ -4,11 +4,11 @@ use 'util.jot'
 
 enum Tok:
     eof, newline, indent, dedent, ident, int_lit, float_lit, str_lit,
-    kw_fn, kw_struct, kw_enum, kw_if, kw_else, kw_for, kw_in, kw_while, kw_break, kw_continue,
+    kw_struct, kw_enum, kw_if, kw_else, kw_in, kw_break, kw_continue,
     kw_return, kw_match, kw_import, kw_as, kw_const, kw_true, kw_false, kw_none, kw_null,
     kw_and, kw_or, kw_not, kw_mut, kw_when, kw_defer, kw_extern, kw_test, kw_build, kw_use, kw_pass,
     lparen, rparen, lbrack, rbrack, lbrace, rbrace,
-    comma, colon, semi, dot, dotdot, dotdoteq, arrow, decl,
+    comma, colon, semi, dot, dotdot, arrow,
     assign, pluseq, minuseq, stareq, slasheq, percenteq, ampeq, pipeeq, careteq, shleq, shreq,
     plus, minus, star, slash, percent, amp, pipe, caret, tilde, shl, shr,
     eq, ne, lt, le, gt, ge, question, qq, bang, at, starstar,
@@ -51,24 +51,19 @@ tok_name = (k: Tok) -> str:
         semi: "';'"
         dot: "'.'"
         dotdot: "'..'"
-        dotdoteq: "'..='"
         ellipsis: "'...'"
         dotop: "dotted operator"
         arrow: "'->'"
-        decl: "':='"
         assign: "'='"
         _: "'{tok_text(k)}'"
 
 tok_text = (k: Tok) -> str:
     match k:
-        kw_fn: "fn"
         kw_struct: "struct"
         kw_enum: "enum"
         kw_if: "if"
         kw_else: "else"
-        kw_for: "for"
         kw_in: "in"
-        kw_while: "while"
         kw_break: "break"
         kw_continue: "continue"
         kw_return: "return"
@@ -130,8 +125,8 @@ tok_text = (k: Tok) -> str:
         _: tok_name(k)
 
 keywords: {str: Tok} = {
-    "fn": Tok.kw_fn, "struct": Tok.kw_struct, "enum": Tok.kw_enum, "if": Tok.kw_if, "else": Tok.kw_else,
-    "for": Tok.kw_for, "in": Tok.kw_in, "while": Tok.kw_while, "break": Tok.kw_break,
+    "struct": Tok.kw_struct, "enum": Tok.kw_enum, "if": Tok.kw_if, "else": Tok.kw_else,
+    "in": Tok.kw_in, "break": Tok.kw_break,
     "continue": Tok.kw_continue, "return": Tok.kw_return, "match": Tok.kw_match, "import": Tok.kw_import,
     "as": Tok.kw_as, "const": Tok.kw_const, "true": Tok.kw_true, "false": Tok.kw_false, "none": Tok.kw_none,
     "null": Tok.kw_null, "and": Tok.kw_and, "or": Tok.kw_or, "not": Tok.kw_not, "mut": Tok.kw_mut,
@@ -551,20 +546,13 @@ lex = (file: int, src: str) -> Token[]:
             ';': k = .semi
             '~': k = .tilde
             '@': k = .at
-            ':':
-                k = .colon
-                if c1 == '=':
-                    k = .decl
-                    n = 2
+            ':': k = .colon
             '.':
                 k = .dot
                 if c1 == '.':
                     k = .dotdot
                     n = 2
-                    if c2 == '=':
-                        k = .dotdoteq
-                        n = 3
-                    else if c2 == '.':
+                    if c2 == '.':
                         k = .ellipsis
                         n = 3
                 else if c1 == '+' or c1 == '-' or c1 == '*' or c1 == '/' or c1 == '%' or c1 == '^' or c1 == '<' or c1 == '>' or (c1 == '=' and c2 == '=') or (c1 == '!' and c2 == '='):
