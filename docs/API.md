@@ -152,6 +152,7 @@ eprint = (s: str)
 list_dir = (path: str) -> str[]    # names of the entries in a directory (excluding . and ..)
 exe_path = () -> str    # absolute path of the running executable
 exec = (path: str, argv: str[]) -> bool    # replace the current process with another program (returns only on failure)
+spawn_detached = (path: str, argv: str[]) -> bool    # start a program in the background, detached from this one: its own session, no terminal (input and output go to /dev/null); returns whether it was started
 chmod = (path: str, mode: int) -> bool
 mkdir = (path: str) -> bool
 ```

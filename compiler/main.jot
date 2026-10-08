@@ -266,9 +266,10 @@ main = ():
     built = compile(path, "/tmp/jot-cache/{base}.bin")
     if len(built) == 0: exit(1)
     if target_wasm:
-        # open the page in the default browser
-        exec("/usr/bin/xdg-open", ["xdg-open", built])
-        eprint("jot: built {built}; open it in a browser")
+        # open the page in the default browser, detached (the browser's output does not
+        # reach this terminal, and jot returns at once)
+        if spawn_detached("/usr/bin/xdg-open", ["xdg-open", built]): eprint("jot: opened {built} in the browser")
+        else: eprint("jot: built {built}; open it in a browser")
         exit(0)
     run_args = [built]
     loop i in [first + 1..a.len()): run_args.push(a[i])

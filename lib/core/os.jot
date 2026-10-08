@@ -182,6 +182,25 @@ exec = (path: str, argv: str[]) -> bool:
         syscall(59, data(__zstr(path)), ptrs, envp)
         false
 
+# start a program in the background, detached from this one: its own session, no terminal
+# (input and output go to /dev/null); returns whether it was started
+spawn_detached = (path: str, argv: str[]) -> bool:
+    when TARGET == "wasm":
+        return false
+    else:
+        pid = syscall(57)                            # fork
+        if pid < 0: return false
+        if pid == 0:
+            syscall(112)                             # setsid
+            fd = syscall(2, data(__zstr("/dev/null")), 2)  # open O_RDWR
+            if fd >= 0:
+                syscall(33, fd, 0)                   # dup2
+                syscall(33, fd, 1)
+                syscall(33, fd, 2)
+            exec(path, argv)
+            syscall(60, 127)                         # exit: exec failed
+        true
+
 chmod = (path: str, mode: int) -> bool:
     when TARGET == "wasm":
         return false
