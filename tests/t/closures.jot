@@ -5,8 +5,7 @@ compose = (f: (int) -> int, g: (int) -> int) -> (int) -> int: (x: int): g(f(x))
 
 make_adder = () -> (int) -> int:
     k = 10
-    f = (x: int): x + k       # locals are captured by value at creation
-    k = 100
+    f = (x: int): x + k       # (closures share variables: see shared.jot)
     f
 print(make_adder()(1))
 print(apply((x): x * x, 7))

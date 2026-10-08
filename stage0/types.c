@@ -249,11 +249,17 @@ static void tstr(char *buf, int *n, int cap, Type *t) {
   case TY_INT:
     if (t == t_int) P("int"); else P("%c%d", t->sign ? 'i' : 'u', t->bits);
     break;
-  case TY_FLOAT: if (t->bits == 64) P("float"); else P("f32"); break;
+  case TY_FLOAT: if (t->bits == 64) P("f64"); else P("f32"); break;
   case TY_STR: P("str"); break;
-  case TY_ARRAY: P("["); tstr(buf, n, cap, t->elem); P("]"); break;
+  case TY_ARRAY: case TY_OPT: { // T[] T? (function types need parentheses)
+    bool fn = prune(t->elem)->kind == TY_FN;
+    if (fn) P("(");
+    tstr(buf, n, cap, t->elem);
+    if (fn) P(")");
+    P(t->kind == TY_ARRAY ? "[]" : "?");
+    break;
+  }
   case TY_PTR: P("*"); tstr(buf, n, cap, t->elem); break;
-  case TY_OPT: tstr(buf, n, cap, t->elem); P("?"); break;
   case TY_NULL: P("null"); break;
   case TY_RANGE: P("range"); break;
   case TY_NONE_LIT: P("none"); break;
@@ -262,10 +268,10 @@ static void tstr(char *buf, int *n, int cap, Type *t) {
   case TY_MODULE: P("module"); break;
   case TY_TYPE: P("type"); break;
   case TY_FN:
-    P("fn(");
+    P("(");
     for (int i = 0; i < t->nargs; i++) { if (i) P(", "); if (t->mutmask & (1u << i)) P("mut "); tstr(buf, n, cap, t->args[i]); }
-    P(")");
-    if (prune(t->elem)->kind != TY_VOID) { P(" -> "); tstr(buf, n, cap, t->elem); }
+    P(") -> ");
+    tstr(buf, n, cap, t->elem);
     break;
   case TY_TUPLE:
     P("(");

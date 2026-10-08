@@ -1,0 +1,50 @@
+# requires: jot
+# closures share variables by reference, inside functions just like at the top level
+counter = () -> () -> int:
+    n = 0
+    ():
+        n += 1
+        n
+g = 10
+bump_g = (): g += 1
+
+main = ():
+    c = counter()
+    c()
+    c()
+    print(c())                   # 3
+    d = counter()
+    print(d(), c())              # 1 4
+    x = 1
+    show = (): x
+    x = 5
+    print(show())                # 5: sees the later value
+    set_x = (v: int): x = v
+    set_x(42)
+    print(x, show())             # 42 42
+    bump_g()
+    print(g)                     # 11
+    xs: int[]
+    loop i in [0..3): xs.push(i)
+    get = (k: int): xs[k]        # never modified afterwards: a plain copy
+    print(get(2))
+    names: str[]
+    add = (s: str): names.push(s)
+    add("a")
+    add("b")
+    print(names, names.len())
+    fs: (() -> int)[]
+    loop i in [0..3):
+        y = i * 10
+        fs.push((): y)           # a fresh y each iteration
+    print(fs[0](), fs[1](), fs[2]())
+    total = 0
+    loop i in [0..3):
+        total += i
+        fs.push((): total)       # modified again on the next iteration: shared
+    print(fs[3](), fs[5](), total)
+    acc = 0
+    each = (xs: int[], f: (int) -> void):
+        loop v in xs: f(v)
+    each([1, 2, 3, 4], (v: int): acc += v)
+    print(acc)                   # 10

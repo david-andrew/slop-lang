@@ -309,7 +309,7 @@ class Gen:
         elif k == 1 and self.strs:
             v = r.choice(self.strs)
             self.emit(f'if len({v}) < 40: {v} = {v} + "{r.choice("abc")}"')
-            self.emit(f"print({v}, len({v}), {v}.find(\"a\"), {v}[0..min(2, len({v})))], {v}[1..], {v}.count('a'))")
+            self.emit(f"print({v}, len({v}), {v}.find(\"a\"), {v}[0..min(2, len({v}))), {v}[1..], {v}.find('b'))")
         elif k == 2:
             v = self.fresh("q")
             self.emit(f"{v} = P({self.iexpr(2)}, {self.fexpr(2)})")

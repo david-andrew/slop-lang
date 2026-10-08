@@ -546,6 +546,7 @@ Local *capture_local(FnCtx *c, Local *l) {
   for (int i = 0; i < c->inst->caps.len; i++) if (c->inst->caps.data[i].outer == outer) return c->inst->caps.data[i].inner;
   Local *in = arena_alloc(sizeof(Local));
   in->name = l->name; in->type = l->type; in->fn = c->inst; in->flags = LF_CAPTURE; in->pos = l->pos;
+  l->flags |= LF_CAPTURED;
   Capture cap = {outer, in};
   vpush(c->inst->caps, cap);
   vpush(c->inst->locals, in);
@@ -703,7 +704,7 @@ static void check_for(FnCtx *c, Node *s) {
     if (!is_int(t)) fatal(it->pos, "range bounds must be integers, found %s", type_str(t));
     coerce(c, &it->a, t); coerce(c, &it->b, t);
     if (nv != 1) fatal(s->pos, "a range loop has one loop variable");
-    if (is_mut) fatal(s->pos, "'for mut' needs an array");
+    if (is_mut) fatal(s->pos, "'loop mut' needs an array");
     Local *l = new_local(c, n1, t, s->pos);
     s->sym = l;
     s->aux = 0; // range loop
@@ -720,7 +721,7 @@ static void check_for(FnCtx *c, Node *s) {
       Local *snap = new_local(c, (Str){0}, t, s->pos);
       Local *el;
       if (is_mut) {
-        if (t->kind == TY_STR) fatal(s->pos, "strings are immutable; 'for mut' needs an array");
+        if (t->kind == TY_STR) fatal(s->pos, "strings are immutable; 'loop mut' needs an array");
         check_place(c, it, true);
         el = new_local(c, nv == 2 ? n2 : n1, et, s->pos);
         el->flags |= LF_ALIAS;
@@ -763,7 +764,7 @@ static void check_for(FnCtx *c, Node *s) {
           vl = new_local(c, n2, prune(vt)->elem, s->pos);
           vl->flags |= LF_BYREF;
         }
-      } else if (is_mut) fatal(s->pos, "'for mut' over a map needs key and value variables");
+      } else if (is_mut) fatal(s->pos, "'loop mut' over a map needs key and value variables");
       kl->type = prune(kt)->elem;
       s->aux = 3;
       s->sym = kl;
@@ -953,7 +954,7 @@ void check_stmt(FnCtx *c, Node **ps) {
     if (s->aux == 1) { // while v := opt
       Type *t = check_expr(c, &s->a, NULL);
       t = prune(t);
-      if (t->kind != TY_OPT) fatal(s->a->pos, "'while x := value' needs an optional value, found %s", type_str(t));
+      if (t->kind != TY_OPT) fatal(s->a->pos, "'loop let x = value' needs an optional value, found %s", type_str(t));
       Local *l = new_local(c, s->name, t->elem, s->pos);
       s->sym = l;
     } else {

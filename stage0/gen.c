@@ -981,7 +981,7 @@ static void gen_match_test(Node *p, Type *st, int hidden_off, int fail_label) {
     }
     if (st->kind == TY_OPT) {
       if (p->a->kind == N_NONE) { E("cmp byte ptr [rbp%+d], 0", hidden_off + tsize(st->elem)); E("jne .L%d", fail_label); return; }
-      fatal(p->pos, "only `none` and `_` patterns are supported for optionals; use `if v := x`");
+      fatal(p->pos, "only `none` and `_` patterns are supported for optionals; use `if let v = x`");
     }
     if (vclass(st) == VC_FLT) fatal(p->pos, "cannot match on floats");
     if (vclass(st) == VC_AGG) fatal(p->pos, "unsupported pattern for this type");

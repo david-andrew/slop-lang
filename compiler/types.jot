@@ -372,7 +372,7 @@ layout = (t0: int):
     else if k == .struct_:
         si = int(types[t].st)
         check_struct_fields(si)
-        if structs[si].resolving: fatal(nodes[int(structs[si].decl)].pos, "struct '{structs[si].name}' contains itself (use an array [T] for recursive data)")
+        if structs[si].resolving: fatal(nodes[int(structs[si].decl)].pos, "struct '{structs[si].name}' contains itself (use an array T[] for recursive data)")
         structs[si].resolving = true
         off = 0
         loop i in [0..int(structs[si].nfields)):
@@ -430,6 +430,11 @@ layout = (t0: int):
     if m: f |= TF_MANAGED
     types[t].flags = i32(f)
 
+# a type followed by [] or ?: function types need parentheses there
+type_str_postfix = (t: int) -> str:
+    if tkind(t) == .fn_: return "({type_str(t)})"
+    type_str(t)
+
 type_str = (t0: int) -> str:
     t = prune(t0)
     if t == 0: return "?"
@@ -447,9 +452,9 @@ type_str = (t0: int) -> str:
             if ti.bits == 64: return "f64"
             "f32"
         str_: "str"
-        array: "[{type_str(int(ti.elem))}]"
+        array: "{type_str_postfix(int(ti.elem))}[]"
         ptr: "*{type_str(int(ti.elem))}"
-        opt: "{type_str(int(ti.elem))}?"
+        opt: "{type_str_postfix(int(ti.elem))}?"
         null_: "null"
         range: "range"
         none_lit: "none"
@@ -462,7 +467,7 @@ type_str = (t0: int) -> str:
             if ti.sign: return "ivec{ti.bits}"
             "vec{ti.bits}"
         fn_, cfn:
-            s = "fn("
+            s = "("
             if ti.kind == .cfn: s = "cfn("
             loop i in [0..int(ti.nargs)):
                 if i > 0: s += ", "
@@ -470,6 +475,7 @@ type_str = (t0: int) -> str:
                 s += type_str(targ(t, i))
             s += ")"
             if tkind(int(ti.elem)) != .void_: s += " -> " + type_str(int(ti.elem))
+            else if ti.kind == .fn_: s += " -> void"
             s
         tuple:
             s = "("

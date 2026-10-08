@@ -1257,11 +1257,12 @@ parse_simple_stmt = () -> int:
         if accept(.assign): nodes[d].b = i32(parse_expr())
         return d
     e = parse_expr()
-    if p_no_tuple:
+    # (in a one-line lambda body a ',' ends the statement)
+    if p_no_tuple and not is_assign_op(pk()):
         s = mk(.exprstmt, pos)
         nodes[s].a = i32(e)
         return s
-    if pk() == .comma: e = tuple_from(e)
+    if pk() == .comma and not p_no_tuple: e = tuple_from(e)
     if pk() == .decl: old_syntax(cur_pos(), "variables are declared with `x = value` (or `let x = value` to shadow an outer x)")
     if is_assign_op(pk()):
         a = mk(.assign, cur_pos())
@@ -1275,7 +1276,7 @@ parse_simple_stmt = () -> int:
         nodes[a].op = i32(int(opk))
         nodes[a].a = i32(e)
         v = parse_expr()
-        if pk() == .comma: v = tuple_from(v)
+        if pk() == .comma and not p_no_tuple: v = tuple_from(v)
         nodes[a].b = i32(v)
         return a
     if nodes[e].kind == .tuple and nkids(e) > 1 and pk() != .newline: fatal(nodes[e].pos, "unexpected ','")

@@ -217,9 +217,10 @@ void check_place(FnCtx *c, Node *n, bool for_mut) {
     if (n->aux == S_LOCAL) {
       Local *l = n->sym;
       if ((l->flags & LF_PARAM) && !(l->flags & LF_MUTPARAM))
-        fatal(n->pos, "cannot modify parameter '%.*s' (parameters are read-only; mark it `mut` or copy it with `%.*s := %.*s`)", l->name.len, l->name.p, l->name.len, l->name.p, l->name.len, l->name.p);
-      if (l->flags & LF_CAPTURE) fatal(n->pos, "cannot modify captured variable '%.*s' (closures capture values by copy)", l->name.len, l->name.p);
-      if (l->flags & LF_BYREF) fatal(n->pos, "cannot modify loop variable '%.*s' (use `for mut` to modify elements)", l->name.len, l->name.p);
+        fatal(n->pos, "cannot modify parameter '%.*s' (parameters are read-only; mark it `mut` or copy it with `let %.*s = %.*s`)", l->name.len, l->name.p, l->name.len, l->name.p, l->name.len, l->name.p);
+      // (closures share the variables they capture; the bootstrap compiler only copies them)
+      if (l->flags & (LF_CAPTURE | LF_CAPTURED)) fatal(n->pos, "the bootstrap compiler cannot modify '%.*s' after a closure captured it", l->name.len, l->name.p);
+      if (l->flags & LF_BYREF) fatal(n->pos, "cannot modify loop variable '%.*s' (use `loop mut` to modify elements)", l->name.len, l->name.p);
       l->flags |= LF_ASSIGNED;
       return;
     }
@@ -1863,7 +1864,7 @@ Type *check_expr(FnCtx *c, Node **pn, Type *expected) {
   case N_IFLET: {
     bool is_stmt = n->flags & NF_STMT;
     Type *ot = prune(check_expr(c, &n->a, NULL));
-    if (ot->kind != TY_OPT) fatal(n->a->pos, "'if x := value' needs an optional value, found %s", type_str(ot));
+    if (ot->kind != TY_OPT) fatal(n->a->pos, "'if let x = value' needs an optional value, found %s", type_str(ot));
     Scope *saved = c->scope;
     c->scope = scope_new(c->scope, 2, c);
     Local *l = new_local(c, n->name, ot->elem, n->pos);

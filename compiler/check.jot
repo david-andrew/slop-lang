@@ -36,6 +36,10 @@ const LF_ASSIGNED = 16
 const LF_BYREF = 32
 const LF_ADDR = 64     # address is taken (must live in memory)
 const LF_RESIZED = 128 # the variable itself is written (not just its elements or fields)
+const LF_CAPTURED = 256 # a closure captures this variable
+const LF_DECL = 512     # declared by `x = value` / `x: T`
+const LF_SHARED = 1024  # modified after a closure captured it, or by the closure: closures and
+                        # the function share it by reference (it lives in a heap cell, see lower.jot)
 
 struct Local:
     name: i32
@@ -47,6 +51,9 @@ struct Local:
     offset: i32
     env_off: i32
     vreg: i32
+    outer: i32      # LF_CAPTURE: the enclosing function's variable this one captures
+    dloops: i32     # loops being checked when it was declared
+    wloop: i32      # outermost loop (inside its scope) that modifies it before any capture
 
 struct Global:
     name: i32
@@ -723,7 +730,7 @@ ensure_ret = (f: int, use_pos: int):
 
 new_local = (name: int, t: int, pos: int) -> int:
     inst = int(ctxs[cx].inst)
-    locals.push(Local(name = i32(name), type = i32(t), owner = i32(inst), pos = pos))
+    locals.push(Local(name = i32(name), type = i32(t), owner = i32(inst), pos = pos, dloops = i32(loop_serials.len())))
     l = locals.len() - 1
     fns[inst].locals.push(l)
     if name != 0 and name_of(name) != "_": push_scope_sym(name, new_sym(name, .local, l, 0))
@@ -742,13 +749,47 @@ capture_in = (c: int, l: int) -> int:
     outer = capture_in(int(ctxs[c].parent), l)
     loop cap in fns[inst].caps:
         if int(cap.outer) == outer: return int(cap.inner)
-    locals.push(Local(name = locals[l].name, type = locals[l].type, owner = i32(inst), flags = i32(LF_CAPTURE), pos = locals[l].pos))
+    locals.push(Local(name = locals[l].name, type = locals[l].type, owner = i32(inst), flags = i32(LF_CAPTURE), pos = locals[l].pos, outer = i32(outer)))
+    capture_root(l)
     inner = locals.len() - 1
     fns[inst].caps.push(Capture(i32(outer), i32(inner)))
     fns[inst].locals.push(inner)
     inner
 
 capture_local = (l: int) -> int: capture_in(cx, l)
+
+# Closures capture variables by reference. A variable that is never modified once captured
+# behaves the same when copied, so only the others are shared (LF_SHARED). A modification that
+# comes before the capture in the source still counts when a loop around both repeats it.
+loop_serials: int[]     # the loops being checked (innermost last)
+loop_serial_next = 0
+
+enter_loop = ():
+    loop_serial_next += 1
+    loop_serials.push(loop_serial_next)
+
+capture_root = (l: int):
+    f = int(locals[l].flags) | LF_CAPTURED
+    w = int(locals[l].wloop)
+    d = int(locals[l].dloops)
+    if w != 0 and loop_serials.len() > d and loop_serials[d] == w: f |= LF_SHARED
+    locals[l].flags = i32(f)
+    if f & LF_SHARED != 0: check_shareable(l, locals[l].pos)
+
+# root variable r is modified (inside a closure if via_closure)
+note_write = (r: int, via_closure: bool, pos: int):
+    f = int(locals[r].flags)
+    if via_closure or f & LF_CAPTURED != 0:
+        locals[r].flags = i32(f | LF_SHARED)
+        check_shareable(r, pos)
+    else:
+        d = int(locals[r].dloops)
+        if loop_serials.len() > d: locals[r].wloop = i32(loop_serials[d])
+
+check_shareable = (r: int, pos: int):
+    if int(locals[r].flags) & LF_DECL != 0: return
+    nm = name_of(int(locals[r].name))
+    fatal(pos, "'{nm}' is captured by a closure and modified: only variables declared with `=` can be shared like that (copy it first: `let v = {nm}`)")
 
 module_ctx: int[]
 
@@ -901,6 +942,7 @@ set_block_value = (b: int, e: int): nodes[kid(b, nkids(b) - 1)].a = i32(e)
 
 check_for = (s: int):
     mark = scope_mark()
+    enter_loop()
     it = int(nodes[s].a)
     is_mut = has_flag(s, NF_MUT)
     nv = nkids(s)
@@ -1011,6 +1053,7 @@ check_for = (s: int):
         else: fatal(nodes[it].pos, "cannot iterate over a value of type {type_str(t)}")
     ctxs[cx].loop_depth += 1
     check_block(int(nodes[s].b), 0, false)
+    loop_serials.pop()
     ctxs[cx].loop_depth -= 1
     scope_reset(mark)
 
@@ -1135,7 +1178,9 @@ check_vardecl = (s: int):
         loop i in [0..nkids(s)):
             id = kid(s, i)
             if nodes[id].kind == .hole: continue
-            nodes[id].sym = i32(new_local(int(nodes[id].name), targ(t, i), nodes[id].pos))
+            l = new_local(int(nodes[id].name), targ(t, i), nodes[id].pos)
+            locals[l].flags = i32(LF_DECL)
+            nodes[id].sym = i32(l)
         nodes[s].type = i32(t)
         return
     if has_flag(s, NF_GLOBAL):
@@ -1158,7 +1203,9 @@ check_vardecl = (s: int):
     tk = tkind(t)
     if tk == .void_: fatal(nodes[s].pos, "cannot assign a value with no type (void) to '{nm}'")
     if tk == .typeval or tk == .module: fatal(nodes[s].pos, "'{nm}' cannot hold a type or module")
-    nodes[s].sym = i32(new_local(int(nodes[s].name), t, nodes[s].pos))
+    l = new_local(int(nodes[s].name), t, nodes[s].pos)
+    locals[l].flags = i32(LF_DECL)
+    nodes[s].sym = i32(l)
 
 check_stmt = (s: int):
     k = nodes[s].kind
@@ -1198,10 +1245,11 @@ check_stmt = (s: int):
         if last_checked != s: nodes[s] = nodes[last_checked]
     else if k == .while_:
         mark = scope_mark()
+        enter_loop()
         if nodes[s].aux == 1:
             t = prune(check_expr(int(nodes[s].a), 0))
             nodes[s].a = i32(last_checked)
-            if types[t].kind != .opt: fatal(nodes[int(nodes[s].a)].pos, "'while x := value' needs an optional value, found {type_str(t)}")
+            if types[t].kind != .opt: fatal(nodes[int(nodes[s].a)].pos, "'loop let x = value' needs an optional value, found {type_str(t)}")
             nodes[s].sym = i32(new_local(int(nodes[s].name), int(types[t].elem), nodes[s].pos))
         else:
             check_expr(int(nodes[s].a), T_BOOL)
@@ -1209,6 +1257,7 @@ check_stmt = (s: int):
         ctxs[cx].loop_depth += 1
         check_block(int(nodes[s].b), 0, false)
         ctxs[cx].loop_depth -= 1
+        loop_serials.pop()
         scope_reset(mark)
     else if k == .for_: check_for(s)
     else if k == .return_:

@@ -209,7 +209,7 @@ struct Module {
   int order;
 };
 
-enum { LF_PARAM = 1, LF_MUTPARAM = 2, LF_CAPTURE = 4, LF_ALIAS = 8, LF_ASSIGNED = 16, LF_BYREF = 32 };
+enum { LF_PARAM = 1, LF_MUTPARAM = 2, LF_CAPTURE = 4, LF_ALIAS = 8, LF_ASSIGNED = 16, LF_BYREF = 32, LF_CAPTURED = 64 };
 struct Local {
   Str name;
   Type *type;

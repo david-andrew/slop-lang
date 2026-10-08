@@ -922,12 +922,12 @@ static Node *parse_simple_stmt(void) {
     return d;
   }
   Node *e = parse_expr();
-  if (no_tuple) {
+  if (no_tuple && !is_assign_op(pk())) {
     Node *s = new_node(N_EXPRSTMT, pos);
     s->a = e;
     return s;
   }
-  if (pk() == TK_COMMA) { // tuple target list
+  if (pk() == TK_COMMA && !no_tuple) { // tuple target list
     Node *t = new_node(N_TUPLE, e->pos);
     vpush(t->list, e);
     while (accept(TK_COMMA)) vpush(t->list, parse_expr());
@@ -944,7 +944,7 @@ static Node *parse_simple_stmt(void) {
     }
     a->a = e;
     a->b = parse_expr();
-    if (pk() == TK_COMMA) {
+    if (pk() == TK_COMMA && !no_tuple) {
       Node *t = new_node(N_TUPLE, a->b->pos);
       vpush(t->list, a->b);
       while (accept(TK_COMMA)) vpush(t->list, parse_expr());
@@ -1132,7 +1132,7 @@ static Node *parse_struct(void) {
     if (f->kind == N_ASSIGN && f->op == TK_ASSIGN && f->a->kind == N_IDENT) { // name = default
       f->kind = N_VARDECL; f->name = f->a->name; f->a = NULL;
     }
-    if (f->kind != N_VARDECL || f->list.len) fatal(f->pos, "expected a field declaration (name: Type or name := default)");
+    if (f->kind != N_VARDECL || f->list.len) fatal(f->pos, "expected a field declaration (name: Type, or name = default)");
     vpush(s->list, f);
   }
   s->flags |= NF_TERMINATED;

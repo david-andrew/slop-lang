@@ -276,13 +276,21 @@ check_place = (n: int, for_mut: bool):
             l = int(nodes[n].sym)
             f = int(locals[l].flags)
             nm = name_of(int(locals[l].name))
-            if f & LF_PARAM != 0 and f & LF_MUTPARAM == 0: fatal(nodes[n].pos, "cannot modify parameter '{nm}' (parameters are read-only; mark it `mut` or copy it with `{nm} := {nm}`)")
-            if f & LF_CAPTURE != 0: fatal(nodes[n].pos, "cannot modify captured variable '{nm}' (closures capture values by copy)")
-            if f & LF_BYREF != 0: fatal(nodes[n].pos, "cannot modify loop variable '{nm}' (use `for mut` to modify elements)")
+            # a closure modifying a variable it captured modifies the variable itself
+            r = l
+            loop int(locals[r].flags) & LF_CAPTURE != 0: r = int(locals[r].outer)
+            rf = int(locals[r].flags)
+            if rf & LF_PARAM != 0 and rf & LF_MUTPARAM == 0: fatal(nodes[n].pos, "cannot modify parameter '{nm}' (parameters are read-only; mark it `mut` or copy it with `let {nm} = {nm}`)")
+            if rf & LF_BYREF != 0: fatal(nodes[n].pos, "cannot modify loop variable '{nm}' (use `loop mut` to modify elements)")
             nf = f | LF_ASSIGNED
             if cp_inner == 0: nf |= LF_RESIZED
-            if for_mut: nf |= LF_ADDR
+            if for_mut and f & LF_CAPTURE == 0: nf |= LF_ADDR
             locals[l].flags = i32(nf)
+            if r != l:
+                rf |= LF_ASSIGNED
+                if cp_inner == 0: rf |= LF_RESIZED
+                locals[r].flags = i32(rf)
+            note_write(r, r != l, nodes[n].pos)
             return
         if nodes[n].aux == i32(int(SK.global)): return
         fatal(nodes[n].pos, "cannot assign to '{name_of(int(nodes[n].name))}'")
@@ -2357,7 +2365,7 @@ check_if = (n: int, ex: int) -> int:
 check_iflet = (n: int, ex: int) -> int:
     is_stmt = has_flag(n, NF_STMT)
     ot = prune(check_expr(int(nodes[n].a), 0))
-    if types[ot].kind != .opt: fatal(nodes[int(nodes[n].a)].pos, "'if x := value' needs an optional value, found {type_str(ot)}")
+    if types[ot].kind != .opt: fatal(nodes[int(nodes[n].a)].pos, "'if let x = value' needs an optional value, found {type_str(ot)}")
     mark = scope_mark()
     l = new_local(int(nodes[n].name), int(types[ot].elem), nodes[n].pos)
     nodes[n].sym = i32(l)

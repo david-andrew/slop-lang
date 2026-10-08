@@ -367,7 +367,7 @@ scope_push = ():
 scope_add_local = (l: int):
     if scope_locals.len() == 0: return
     f = int(locals[l].flags)
-    if not is_managed(int(locals[l].type)) or f & (LF_PARAM | LF_CAPTURE | LF_ALIAS | LF_BYREF) != 0: return
+    if not is_managed(store_type(l)) or f & (LF_PARAM | LF_CAPTURE | LF_ALIAS | LF_BYREF) != 0: return
     scope_locals[scope_locals.len() - 1].push(l)
 
 emit_scope_exit = (i: int):
@@ -390,7 +390,7 @@ emit_scope_exit = (i: int):
     k = ls.len() - 1
     loop k >= 0:
         l = ls[k]
-        t = int(locals[l].type)
+        t = store_type(l)
         if locals[l].offset >= 0:
             a = e_slot(int(locals[l].offset))
             drop_at(a, t)
@@ -424,9 +424,37 @@ place_addr = (p: Place, t: int) -> int:
     store_val(t, a, 0, p.v)
     a
 
+# ---------------- shared variables ----------------
+# A variable that closures share by reference (LF_SHARED, see check.jot) lives in a cell: a
+# one-element array. The variable (and each capture) holds the cell, and every access goes to its
+# element, without copy-on-write, so all holders see the same value.
+share_root = (l: int) -> int:
+    r = l
+    loop int(locals[r].flags) & LF_CAPTURE != 0: r = int(locals[r].outer)
+    r
+
+is_shared = (l: int) -> bool: int(locals[share_root(l)].flags) & LF_SHARED != 0
+
+# the type of what the variable's storage holds: the value, or the cell
+store_type = (l: int) -> int:
+    t = int(locals[l].type)
+    if is_shared(l): return mk_array(t)
+    t
+
+cell_place = (l: int) -> Place:
+    if int(locals[l].flags) & LF_CAPTURE != 0: return Place(true, e_addi(env_v, int(locals[l].env_off)))
+    if locals[l].offset >= 0: return Place(true, e_slot(int(locals[l].offset)))
+    Place(false, int(locals[l].vreg))
+
+new_cell = (l: int):
+    sz = tsize(int(locals[l].type))
+    if sz < 1: sz = 1
+    write_place(cell_place(l), store_type(l), e_call(rt("__arr_repeat"), [e_iconst(1), e_iconst(sz)], VI))
+
 local_place = (l: int, write: bool) -> Place:
     f = int(locals[l].flags)
     if f & LF_ALIAS != 0: return gen_place(int(locals[l].alias), write)
+    if is_shared(l): return Place(true, e_addi(read_place(cell_place(l), store_type(l)), 24))
     if f & LF_CAPTURE != 0: return Place(true, e_addi(env_v, int(locals[l].env_off)))
     if f & LF_BYREF != 0: return Place(true, int(locals[l].vreg))
     if f & LF_PARAM != 0:
@@ -699,7 +727,7 @@ env_layout = (f: int):
     off = 16
     loop cap in fns[f].caps:
         inn = int(cap.inner)
-        t = int(locals[inn].type)
+        t = store_type(inn)
         al = talign(t)
         if al < 8: al = 8
         off = align_up(off, al)
@@ -725,6 +753,13 @@ gen_lambda = (e: int) -> Val:
     loop cap in fns[f].caps:
         outer = int(cap.outer)
         inn = int(cap.inner)
+        if is_shared(outer):
+            # the closure holds the cell
+            st = store_type(outer)
+            c = read_place(cell_place(outer), st)
+            retain(c, st)
+            store_val(st, env, int(locals[inn].env_off), c)
+            continue
         t = int(locals[outer].type)
         id = mk_ident_local(outer, nodes[e].pos)
         val = own(gen_expr(id), t)
@@ -849,7 +884,7 @@ gen_match_test = (p: int, st0: int, hidden_addr: int) -> int:
             return e_call(rt("__str_eq"), [e_load(VI, hidden_addr, 0, ptr_size), v], VI)
         if types[st].kind == .opt:
             if nodes[a].kind == .none_lit: return e_bin(.eq, VI, e_load(VI, hidden_addr, tsize(int(types[st].elem)), 1), e_iconst(0))
-            fatal(nodes[p].pos, "only `none` and `_` patterns are supported for optionals; use `if v := x`")
+            fatal(nodes[p].pos, "only `none` and `_` patterns are supported for optionals; use `if let v = x`")
         if vc(st) == VC_FLT: fatal(nodes[p].pos, "cannot match on floats")
         if vc(st) == VC_AGG: fatal(nodes[p].pos, "unsupported pattern for this type")
         v = gen_expr(a).v
@@ -2315,6 +2350,7 @@ gen_vardecl = (s: int):
                 store_val(el, e_gaddr(global_addr_off(g)), 0, load_val(el, ea, 0))
             else:
                 l = int(nodes[id].sym)
+                if is_shared(l): new_cell(l)
                 write_place(local_place(l, true), el, load_val(el, ea, 0))
                 scope_add_local(l)
         return
@@ -2329,6 +2365,7 @@ gen_vardecl = (s: int):
         return
     l = int(nodes[s].sym)
     t = int(locals[l].type)
+    if is_shared(l): new_cell(l)
     pl = local_place(l, true)
     if nodes[s].b != 0:
         iv = int(nodes[s].b)
@@ -2420,7 +2457,7 @@ fixed_array_local = (l: int) -> bool:
     # element writes keep the length; writing the variable itself (or a mut parameter, which
     # could be the caller's global) may not
     fl = int(locals[l].flags)
-    if fl & (LF_RESIZED | LF_ALIAS | LF_BYREF) != 0: return false
+    if fl & (LF_RESIZED | LF_ALIAS | LF_BYREF) != 0 or is_shared(l): return false
     if fl & LF_MUTPARAM != 0 and not fn_is_closed(): return false
     true
 
@@ -2716,7 +2753,7 @@ uq_begin = (s: int) -> int:
         t = prune(int(locals[l].type))
         if types[t].kind != .array: continue
         fl = int(locals[l].flags)
-        if fl & (LF_ALIAS | LF_CAPTURE | LF_BYREF) != 0: continue
+        if fl & (LF_ALIAS | LF_CAPTURE | LF_BYREF) != 0 or is_shared(l): continue
         if fl & LF_PARAM != 0 and fl & LF_MUTPARAM == 0: continue
         # only variables that exist before the loop: one declared inside it gets a new value
         # (maybe a shared or read-only one) on every iteration
@@ -2884,6 +2921,7 @@ lower_inst = (lf: int, f: int):
         if fl & LF_BYREF != 0:
             locals[l].vreg = i32(vreg(VI))
             continue
+        t = store_type(l)
         if vc(t) == VC_AGG or fl & LF_ADDR != 0:
             s = new_slot(tsize(t), talign(t))
             locals[l].offset = i32(s)
@@ -3209,7 +3247,7 @@ helper_envdrop = (f: int):
         env_layout(f)
         loop cap in fns[f].caps:
             inn = int(cap.inner)
-            t = int(locals[inn].type)
+            t = store_type(inn)
             if is_managed(t): drop_at(e_addi(env, int(locals[inn].env_off)), t)
     e_call(rt("__free"), [env], -1)
     e_ret(-1)
