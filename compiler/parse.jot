@@ -841,7 +841,8 @@ parse_unary = () -> int:
 # precedence of a dotted operator .+ .* .== ... (its ival is the operator's first character)
 dotop_prec = (i: int) -> int:
     c = int(toks[i].ival)
-    if c == '*' or c == '/' or c == '%' or c == '^': return 10
+    if c == '^': return 11
+    if c == '*' or c == '/' or c == '%': return 10
     if c == '+' or c == '-': return 9
     2
 
@@ -865,7 +866,9 @@ parse_binary = (minprec: int) -> int:
         prec = binprec(k)
         if prec < minprec:
             # (rare tokens are only looked at when the common table says no)
-            if k == .dotop: prec = dotop_prec(ti)
+            if k == .dotop:
+                if pkn(1) == .assign and not space_before(ti + 1): return lhs      # xs .+= 1
+                prec = dotop_prec(ti)
             else if k == .dotdoteq: old_syntax(cur_pos(), "ranges include their end: write a..b (or [a..b) to exclude it)")
             if prec < minprec: return lhs
         # inside array brackets, `a -b` is two elements (a space before the sign and none after)
@@ -893,7 +896,7 @@ parse_binary = (minprec: int) -> int:
             lhs = n
             continue
         rp = prec + 1
-        if k == .qq: rp = prec
+        if k == .qq or (k == .dotop and toks[optok].ival == '^'): rp = prec      # (right-associative)
         rhs = parse_binary(rp)
         b = 0
         if k == .qq: b = mk(.coalesce, pos)
@@ -1318,6 +1321,20 @@ parse_simple_stmt = () -> int:
         nodes[s].a = i32(e)
         return s
     if pk() == .comma and not p_no_tuple: e = tuple_from(e)
+    if pk() == .dotop and pkn(1) == .assign and not space_before(ti + 1):
+        # xs .+= ys: xs = xs .+ ys
+        a = mk(.assign, cur_pos())
+        nodes[a].op = i32(int(Tok.assign))
+        nodes[a].a = i32(e)
+        b = mk(.binary, cur_pos())
+        op = advance()
+        advance()
+        nodes[b].op = i32(int(Tok.dotop))
+        nodes[b].aux = i32(toks[op].ival)
+        nodes[b].a = i32(clone(e))
+        nodes[b].b = i32(parse_expr())
+        nodes[a].b = i32(b)
+        return a
     if pk() == .decl: old_syntax(cur_pos(), "variables are declared with `x = value` (or `let x = value` to shadow an outer x)")
     if is_assign_op(pk()):
         a = mk(.assign, cur_pos())

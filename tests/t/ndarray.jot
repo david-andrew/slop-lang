@@ -23,3 +23,10 @@ main = ():
     print(col .+ [10.0 20.0 30.0])
     xs = [1 2 3]
     print(xs .* 2, -xs[0], sum(xs .* xs))
+
+dotted_compound = ():
+    xs = [1.0 2.0 3.0]
+    xs .+= 1.0
+    xs .*= xs
+    print(xs, 2.0 .* [1.0 2.0] .^ 2, [2.0] .^ [3.0] .^ [2.0])
+dotted_compound()
