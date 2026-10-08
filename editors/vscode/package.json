@@ -124,5 +124,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/david-andrew/slop-lang"
-  }
+  },
+  "license": "MIT"
 }

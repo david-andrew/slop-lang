@@ -12,6 +12,7 @@
   <a href="https://david-andrew.github.io/slop-lang/"><img alt="Website" src="https://img.shields.io/github/actions/workflow/status/david-andrew/slop-lang/site.yml?label=website"></a>
   <a href="https://david-andrew.github.io/slop-lang/playground/"><img alt="Try it in the browser" src="https://img.shields.io/badge/playground-try%20it%20in%20the%20browser-2f6a7a"></a>
   <img alt="Platform: Linux x86-64 and the web" src="https://img.shields.io/badge/platform-linux%20x86--64%20%7C%20web-555">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-555"></a>
 </p>
 
 Jot is a small, compiled, statically typed language that feels like a scripting language,
@@ -219,3 +220,9 @@ them against references, with no GPU or display needed).
 
 The web backend emits WebAssembly from the same IR; the HTML file contains the module (base64)
 and a small JavaScript runtime for WebGL 2, input and audio.
+
+## License
+
+MIT (see [LICENSE](LICENSE)), so programs built with Jot, which include its runtime and
+library, can be released under any license. The logo is not covered by it; the default font
+is Noto Sans, under the SIL Open Font License ([lib/game/assets/OFL.txt](lib/game/assets/OFL.txt)).

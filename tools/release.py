@@ -39,6 +39,7 @@ with tarfile.open(tgz, "w:gz", format=tarfile.PAX_FORMAT) as tar:
             add(tar, full, f"{top}/lib/" + os.path.relpath(full, os.path.join(root, "lib")), 0o644)
     add(tar, vsix, f"{top}/editors/jot.vsix", 0o644)
     add(tar, os.path.join(root, "README.md"), f"{top}/README.md", 0o644)
+    add(tar, os.path.join(root, "LICENSE"), f"{top}/LICENSE", 0o644)
 digest = hashlib.sha256(open(tgz, "rb").read()).hexdigest()
 open(tgz + ".sha256", "w").write(f"{digest}  jot-linux-x86_64.tar.gz\n")
 print(f"jot {version}: {tgz} ({os.path.getsize(tgz) // 1024} KB), {vsix}")

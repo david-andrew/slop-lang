@@ -171,7 +171,7 @@ def page(title, body, here_page, prefix, extra_head=""):
 <title>{html.escape(title)}</title><link rel="icon" href="{prefix}icon-32.png"><link rel="stylesheet" href="{prefix}style.css">{extra_head}
 </head><body>{nav(here_page, prefix)}
 {body}
-<footer>Jot &middot; <a href="{REPO}">source on GitHub</a></footer>
+<footer>Jot &middot; <a href="{REPO}">source on GitHub</a> &middot; <a href="{REPO}/blob/master/LICENSE">MIT license</a></footer>
 <script src="{prefix}highlight.js"></script>
 <script>for (const c of document.querySelectorAll("pre code.jot")) c.innerHTML = jotHighlight(c.textContent, 0).replace(/\\n$/, "");</script>
 </body></html>
