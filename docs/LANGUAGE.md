@@ -49,6 +49,9 @@ print(squares, inc(41))
 * Float literals: `1.5`, `2.0e-3`. Literals take the type their context expects.
 * Strings: `"text {expr} more {value:.2}"` — `{}` interpolates any expression,
   `{{` and `}}` are literal braces. Escapes: `\n \t \r \0 \\ \" \' \xNN`.
+  Format specs follow Python: `[[fill]align][+][0][width][,][.precision][type]` with align
+  `<` `>` `^` and type `x` `X` `b` `o` `f` `%` — `{price:>8.2}`, `{n:,}`, `{ratio:.1%}`,
+  `{name:<12}`, `{bits:08b}`.
   Raw strings `r"no {interp} \here"`. Triple quoted `"""multi-line"""` strings.
 
 Keywords: `fn struct enum if else for in while break continue return match
@@ -90,7 +93,8 @@ Narrowing is explicit: `int(3.7)`, `u8(x)`, `f32(x)`. `as` reinterprets bits/poi
 Float to integer conversion truncates toward zero and saturates: NaN becomes 0 and values
 beyond the integer range become its minimum or maximum (the same on every target).
 
-Integer `/` truncates, `%` is remainder. Integer overflow wraps.
+Integer `/` truncates, `%` is remainder. Integer overflow wraps. `x ** y` is `pow(x, y)`
+(right-associative and tighter than unary minus, as in Python: `-2 ** 2 == -4`).
 
 ### Value semantics
 

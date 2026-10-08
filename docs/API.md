@@ -185,12 +185,14 @@ fn contains(s: str, sub: str) -> bool
 fn starts_with(s: str, prefix: str) -> bool
 fn ends_with(s: str, suffix: str) -> bool
 fn trim(s: str) -> str
+fn trim(s: str, chars: str) -> str    # remove any of the characters in `chars` from both ends
 fn trim_start(s: str) -> str
 fn trim_end(s: str) -> str
 fn split(s: str, sep: str) -> [str]
 fn words(s: str) -> [str]    # split on runs of whitespace
 fn lines(s: str) -> [str]
 fn join(parts: [str], sep: str = "") -> str
+fn join(sep: str, parts: [str]) -> str    # sep.join(parts), as in Python
 fn replace(s: str, old: str, new: str) -> str
 fn repeat(s: str, n: int) -> str
 fn *(s: str, n: int) -> str

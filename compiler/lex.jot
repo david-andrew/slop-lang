@@ -11,7 +11,7 @@ enum Tok:
     comma, colon, semi, dot, dotdot, dotdoteq, arrow, decl,
     assign, pluseq, minuseq, stareq, slasheq, percenteq, ampeq, pipeeq, careteq, shleq, shreq,
     plus, minus, star, slash, percent, amp, pipe, caret, tilde, shl, shr,
-    eq, ne, lt, le, gt, ge, question, qq, bang, at
+    eq, ne, lt, le, gt, ge, question, qq, bang, at, starstar
 
 const STRF_RAW = 1
 const STRF_TRIPLE = 2
@@ -116,6 +116,7 @@ fn tok_text(k: Tok) -> str:
         qq: "??"
         bang: "!"
         at: "@"
+        starstar: "**"
         _: tok_name(k)
 
 keywords: {str: Tok} = {
@@ -521,7 +522,11 @@ fn lex(file: int, src: str) -> [Token]:
                     k = .minuseq
                     n = 2
             '+': k = op_or_assign(c1, .plus, .pluseq)
-            '*': k = op_or_assign(c1, .star, .stareq)
+            '*':
+                k = op_or_assign(c1, .star, .stareq)
+                if c1 == '*':
+                    k = .starstar
+                    n = 2
             '/': k = op_or_assign(c1, .slash, .slasheq)
             '%': k = op_or_assign(c1, .percent, .percenteq)
             '&': k = op_or_assign(c1, .amp, .ampeq)

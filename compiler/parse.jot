@@ -112,6 +112,13 @@ fn parse_type_primary() -> int:
         n := mk(.tptr, pos)
         nodes[n].a = i32(parse_type_primary())
         return n
+    if k == .starstar:
+        advance()
+        inner := mk(.tptr, pos)
+        nodes[inner].a = i32(parse_type_primary())
+        n := mk(.tptr, pos)
+        nodes[n].a = i32(inner)
+        return n
     if k == .kw_fn:
         advance()
         n := mk(.tfn, pos)
@@ -249,6 +256,8 @@ fn parse_string_token(t: int) -> int:
             eend := j
             if colon >= 0: eend = colon
             expr_src := s[i + 1..eend]
+            if len(trim(expr_src)) == 0:
+                fatal(pos, "'{{' in a string starts an interpolation like \"{{x}}\"; write {{{{ and }}}} for literal braces")
             # lex and parse the embedded expression; its tokens keep their places in the file
             saved_toks := toks
             saved_ti := ti
@@ -483,7 +492,21 @@ fn parse_prefix() -> int:
         nodes[n].op = i32(int(k))
         nodes[n].a = i32(operand)
         return n
-    parse_postfix(parse_primary())
+    parse_power()
+
+# x ** y (right-associative, binds tighter than unary minus: -x ** 2 is -(x ** 2)) is pow(x, y)
+fn parse_power() -> int:
+    base := parse_postfix(parse_primary())
+    if pk() != .starstar: return base
+    pos := cur_pos()
+    advance()
+    exponent := parse_prefix()
+    callee := mk(.ident, pos)
+    nodes[callee].name = i32(intern("pow"))
+    c := mk(.call, pos)
+    nodes[c].a = i32(callee)
+    set_list(c, [base, exponent])
+    c
 
 fn parse_unary() -> int:
     e := parse_prefix()

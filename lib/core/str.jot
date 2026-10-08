@@ -66,6 +66,19 @@ fn trim(s: str) -> str:
     while b > a and is_space(s[b - 1]): b -= 1
     s[a..b]
 
+# remove any of the characters in `chars` from both ends
+fn trim(s: str, chars: str) -> str:
+    a := 0
+    b := len(s)
+    while a < b and __has_byte(chars, s[a]): a += 1
+    while b > a and __has_byte(chars, s[b - 1]): b -= 1
+    s[a..b]
+
+fn __has_byte(s: str, c: u8) -> bool:
+    for x in s:
+        if x == c: return true
+    false
+
 fn trim_start(s: str) -> str:
     a := 0
     while a < len(s) and is_space(s[a]): a += 1
@@ -118,6 +131,9 @@ fn join(parts: [str], sep: str = "") -> str:
         if i > 0: __buf_append_str(buf, sep)
         __buf_append_str(buf, p)
     __buf_finish_val(buf)
+
+# sep.join(parts), as in Python
+fn join(sep: str, parts: [str]) -> str: join(parts, sep)
 
 fn __buf_finish_val(buf: [u8]) -> str: str_from_bytes(buf)
 

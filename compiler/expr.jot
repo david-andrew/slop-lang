@@ -2000,7 +2000,14 @@ fn check_expr(n: int, expected: int) -> int:
             if exk == .opt: h = ex
             else: h = mk_opt(ex)
         at := prune(check_expr(int(nodes[n].a), h))
-        if types[at].kind != .opt: fatal(nodes[n].pos, "'??' needs an optional on the left, found {type_str(at)}")
+        if types[at].kind != .opt:
+            lhs := int(nodes[n].a)
+            # (an index into a map has become a call by now; its position is still the '[')
+            lp := int(nodes[lhs].pos)
+            lf := pos_file(lp)
+            if lf >= 0 and lf < files.len() and pos_off(lp) < len(files[lf].src) and files[lf].src[pos_off(lp)] == '[':
+                fatal(nodes[n].pos, "'??' needs an optional on the left, found {type_str(at)} (indexing gives the element itself; m.get(k) gives an optional, m.get(k, default) a value)")
+            fatal(nodes[n].pos, "'??' needs an optional on the left, found {type_str(at)}")
         inner := int(types[at].elem)
         h2 := inner
         if ex != 0: h2 = ex

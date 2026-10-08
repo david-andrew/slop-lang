@@ -7,3 +7,4 @@ bench/
 tools/icount
 build/
 __pycache__/
+bin/jot-dev

@@ -381,89 +381,174 @@ fn __fixed_digits(buf: mut [u8], neg: bool, d: u64, prec: int):
         __buf_byte(buf, '.')
         __fmt_u64(buf, fp, false, prec, '0')
 
-# ---------------- format specs: {x:.2} {x:5} {x:05} {x:x} ----------------
-fn __spec_parse(spec: str) -> (int, int, int, int):
-    # returns (width, precision, pad char, kind) kind: 0 default, 1 hex, 2 HEX
-    width := 0
-    prec := -1
-    pad := ' '
-    kind := 0
+# ---------------- format specs ----------------
+# [[fill]align][+][0][width][,|_][.precision][type] as in Python: align is < > ^, type one of
+# x X b o (integers), f (fixed), % (percent); {x:.2} {x:>8} {n:,} {x:08.3} {p:.1%} {s:^20}
+struct __Spec:
+    width: int
+    prec: int
+    fill: int
+    align: int         # 0 (numbers right, text left), '<', '>' or '^'
+    zero: bool         # pad numbers with zeros after the sign
+    plus: bool
+    group: int         # thousands separator (0: none)
+    kind: int          # 0 or the type letter
+
+fn __is_align(c: u8) -> bool: c == '<' or c == '>' or c == '^'
+
+fn __spec_parse(spec: str) -> __Spec:
+    sp := __Spec(0, -1, ' ', 0, false, false, 0, 0)
     i := 0
     n := len(spec)
+    if n >= 2 and __is_align(spec[1]):
+        sp.fill = int(spec[0])
+        sp.align = int(spec[1])
+        i = 2
+    else if n >= 1 and __is_align(spec[0]):
+        sp.align = int(spec[0])
+        i = 1
+    if i < n and spec[i] == '+':
+        sp.plus = true
+        i += 1
     if i < n and spec[i] == '0':
-        pad = '0'
+        sp.zero = true
         i += 1
     while i < n and spec[i] >= '0' and spec[i] <= '9':
-        width = width * 10 + int(spec[i]) - 48
+        sp.width = sp.width * 10 + int(spec[i]) - 48
+        i += 1
+    if i < n and (spec[i] == ',' or spec[i] == '_'):
+        sp.group = int(spec[i])
         i += 1
     if i < n and spec[i] == '.':
         i += 1
-        prec = 0
+        sp.prec = 0
         while i < n and spec[i] >= '0' and spec[i] <= '9':
-            prec = prec * 10 + int(spec[i]) - 48
+            sp.prec = sp.prec * 10 + int(spec[i]) - 48
             i += 1
-    if i < n and spec[i] == 'x': kind = 1
-    if i < n and spec[i] == 'X': kind = 2
-    (width, prec, pad, kind)
+    if i < n: sp.kind = int(spec[i])
+    sp
 
-fn __pad_to(buf: mut [u8], start: int, width: int, pad: int):
+# pad (and group) what was written since start according to the spec
+fn __spec_finish(buf: mut [u8], start: int, sp: __Spec, number: bool):
+    if number and sp.group != 0: __group_digits(buf, start, sp.group)
+    if number and sp.plus and len(buf) > start and buf[start] != '-': __insert_bytes(buf, start, "+")
     n := len(buf) - start
-    if n >= width: return
-    extra := width - n
+    if n >= sp.width: return
+    extra := sp.width - n
+    if number and sp.zero and sp.align == 0:
+        # zeros go after the sign
+        at := start
+        if buf[start] == '-' or buf[start] == '+': at += 1
+        __insert_fill(buf, at, extra, '0')
+        return
+    align := sp.align
+    if align == 0:
+        align = '<'
+        if number: align = '>'
+    if align == '<': __insert_fill(buf, len(buf), extra, sp.fill)
+    else if align == '>': __insert_fill(buf, start, extra, sp.fill)
+    else:
+        __insert_fill(buf, start, extra / 2, sp.fill)
+        __insert_fill(buf, len(buf), extra - extra / 2, sp.fill)
+
+fn __insert_fill(buf: mut [u8], at: int, count: int, c: int):
+    if count <= 0: return
+    tail := len(buf) - at
     old := len(buf)
-    p := __buf_reserve(buf, extra)
-    __mem_move(p + 24 + start + extra, p + 24 + start, n)
+    p := __buf_reserve(buf, count)
+    __mem_move(p + 24 + at + count, p + 24 + at, tail)
     i := 0
-    while i < extra:
-        p[24 + start + i] = u8(pad)
+    while i < count:
+        p[24 + at + i] = u8(c)
         i += 1
-    (p as *int)[1] = old + extra
+    (p as *int)[1] = old + count
+
+fn __insert_bytes(buf: mut [u8], at: int, s: str):
+    __insert_fill(buf, at, len(s), ' ')
+    i := 0
+    while i < len(s):
+        buf[at + i] = s[i]
+        i += 1
+
+# 1234567.5 -> 1,234,567.5
+fn __group_digits(buf: mut [u8], start: int, sep: int):
+    a := start
+    if a < len(buf) and buf[a] == '-': a += 1
+    e := a
+    while e < len(buf) and buf[e] >= '0' and buf[e] <= '9': e += 1
+    k := e - 3
+    while k > a:
+        __insert_fill(buf, k, 1, sep)
+        k -= 3
+
+fn __fmt_radix(buf: mut [u8], x: u64, radix: int):
+    if x == 0:
+        __buf_byte(buf, '0')
+        return
+    digits: [u8]
+    v := x
+    while v != 0:
+        digits.push(u8(48 + int(v % u64(radix))))
+        v = v / u64(radix)
+    i := digits.len() - 1
+    while i >= 0:
+        __buf_byte(buf, int(digits[i]))
+        i -= 1
 
 fn __fmt_spec(buf: mut [u8], x: float, spec: str):
-    w, prec, pad, kind := __spec_parse(spec)
+    sp := __spec_parse(spec)
     start := len(buf)
-    if prec >= 0: __fmt_fixed(buf, x, prec)
+    if sp.kind == '%':
+        p := sp.prec
+        if p < 0: p = 0
+        __fmt_fixed(buf, x * 100.0, p)
+        __buf_byte(buf, '%')
+    else if sp.prec >= 0: __fmt_fixed(buf, x, sp.prec)
+    else if sp.kind == 'f': __fmt_fixed(buf, x, 6)
     else: __fmt(buf, x)
-    __pad_to(buf, start, w, pad)
+    __spec_finish(buf, start, sp, true)
 
 fn __fmt_spec(buf: mut [u8], x: f32, spec: str): __fmt_spec(buf, float(x), spec)
 
 fn __fmt_spec(buf: mut [u8], x: int, spec: str):
-    w, prec, pad, kind := __spec_parse(spec)
+    sp := __spec_parse(spec)
     start := len(buf)
-    if kind > 0: __fmt_hex(buf, u64(x), 0, kind == 2)
-    else if prec >= 0: __fmt_fixed(buf, float(x), prec)
-    else: __fmt(buf, x)
-    if pad == '0' and x < 0 and kind == 0:
-        # zero padding goes after the sign
-        n := len(buf) - start
-        if n < w:
-            __pad_to(buf, start + 1, w - 1, '0')
+    k := sp.kind
+    if k == 'x' or k == 'X' or k == 'b' or k == 'o':
+        u := u64(x)
+        if x < 0:
+            __buf_byte(buf, '-')
+            u = u64(0) - u
+        if k == 'b': __fmt_radix(buf, u, 2)
+        else if k == 'o': __fmt_radix(buf, u, 8)
+        else: __fmt_hex(buf, u, 0, k == 'X')
+    else if sp.prec >= 0 or k == 'f' or k == '%':
+        __fmt_spec(buf, float(x), spec)
         return
-    __pad_to(buf, start, w, pad)
+    else: __fmt(buf, x)
+    __spec_finish(buf, start, sp, true)
 
 fn __fmt_spec(buf: mut [u8], x: u64, spec: str):
-    w, prec, pad, kind := __spec_parse(spec)
+    sp := __spec_parse(spec)
     start := len(buf)
-    if kind > 0: __fmt_hex(buf, x, 0, kind == 2)
+    k := sp.kind
+    if k == 'b': __fmt_radix(buf, x, 2)
+    else if k == 'o': __fmt_radix(buf, x, 8)
+    else if k == 'x' or k == 'X': __fmt_hex(buf, x, 0, k == 'X')
     else: __fmt(buf, x)
-    __pad_to(buf, start, w, pad)
+    __spec_finish(buf, start, sp, true)
 
 fn __fmt_spec(buf: mut [u8], x: str, spec: str):
-    w, prec, pad, kind := __spec_parse(spec)
+    sp := __spec_parse(spec)
     start := len(buf)
     __buf_append_str(buf, x)
-    # strings pad on the right
-    n := len(buf) - start
-    while n < w:
-        __buf_byte(buf, ' ')
-        n += 1
+    __spec_finish(buf, start, sp, false)
 
 fn __fmt_spec(buf: mut [u8], x, spec: str):
-    w, prec, pad, kind := __spec_parse(spec)
+    sp := __spec_parse(spec)
     start := len(buf)
     __fmt(buf, x)
-    __pad_to(buf, start, w, pad)
+    __spec_finish(buf, start, sp, false)
 
 # ---------------- containers ----------------
 fn __fmt_elem(buf: mut [u8], s: str):
