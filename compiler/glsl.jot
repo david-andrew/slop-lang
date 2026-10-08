@@ -35,7 +35,7 @@ gl_type = (t0: int, pos: int) -> str:
         si = int(types[t].st)
         if structs[si].name == "Texture": return "sampler2D"
         gl_struct(t, pos)
-        return "S_{sanitize(structs[si].name)}_{si}"
+        return "S_{gl_name(structs[si].name)}_{si}"
     if k == .void_: return "void"
     gl_err(pos, "type {type_str(t)} cannot be used in shaders (use numbers, bools, vectors, matrices, structs and Texture)")
     ""
@@ -45,13 +45,24 @@ gl_struct = (t: int, pos: int):
     if gl_done_structs.get(si) != none: return
     gl_done_structs[si] = true
     check_struct_fields(si)
-    s = "struct S_{sanitize(structs[si].name)}_{si} \{\n"
+    s = "struct S_{gl_name(structs[si].name)}_{si} \{\n"
     loop i in [0..int(structs[si].nfields)):
         f = int(structs[si].fields) + i
         s += "    {gl_type(int(fields[f].type), pos)} {name_of(int(fields[f].name))}_;\n"
     gl_decls.push(s + "};\n")
 
-gl_local = (l: int) -> str: "l_{sanitize(name_of(int(locals[l].name)))}_{l}"
+# a name GLSL accepts as part of an identifier: no "__" anywhere (reserved in GLSL ES), and none
+# at the ends (the generated names put "_" around it)
+gl_name = (s: str) -> str:
+    b: u8[]
+    loop c in sanitize(s):
+        if c == '_' and (b.len() == 0 or b[b.len() - 1] == '_'): continue
+        b.push(c)
+    if b.len() > 0 and b[b.len() - 1] == '_': b.pop()
+    if b.len() == 0: return "a"
+    str_from_bytes(b)
+
+gl_local = (l: int) -> str: "l_{gl_name(name_of(int(locals[l].name)))}_{l}"
 
 gl_float = (x: f64) -> str:
     s = "{x}"
@@ -67,7 +78,7 @@ builtin_map: {str: str} = {
     "sign": "sign", "sinf": "sin", "cosf": "cos", "sample": "texture", "exp2": "exp2", "log2": "log2",
 }
 
-gl_fn_name = (f: int) -> str: "f_{sanitize(name_of(int(nodes[int(fns[f].decl)].name)))}_{f}"
+gl_fn_name = (f: int) -> str: "f_{gl_name(name_of(int(nodes[int(fns[f].decl)].name)))}_{f}"
 
 # translate a function and everything it calls
 gl_function = (f: int):

@@ -148,6 +148,11 @@ when TARGET == "wasm":
         glTexSubImage2D(GL_TEXTURE_2D, 0, i32(x), i32(y), i32(w), i32(h), u32(format), u32(ty), pixels, i32(size))
     gl_read_pixels = (x: int, y: int, w: int, h: int, out: *u8):
         glReadPixels(i32(x), i32(y), i32(w), i32(h), GL_RGBA, GL_UNSIGNED_BYTE, out, i32(w * h * 4))
+    # RGBA f32 pixels of a float render target
+    gl_read_pixels_f32 = (x: int, y: int, w: int, h: int, out: *u8):
+        glReadPixels(i32(x), i32(y), i32(w), i32(h), GL_RGBA, GL_FLOAT, out, i32(w * h * 16))
+    extern glUniform4i = (loc: i32, x: i32, y: i32, z: i32, w: i32)
+    gl_uniform4i = (loc: int, x: int, y: int, z: int, w: int): glUniform4i(i32(loc), i32(x), i32(y), i32(z), i32(w))
 else:
     @lib("libGLESv2.so.2")
     @symbol("glClearColor")
@@ -680,3 +685,7 @@ else:
             sgl_read_pixels(x, y, w, h, out)
             return
         __glReadPixels(i32(x), i32(y), i32(w), i32(h), GL_RGBA, GL_UNSIGNED_BYTE, out)
+    gl_read_pixels_f32 = (x: int, y: int, w: int, h: int, out: *u8):
+        __glReadPixels(i32(x), i32(y), i32(w), i32(h), GL_RGBA, GL_FLOAT, out)
+    gl_uniform4i = (loc: int, x: int, y: int, z: int, w: int):
+        if not __soft: __glUniform4i(i32(loc), i32(x), i32(y), i32(z), i32(w))

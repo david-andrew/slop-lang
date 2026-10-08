@@ -6,9 +6,10 @@
 #
 # A dotted expression whose arrays are GPU arrays runs on the GPU as one fragment program (the
 # functions applied with f.(g) are translated to GLSL, like shader functions; numbers in the
-# expression become f32 uniforms). Shapes broadcast as on the CPU. Where there is no GPU (no OpenGL ES driver, JOT_SOFTWARE=1,
-# or a web build) the same expressions run on the CPU, so programs work everywhere.
-# gpu_available() tells which.
+# expression become f32 uniforms). Shapes broadcast as on the CPU. Native programs use OpenGL ES
+# (without a window, through a windowless EGL context), web builds WebGL 2. Where neither can
+# render to float textures (no driver, JOT_SOFTWARE=1, an old browser, node) the same
+# expressions run on the CPU, so programs work everywhere; gpu_available() tells which.
 
 struct GpuArray:
     n: int
@@ -36,26 +37,32 @@ void main() \{
 }
 "
 
-gpu_available = () -> bool:
-    when TARGET == "wasm": return false
+when TARGET == "wasm":
+    # (lib/web/gfx.js) a WebGL 2 context on the page's canvas; 1 if it renders to float textures
+    extern __web_gpu_init = () -> i32
+
+# a GL context that can render to float textures
+__gpu_context = () -> bool:
+    when TARGET == "wasm": return __web_gpu_init() != 0
     else:
-        if __gpu_state == 0:
-            __gpu_state = 2
-            if (env("JOT_SOFTWARE") ?? "") != "1" and (env("JOT_NO_GPU") ?? "") != "1":
-                ok = false
-                if __win_open: ok = not __soft
-                else: ok = len(__egl_open_surfaceless()) == 0
-                if ok:
-                    __gpu_fbo = gl_create_framebuffer()
-                    __gpu_vao = gl_create_vertex_array()
-                    # rendering to float textures needs EXT_color_buffer_float
-                    probe = __gpu_new_texture(1, 1)
-                    glBindFramebuffer(GL_FRAMEBUFFER, u32(__gpu_fbo))
-                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, u32(probe), 0)
-                    if glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE: __gpu_state = 1
-                    gl_delete_texture(probe)
-                    __gpu_restore()
-        __gpu_state == 1
+        if (env("JOT_SOFTWARE") ?? "") == "1" or (env("JOT_NO_GPU") ?? "") == "1": return false
+        if __win_open: return not __soft
+        len(__egl_open_surfaceless()) == 0
+
+gpu_available = () -> bool:
+    if __gpu_state == 0:
+        __gpu_state = 2
+        if __gpu_context():
+            __gpu_fbo = gl_create_framebuffer()
+            __gpu_vao = gl_create_vertex_array()
+            # rendering to float textures needs EXT_color_buffer_float
+            probe = __gpu_new_texture(1, 1)
+            glBindFramebuffer(GL_FRAMEBUFFER, u32(__gpu_fbo))
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, u32(probe), 0)
+            if glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE: __gpu_state = 1
+            gl_delete_texture(probe)
+            __gpu_restore()
+    __gpu_state == 1
 
 # ---------------- moving data ----------------
 gpu = (xs: f32[]) -> GpuArray: __gpu_upload(xs, [xs.len()])
@@ -66,11 +73,10 @@ __gpu_upload = (xs: f32[], shape: int[]) -> GpuArray:
     if shape.len() > 4: panic("GPU arrays have at most 4 dimensions (this one has shape {__shape_str(shape)})")
     if not gpu_available(): return GpuArray(n = xs.len(), host = xs, token = fill(u8(0), 1), shape = shape)
     g = __gpu_alloc(xs.len(), shape)
-    when TARGET != "wasm":
-        buf = fill(f32(0), g.w * g.h * 4)
-        loop i in [0..xs.len()): buf[i * 4] = xs[i]
-        glBindTexture(GL_TEXTURE_2D, u32(g.tex))
-        __glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, i32(g.w), i32(g.h), GL_RGBA, GL_FLOAT, data(buf) as *u8)
+    buf = fill(f32(0), g.w * g.h * 4)
+    loop i in [0..xs.len()): buf[i * 4] = xs[i]
+    glBindTexture(GL_TEXTURE_2D, u32(g.tex))
+    gl_tex_sub_image(0, 0, g.w, g.h, GL_RGBA, GL_FLOAT, data(buf) as *u8, buf.len() * 4)
     g
 gpu = (xs: f64[]) -> GpuArray: gpu(f32.(xs))
 gpu = (xs: int[]) -> GpuArray: gpu(f32.(xs))
@@ -88,14 +94,13 @@ cpu = (g: GpuArray) -> NDArray[f32]: NDArray(__gpu_values(g), g.shape)
 __gpu_values = (g: GpuArray) -> f32[]:
     if g.tex == 0: return g.host
     out: f32[]
-    when TARGET != "wasm":
-        buf = fill(f32(0), g.w * g.h * 4)
-        glBindFramebuffer(GL_FRAMEBUFFER, u32(__gpu_fbo))
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, u32(g.tex), 0)
-        __glReadPixels(0, 0, i32(g.w), i32(g.h), GL_RGBA, GL_FLOAT, data(buf) as *u8)
-        __gpu_restore()
-        out.reserve(g.n)
-        loop i in [0..g.n): out.push(buf[i * 4])
+    buf = fill(f32(0), g.w * g.h * 4)
+    glBindFramebuffer(GL_FRAMEBUFFER, u32(__gpu_fbo))
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, u32(g.tex), 0)
+    gl_read_pixels_f32(0, 0, g.w, g.h, data(buf) as *u8)
+    __gpu_restore()
+    out.reserve(g.n)
+    loop i in [0..g.n): out.push(buf[i * 4])
     out
 
 len = (g: GpuArray) -> int: g.shape[0]
@@ -185,18 +190,17 @@ __gpu_run = (src: str, ins: GpuArray[], scalars: f32[]) -> GpuArray:
     glDisable(GL_BLEND)
     glDisable(GL_DEPTH_TEST)
     glUseProgram(u32(prog))
-    when TARGET != "wasm":
-        od = __pad4(shp, 1)
-        __glUniform4i(i32(locs[0]), i32(od[0]), i32(od[1]), i32(od[2]), i32(od[3]))
-        glUniform1i(i32(locs[1]), i32(out.w))
-        loop i in 0.. and g in ins:
-            glActiveTexture(GL_TEXTURE0 + u32(i))
-            glBindTexture(GL_TEXTURE_2D, u32(g.tex))
-            glUniform1i(i32(locs[2 + 3 * i]), i32(i))
-            st = __pad4(__bcast_strides(g.shape, shp), 0)
-            __glUniform4i(i32(locs[3 + 3 * i]), i32(st[0]), i32(st[1]), i32(st[2]), i32(st[3]))
-            glUniform1i(i32(locs[4 + 3 * i]), i32(g.w))
-        loop i in 0.. and s in scalars: glUniform1f(i32(locs[2 + 3 * ins.len() + i]), s)
+    od = __pad4(shp, 1)
+    gl_uniform4i(locs[0], od[0], od[1], od[2], od[3])
+    glUniform1i(i32(locs[1]), i32(out.w))
+    loop i in 0.. and g in ins:
+        glActiveTexture(GL_TEXTURE0 + u32(i))
+        glBindTexture(GL_TEXTURE_2D, u32(g.tex))
+        glUniform1i(i32(locs[2 + 3 * i]), i32(i))
+        st = __pad4(__bcast_strides(g.shape, shp), 0)
+        gl_uniform4i(locs[3 + 3 * i], st[0], st[1], st[2], st[3])
+        glUniform1i(i32(locs[4 + 3 * i]), i32(g.w))
+    loop i in 0.. and s in scalars: glUniform1f(i32(locs[2 + 3 * ins.len() + i]), s)
     glBindVertexArray(u32(__gpu_vao))
     glDrawArrays(GL_TRIANGLES, 0, 3)
     glBindVertexArray(0)

@@ -412,9 +412,10 @@ ys = cpu(h)
 
 GPU arrays have the shape of the array they were made from (up to 4 dimensions) and broadcast
 like arrays on the CPU; `cpu(g)` gives an `f32[,]` of that shape. Values on the GPU are `f32`. GPU
-memory is reused automatically once no copy of a GPU array is left. Where there is no GPU (no
-OpenGL ES driver, `JOT_SOFTWARE=1`, or a web build, for now) the same expressions run on the CPU,
-so programs work everywhere; `gpu_available()` tells which.
+memory is reused automatically once no copy of a GPU array is left. Native programs use OpenGL
+ES (no window needed), web builds WebGL 2. Where neither can render to float textures (no
+driver, `JOT_SOFTWARE=1`, an old browser) the same expressions run on the CPU, so programs work
+everywhere; `gpu_available()` tells which.
 
 ## 9. Modules
 
@@ -488,6 +489,14 @@ draw = ():
     clear(rgb(0.1, 0.1, 0.15))
     circle(pos, 20, rgb(1, 0.5, 0.2))
 ```
+
+**Window size.** `window("Title", 1280, 720)` (called for you with those defaults) sets the
+window's starting size and the program's 2D coordinate space: 2D drawing and `mouse_pos()` are in
+those units however large the window becomes — resized, maximized, or a browser page, which the
+game fills — scaled to fit and centered. A window of another shape shows more around that
+area: `visible_rect()` is the part of the plane on screen (draw backgrounds over it),
+`screen_size()` is the size given to `window()`, `pixel_size()` the real size. 3D rendering
+uses the whole window.
 
 Native games open a Wayland window when `WAYLAND_DISPLAY` is set and an X11 window otherwise
 (`JOT_PLATFORM=x11|wayland` chooses). They use the system's OpenGL ES driver when there is

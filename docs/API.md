@@ -636,9 +636,10 @@ ys = cpu(h)                       # download: an f32[,] of the same shape
   
 A dotted expression whose arrays are GPU arrays runs on the GPU as one fragment program (the  
 functions applied with f.(g) are translated to GLSL, like shader functions; numbers in the  
-expression become f32 uniforms). Shapes broadcast as on the CPU. Where there is no GPU (no OpenGL ES driver, JOT_SOFTWARE=1,  
-or a web build) the same expressions run on the CPU, so programs work everywhere.  
-gpu_available() tells which.  
+expression become f32 uniforms). Shapes broadcast as on the CPU. Native programs use OpenGL ES  
+(without a window, through a windowless EGL context), web builds WebGL 2. Where neither can  
+render to float textures (no driver, JOT_SOFTWARE=1, an old browser, node) the same  
+expressions run on the CPU, so programs work everywhere; gpu_available() tells which.  
 
 ```
 struct GpuArray
@@ -825,7 +826,10 @@ const WLK_KEYBOARD = 14
 const WLK_DECO_MANAGER = 15
 const WLK_DECORATION = 16
 const WLK_FRAME = 17           # a frame callback
+const WLK_CURSOR_MGR = 18      # wp_cursor_shape_manager_v1
+const WLK_CURSOR_DEV = 19
 const WL_BAR = 30
+const WL_EDGE = 8              # pixels along the window's border that resize it
 ```
 
 ### window.jot
@@ -839,7 +843,7 @@ enum Mouse: left, middle, right
 key_down = (k: Key) -> bool    # true while the key is held
 key_pressed = (k: Key) -> bool    # true only in the frame the key was pressed
 key_released = (k: Key) -> bool
-mouse_pos = () -> vec2
+mouse_pos = () -> vec2    # (in the 2D units of the screen: see screen_size)
 mouse_delta = () -> vec2
 mouse_wheel = () -> f64
 mouse_down = (b: Mouse) -> bool
@@ -847,9 +851,11 @@ mouse_pressed = (b: Mouse) -> bool
 mouse_released = (b: Mouse) -> bool
 text_input = () -> str    # characters typed this frame
 input_axis = () -> vec2    # arrows/WASD (or a gamepad's left stick and d-pad) as a direction vector (y down)
-screen_width = () -> int
+screen_width = () -> int    # The screen's size in 2D drawing units: the size given to window(), whatever the window's real size (2D drawing is scaled to fit it, centered; 3D uses all of it). pixel_size() is the real size.
 screen_height = () -> int
 screen_size = () -> vec2
+pixel_size = () -> vec2
+visible_rect = () -> vec4    # the part of the 2D plane the screen shows, as (x, y, width, height): the area of screen_size() centered in a window of any shape (draw backgrounds over this to fill the window)
 frame_time = () -> f64
 fps = () -> f64
 elapsed = () -> f64
