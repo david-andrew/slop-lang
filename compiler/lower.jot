@@ -2328,7 +2328,9 @@ fn fixed_array_len(e: int) -> int:
     if nodes[a].kind != .ident or nodes[a].aux != i32(int(SK.local)): return -1
     if types[prune(ntype(a))].kind != .array: return -1
     l := int(nodes[a].sym)
-    if int(locals[l].flags) & (LF_ASSIGNED | LF_ALIAS | LF_BYREF | LF_MUTPARAM) != 0: return -1
+    # element writes keep the length; writing the variable itself (or a mut parameter, which
+    # could be the caller's global) may not
+    if int(locals[l].flags) & (LF_RESIZED | LF_ALIAS | LF_BYREF | LF_MUTPARAM) != 0: return -1
     l
 
 # the array local whose length bounds the range `it`, or -1

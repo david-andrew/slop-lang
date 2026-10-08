@@ -263,6 +263,8 @@ fn join_types(a: int, b: int, pos: int) -> int:
     ta
 
 # ---------------- places ----------------
+cp_inner := 0           # > 0 while checking the base of an element or field being written
+
 fn check_place(n: int, for_mut: bool):
     k := nodes[n].kind
     if k == .ident:
@@ -274,6 +276,7 @@ fn check_place(n: int, for_mut: bool):
             if f & LF_CAPTURE != 0: fatal(nodes[n].pos, "cannot modify captured variable '{nm}' (closures capture values by copy)")
             if f & LF_BYREF != 0: fatal(nodes[n].pos, "cannot modify loop variable '{nm}' (use `for mut` to modify elements)")
             nf := f | LF_ASSIGNED
+            if cp_inner == 0: nf |= LF_RESIZED
             if for_mut: nf |= LF_ADDR
             locals[l].flags = i32(nf)
             return
@@ -282,19 +285,24 @@ fn check_place(n: int, for_mut: bool):
     if k == .field:
         bt := prune(ntype(int(nodes[n].a)))
         if types[bt].kind == .ptr: return
+        cp_inner += 1
         check_place(int(nodes[n].a), for_mut)
+        cp_inner -= 1
         return
     if k == .index:
         bt := prune(ntype(int(nodes[n].a)))
         bk := types[bt].kind
         if bk == .ptr: return
         if bk == .str_: fatal(nodes[n].pos, "strings are immutable")
+        cp_inner += 1
         if bk == .vec:
             check_place(int(nodes[n].a), for_mut)
+            cp_inner -= 1
             return
         if bk != .array: fatal(nodes[n].pos, "cannot assign to this index expression")
         if nodes[n].aux == 1: fatal(nodes[n].pos, "cannot assign to a slice")
         check_place(int(nodes[n].a), for_mut)
+        cp_inner -= 1
         return
     if for_mut: fatal(nodes[n].pos, "a `mut` argument must be a variable, field or element")
     fatal(nodes[n].pos, "cannot assign to this expression")

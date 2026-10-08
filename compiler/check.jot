@@ -35,6 +35,7 @@ const LF_ALIAS = 8
 const LF_ASSIGNED = 16
 const LF_BYREF = 32
 const LF_ADDR = 64     # address is taken (must live in memory)
+const LF_RESIZED = 128 # the variable itself is written (not just its elements or fields)
 
 struct Local:
     name: i32
