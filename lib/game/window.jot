@@ -95,11 +95,11 @@ key_released = (k: Key) -> bool:
 key_typed = (k: Key) -> bool:
     __input_init()
     __key_typed[int(k)]
-# (in the 2D units of the screen: see screen_size)
-mouse_pos = () -> vec2:
-    s = __view_scale()
-    vec2(__mouse_x / s - (f64(__win_w) / s - f64(__design_w)) / 2.0, __mouse_y / s - (f64(__win_h) / s - f64(__design_h)) / 2.0)
-mouse_delta = () -> vec2: vec2(__mouse_dx / __view_scale(), __mouse_dy / __view_scale())
+# (in the 2D units of the screen: see screen_size and screen.jot)
+mouse_pos = () -> vec2: __to_units(__mouse_x, __mouse_y)
+mouse_delta = () -> vec2:
+    __screen_layout()
+    vec2(f32(__mouse_dx / __map_sx), f32(__mouse_dy / __map_sy))
 mouse_wheel = () -> f64: __mouse_wheel
 mouse_down = (b: Mouse) -> bool:
     __input_init()
@@ -124,26 +124,29 @@ input_axis = () -> vec2:
     if length(s) > length(v): v = s
     v
 
-# The screen's size in 2D drawing units: the size given to window(), whatever the window's real
-# size (2D drawing is scaled to fit it, centered; 3D uses all of it). pixel_size() is the real size.
-screen_width = () -> int: __design_w
-screen_height = () -> int: __design_h
-screen_size = () -> vec2: vec2(f32(__design_w), f32(__design_h))
+# The screen's size in 2D drawing units: the size given to window() (the design size),
+# whatever the window's real size; screen.jot says how it maps to the window (screen_fit).
+# pixel_size() is the window's real size.
+screen_width = () -> int:
+    __screen_layout()
+    int(__units_w)
+screen_height = () -> int:
+    __screen_layout()
+    int(__units_h)
+screen_size = () -> vec2:
+    __screen_layout()
+    vec2(f32(__units_w), f32(__units_h))
 pixel_size = () -> vec2: vec2(f32(__win_w), f32(__win_h))
-# the part of the 2D plane the screen shows, as (x, y, width, height): the area of screen_size()
-# centered in a window of any shape (draw backgrounds over this to fill the window)
+# the part of the 2D plane the screen shows, as (x, y, width, height): with screen_fit(.expand)
+# (the default) the design area centered in a window of any shape and what is around it (draw
+# backgrounds over this to fill the window); with bars, just the design area
 visible_rect = () -> vec4:
-    s = __view_scale()
-    w = f64(__win_w) / s
-    h = f64(__win_h) / s
-    vec4(f32((f64(__design_w) - w) / 2.0), f32((f64(__design_h) - h) / 2.0), f32(w), f32(h))
+    __screen_layout()
+    u = __screen_units()
+    vec4(u.x, u.y, u.z - u.x, u.w - u.y)
 
 __design_w = 1280
 __design_h = 720
-# window pixels per 2D unit
-__view_scale = () -> f64:
-    if __design_w <= 0 or __design_h <= 0 or __win_w <= 0 or __win_h <= 0: return 1.0
-    min(f64(__win_w) / f64(__design_w), f64(__win_h) / f64(__design_h))
 frame_time = () -> f64: __dt
 fps = () -> f64: __fps
 elapsed = () -> f64:
@@ -194,6 +197,17 @@ window = (title: str = "", width: int = 1280, height: int = 720):
     __win_h = height
     __design_w = width
     __design_h = height
+    # a design that small is pixel art: the window opens a whole number of times larger
+    if width < 640 and height < 360 and width > 0 and height > 0:
+        k = max(1, min(1280 / width, 720 / height))
+        __win_w = width * k
+        __win_h = height * k
+    # (testing aid: JOT_WINDOW=WxH opens the window at another size than the design size)
+    if let ws = env("JOT_WINDOW"):
+        x = find(ws, "x")
+        if x > 0:
+            __win_w = to_int(ws[..x)) ?? width
+            __win_h = to_int(ws[x + 1..]) ?? height
     __platform_open()
     __win_open = true
     __time0 = time()
@@ -776,7 +790,8 @@ __present_how = () -> str:
             return "{how} shared memory copy, scale {__wl_scale:.3}"
         "egl window surface"
 
-# testing aid: JOT_SCREENSHOT=out.png [JOT_FRAMES=n] saves frame n and exits
+# testing aid: JOT_SCREENSHOT=out.png [JOT_FRAMES=n] saves frame n and exits (JOT_WINDOW=WxH
+# for a window of another size)
 # (JOT_FRAME_STATS=1 also reports the average CPU time of a frame: update + draw + submit)
 __maybe_screenshot = ():
     when TARGET != "wasm":

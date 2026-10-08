@@ -305,9 +305,9 @@ On the web target everything runs on the calling thread.
 
 ```
 cpu_count = () -> int    # number of hardware threads available to this process
-parallel_map[T, U] = (xs: T[], f: (T) -> U) -> U[]    # [loop x in xs: f(x)], computed in parallel
-parallel_update[T] = (xs: mut T[], f: (T) -> T)    # xs[i] = f(xs[i]) for every element, in parallel
-parallel_range[U] = (n: int, f: (int) -> U) -> U[]    # [loop i in [0..n): f(i)], computed in parallel
+parallel_map[T, U] = (xs: T[], f: (T) -> U) -> U[]
+parallel_update[T] = (xs: mut T[], f: (T) -> T)
+parallel_range[U] = (n: int, f: (int) -> U) -> U[]
 ```
 
 ## Games: windows, input, 2D/3D drawing, GPU programs, audio
@@ -384,6 +384,7 @@ set_repeat = (t: Texture, on: bool)
 update_texture = (t: Texture, img: Image)
 load_texture = (file: u8[], smooth: bool = true) -> Texture
 render_target = (w: int, h: int, smooth: bool = true) -> RenderTarget
+free_render_target = (rt: RenderTarget)    # give back a render target's memory (it may not be used after)
 draw_to = (rt: RenderTarget)    # draw into a render target until draw_to_screen() is called
 draw_to_screen = ()
 clear = (c: vec4 = vec4(0, 0, 0, 1))
@@ -700,6 +701,43 @@ save_png = (img: Image, path: str) -> bool
 screenshot = () -> Image    # read the current framebuffer into an image
 ```
 
+### screen.jot
+
+How a game's picture fits windows of any size and shape.  
+  
+A game is drawn in 2D units: the size given to window() (its design size), so the same  
+coordinates work in any window. Two settings decide how that maps to the window's pixels:  
+  
+screen_fit(mode): what a window of another shape shows  
+.expand     the design area, scaled to fit, and more around it (the default: no bars,  
+nothing cut; visible_rect() says what is shown)  
+.letterbox  just the design area, scaled to fit, with bars (letterbox_color) around it  
+.crop       the design area scaled to fill the window: what does not fit is cut off  
+.stretch    the design area stretched to the window (shapes distort)  
+.native     no scaling: one 2D unit is one pixel of the window (screen_size() is its size)  
+  
+render_resolution(w, h): draw at a fixed resolution, scaled up to the window, by default  
+with sharp pixels (nearest) and in whole steps (2x, 3x...); 2D units stay the design size  
+(give both the same shape). The picture letterboxes (or crops/stretches with those  
+fits). render_resolution(0, 0) goes back to the window's resolution.  
+pixel_art(): render_resolution at the design size: for a game designed at 320 x 180, one  
+2D unit is one sharp pixel. (A window for a design that small opens a whole number of  
+times larger.)  
+render_scale(s): draw at a fraction of the window's pixels (0.5: a quarter of them), scaled  
+up smoothly: faster where pixels cost (3D, the software renderer).  
+  
+Drawing that needs it goes to an offscreen canvas, put on the window when the frame ends; the  
+mouse is mapped back the same way (mouse_pos() is in 2D units).  
+
+```
+enum Fit: expand, letterbox, crop, stretch, native
+screen_fit = (mode: Fit)
+letterbox_color = (c: vec4)
+render_resolution = (w: int, h: int, smooth: bool = false, whole: bool = true)
+pixel_art = (smooth: bool = false)
+render_scale = (s: f64)
+```
+
 ### softgl.jot
 
 Software rendering: a CPU implementation of the part of OpenGL ES the game library uses,  
@@ -839,12 +877,14 @@ slerp = (a: vec4, b0: vec4, t: f32) -> vec4
 
 ### wayland.jot
 
-A Wayland client speaking the wire protocol directly (no libwayland): a window from  
-xdg-shell, GPU frames handed over as dma-bufs (zwp_linux_dmabuf_v1, see dmabuf.jot) or else  
-presented through shared memory (wl_shm), keyboard and pointer input from wl_seat, and  
-server-side decorations where the compositor offers them (a small title bar drawn here  
-otherwise). Windows render at the display's real resolution: the window's size is in the  
-compositor's logical units, scaled by the output's (possibly fractional) scale.  
+A Wayland client: a window from xdg-shell, GPU frames handed over as dma-bufs  
+(zwp_linux_dmabuf_v1, see dmabuf.jot) or else presented through shared memory (wl_shm),  
+keyboard and pointer input from wl_seat. Decorations: libdecor's (as the desktop draws them,  
+see wlclient.jot), or the compositor's (xdg-decoration), or else a small title bar drawn here.  
+Requests are built and events read in the wire format, then go through libwayland-client  
+(wlclient.jot) or, without it, straight over the socket. Windows render at the display's real  
+resolution: the window's size is in the compositor's logical units, scaled by the output's  
+(possibly fractional) scale.  
 
 ```
 const WLK_NONE = 0
@@ -893,7 +933,7 @@ key_down = (k: Key) -> bool    # true while the key is held
 key_pressed = (k: Key) -> bool    # true only in the frame the key was pressed
 key_released = (k: Key) -> bool
 key_typed = (k: Key) -> bool    # true in the frame the key was pressed, and again each time it repeats while held down (for moving through text or menus); characters typed arrive through text_input()
-mouse_pos = () -> vec2    # (in the 2D units of the screen: see screen_size)
+mouse_pos = () -> vec2    # (in the 2D units of the screen: see screen_size and screen.jot)
 mouse_delta = () -> vec2
 mouse_wheel = () -> f64
 mouse_down = (b: Mouse) -> bool
@@ -901,11 +941,11 @@ mouse_pressed = (b: Mouse) -> bool
 mouse_released = (b: Mouse) -> bool
 text_input = () -> str    # characters typed this frame
 input_axis = () -> vec2    # arrows/WASD (or a gamepad's left stick and d-pad) as a direction vector (y down)
-screen_width = () -> int    # The screen's size in 2D drawing units: the size given to window(), whatever the window's real size (2D drawing is scaled to fit it, centered; 3D uses all of it). pixel_size() is the real size.
+screen_width = () -> int    # The screen's size in 2D drawing units: the size given to window() (the design size), whatever the window's real size; screen.jot says how it maps to the window (screen_fit). pixel_size() is the window's real size.
 screen_height = () -> int
 screen_size = () -> vec2
 pixel_size = () -> vec2
-visible_rect = () -> vec4    # the part of the 2D plane the screen shows, as (x, y, width, height): the area of screen_size() centered in a window of any shape (draw backgrounds over this to fill the window)
+visible_rect = () -> vec4    # the part of the 2D plane the screen shows, as (x, y, width, height): with screen_fit(.expand) (the default) the design area centered in a window of any shape and what is around it (draw backgrounds over this to fill the window); with bars, just the design area
 frame_time = () -> f64
 fps = () -> f64
 elapsed = () -> f64
@@ -916,6 +956,6 @@ toggle_fullscreen = ()
 is_fullscreen = () -> bool
 clipboard = () -> str    # the text on the system clipboard ("" if none, or not text). In a web page the browser lets a page read it only as it is pasted: this is the text last pasted (ctrl+V) into the page.
 set_clipboard = (s: str)
-window = (title: str = "jot", width: int = 1280, height: int = 720)    # Open the game window (called automatically when the program defines update/draw).
+window = (title: str = "", width: int = 1280, height: int = 720)    # Open the game window (called automatically when the program defines update/draw).
 ```
 

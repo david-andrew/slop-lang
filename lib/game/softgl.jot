@@ -282,6 +282,13 @@ __sw_scale_target = (fbo: int, w: int, h: int):
     if __s_fb_depth[fbo] > 0: __st_alloc(__s_fb_depth[fbo], iw, ih)
     __s_fb_scale[fbo] = __soft_scale
 
+# a render target of exactly w x h pixels (a fixed resolution is not scaled down)
+__sw_exact_target = (fbo: int, w: int, h: int):
+    if fbo <= 0 or fbo >= __s_fb_color.len(): return
+    if __s_fb_color[fbo] > 0: __st_alloc(__s_fb_color[fbo], w, h)
+    if __s_fb_depth[fbo] > 0: __st_alloc(__s_fb_depth[fbo], w, h)
+    __s_fb_scale[fbo] = 1.0
+
 sgl_create_program = () -> int:
     __sp_vs.push(null)
     __sp_fs.push(null)

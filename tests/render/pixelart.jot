@@ -1,0 +1,10 @@
+# Screen modes: a fixed resolution (100 x 75, sharp pixels, scaled up in whole steps) for a
+# design of 400 x 300 units, so the window (opened at 400 x 300) shows each pixel as 4 x 4.
+render_resolution(100, 75)
+window("pixelart", 400, 300)
+draw = ():
+    clear(rgb(0.15, 0.2, 0.3))
+    circle(vec2(200, 150), 90, rgb(1, 0.8, 0.2))
+    rect(20, 20, 120, 40, rgb(0.3, 0.7, 1.0))
+    line(vec2(0, 300), vec2(400, 0), 6, rgb(1, 0.3, 0.3))
+    triangle(vec2(300, 250), vec2(380, 250), vec2(340, 190), rgb(0.4, 1, 0.5))

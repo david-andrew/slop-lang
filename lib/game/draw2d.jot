@@ -119,10 +119,11 @@ __gfx_init = ():
 
 __gfx_begin_frame = ():
     __gfx_init()
+    __screen_layout()
+    __canvas_begin()
     __cur_target = -1
     __set_screen_target()
-    glBindFramebuffer(GL_FRAMEBUFFER, 0)
-    glViewport(0, 0, i32(__win_w), i32(__win_h))
+    __bind_screen()
     __xform = mat4()
     __xform_stack.clear()
     __apply_blend(.alpha)
@@ -134,6 +135,7 @@ __gfx_end_frame = ():
     __render3d()
     flush()
     __post_end()
+    __canvas_end()
 
 # a render target: 2D units are its pixels
 __set_target_size = (w: int, h: int):
@@ -143,17 +145,35 @@ __set_target_size = (w: int, h: int):
     __view_h = f64(h)
     __proj = orthographic(0.0, f64(w), f64(h), 0.0, -1.0, 1.0)
 
-# the screen: 2D units are the size the program asked for in window(), scaled uniformly to fit
-# the window and centered in it (a window of another shape shows more around that area)
+# the screen: 2D units are the size the program asked for in window(), mapped to the window as
+# screen.jot says (by default scaled uniformly to fit and centered, showing more around it)
 __set_screen_target = ():
-    __target_w = __win_w
-    __target_h = __win_h
-    s = __view_scale()
-    ox = (f64(__win_w) / s - f64(__design_w)) / 2.0
-    oy = (f64(__win_h) / s - f64(__design_h)) / 2.0
-    __view_w = f64(__design_w)
-    __view_h = f64(__design_h)
-    __proj = orthographic(-ox, f64(__design_w) + ox, f64(__design_h) + oy, -oy, -1.0, 1.0)
+    __target_w = __screen_px_w()
+    __target_h = __screen_px_h()
+    u = __screen_units()
+    __view_w = __units_w
+    __view_h = __units_h
+    __proj = orthographic(f64(u.x), f64(u.z), f64(u.w), f64(u.y), -1.0, 1.0)
+
+# the pixels of what stands for the screen: the window, or the canvas this frame
+__screen_px_w = () -> int:
+    if __canvas_active: return __canvas_w
+    __win_w
+__screen_px_h = () -> int:
+    if __canvas_active: return __canvas_h
+    __win_h
+
+__bind_screen = ():
+    if __canvas_active: glBindFramebuffer(GL_FRAMEBUFFER, u32(__canvas_rt.fbo))
+    else: glBindFramebuffer(GL_FRAMEBUFFER, 0)
+    glViewport(0, 0, i32(__screen_px_w()), i32(__screen_px_h()))
+
+# bind what is being drawn to (after something else was bound)
+__bind_current = ():
+    if __cur_target >= 0:
+        glBindFramebuffer(GL_FRAMEBUFFER, u32(__cur_target))
+        glViewport(0, 0, i32(__target_w), i32(__target_h))
+    else: __bind_screen()
 
 # ---------------- textures ----------------
 # upload an image to the GPU
@@ -204,8 +224,15 @@ render_target = (w: int, h: int, smooth: bool = true) -> RenderTarget:
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, u32(rb))
     when TARGET != "wasm":
         if __soft: __sw_scale_target(fbo, w, h)
-    glBindFramebuffer(GL_FRAMEBUFFER, 0)
+    if __g_init: __bind_current()
+    else: glBindFramebuffer(GL_FRAMEBUFFER, 0)
     RenderTarget(tex, fbo, rb)
+
+# give back a render target's memory (it may not be used after)
+free_render_target = (rt: RenderTarget):
+    if rt.texture.id != 0: gl_delete_texture(rt.texture.id)
+    if rt.fbo != 0: gl_delete_framebuffer(rt.fbo)
+    if rt.depth != 0: gl_delete_renderbuffer(rt.depth)
 
 # draw into a render target until draw_to_screen() is called
 draw_to = (rt: RenderTarget):
@@ -217,10 +244,9 @@ draw_to = (rt: RenderTarget):
 
 draw_to_screen = ():
     flush()
-    glBindFramebuffer(GL_FRAMEBUFFER, 0)
-    glViewport(0, 0, i32(__win_w), i32(__win_h))
-    __set_screen_target()
     __cur_target = -1
+    __set_screen_target()
+    __bind_screen()
 
 # ---------------- state ----------------
 clear = (c: vec4 = vec4(0, 0, 0, 1)):

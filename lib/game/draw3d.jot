@@ -419,12 +419,7 @@ __render3d = ():
     __apply_blend(__blend)
     __draws.clear()
 
-__rebind_target = ():
-    if __cur_target >= 0:
-        glBindFramebuffer(GL_FRAMEBUFFER, u32(__cur_target))
-    else:
-        glBindFramebuffer(GL_FRAMEBUFFER, 0)
-    glViewport(0, 0, i32(__target_w), i32(__target_h))
+__rebind_target = (): __bind_current()
 
 __depth_target = (size: int) -> RenderTarget:
     id = gl_create_texture()
@@ -445,9 +440,13 @@ __post_begin = ():
         __post_active = false
         return
     __3d_init()
-    w = __win_w
-    h = __win_h
+    w = __screen_px_w()
+    h = __screen_px_h()
     if __scene_rt.texture.width != w or __scene_rt.texture.height != h:
+        if __scene_rt.fbo != 0:
+            free_render_target(__scene_rt)
+            free_render_target(__bloom_a)
+            free_render_target(__bloom_b)
         __scene_rt = render_target(w, h)
         __bloom_a = render_target(max(w / 4, 1), max(h / 4, 1))
         __bloom_b = render_target(max(w / 4, 1), max(h / 4, 1))

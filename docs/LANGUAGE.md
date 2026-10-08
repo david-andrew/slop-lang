@@ -564,6 +564,29 @@ area: `visible_rect()` is the part of the plane on screen (draw backgrounds over
 `screen_size()` is the size given to `window()`, `pixel_size()` the real size. 3D rendering
 uses the whole window.
 
+**Screens of any size and shape.** 2D drawing is in units of the size given to `window()` (the
+design size), whatever the window's real size; `screen_fit` says how that area fits a window
+of another shape, and the render resolution says how many pixels draw it:
+
+```jot
+screen_fit(.expand)       # (default) scaled to fit, centered; a wider or taller window shows more
+                          # around it (visible_rect() is what is shown)
+screen_fit(.letterbox)    # just the design area, with bars (letterbox_color(c))
+screen_fit(.crop)         # the design area fills the window; what sticks out is cut off
+screen_fit(.stretch)      # stretched to the window (shapes distort)
+screen_fit(.native)       # no scaling: one unit per window pixel
+
+render_resolution(640, 360)   # draw at a fixed resolution, scaled up (sharp pixels, whole steps;
+                              # smooth = true, whole = false for other looks)
+pixel_art()                   # the same at the design size: window("game", 320, 180) + pixel_art()
+                              # is a 320 x 180 pixel game (its window opens 4 times larger)
+render_scale(0.5)             # draw at half the window's resolution (fewer pixels: faster)
+```
+
+`mouse_pos()` is in the same 2D units, and 3D follows the same picture (a letterboxed game's 3D
+view has the design area's shape). `JOT_FIT=letterbox` and `JOT_RESOLUTION=320x180` try a mode
+on any game without changing it.
+
 Window sizes are in the desktop's logical units, and frames are rendered at the display's real
 resolution: on a screen scaled by 1.67, a 1280x720 window has 2133x1200 pixels, so text and edges
 stay sharp (in the browser too). The rendered frame goes to the compositor without being copied

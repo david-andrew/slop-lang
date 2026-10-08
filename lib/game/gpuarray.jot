@@ -252,10 +252,10 @@ __gpu_alloc[T] = (xs: T[], shape: int[]) -> GpuArray[T]:
     GpuArray(n, w, h, tex, [] as T[], token, shape)
 
 __gpu_restore = ():
-    glBindFramebuffer(GL_FRAMEBUFFER, 0)
-    if __win_open:
-        glViewport(0, 0, i32(__target_w), i32(__target_h))
+    if __win_open and __g_init:
+        __bind_current()
         glEnable(GL_BLEND)
+    else: glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
 # ---------------- running programs ----------------
 # a fragment program (compiled once), with the locations of its uniforms: those of src named in
