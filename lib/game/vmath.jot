@@ -4,15 +4,17 @@
 fn __fmt_f32(buf: mut [u8], x: f32): __fmt_float(buf, float(x), true)
 fn __fmt_i32(buf: mut [u8], x: int): __fmt(buf, x)
 
+# column-major: each result column is a combination of a's columns (packed vector arithmetic)
 fn __mat4_mul(out: *f32, a: *f32, b: *f32):
+    ac := a as *vec4
+    oc := out as *vec4
     for c in 0..4:
-        for r in 0..4:
-            s: f32 = 0.0
-            for k in 0..4: s += a[k * 4 + r] * b[c * 4 + k]
-            out[c * 4 + r] = s
+        k := b + c * 4
+        oc[c] = ac[0] * k[0] + ac[1] * k[1] + ac[2] * k[2] + ac[3] * k[3]
 
 fn __mat4_mul_vec4(out: *f32, m: *f32, v: *f32):
-    for r in 0..4: out[r] = m[r] * v[0] + m[4 + r] * v[1] + m[8 + r] * v[2] + m[12 + r] * v[3]
+    mc := m as *vec4
+    (out as *vec4)[0] = mc[0] * v[0] + mc[1] * v[1] + mc[2] * v[2] + mc[3] * v[3]
 
 fn dot(a: vec2, b: vec2) -> f32: a.x * b.x + a.y * b.y
 fn dot(a: vec3, b: vec3) -> f32: a.x * b.x + a.y * b.y + a.z * b.z
