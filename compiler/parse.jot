@@ -1322,6 +1322,17 @@ parse_simple_stmt = () -> int:
     if is_assign_op(pk()):
         a = mk(.assign, cur_pos())
         opk = toks[advance()].kind
+        if opk == .careteq:
+            # x ^= y: x = x ^ y (power)
+            nodes[a].op = i32(int(Tok.assign))
+            nodes[a].a = i32(e)
+            pw = mk(.call, nodes[a].pos)
+            callee = mk(.ident, nodes[a].pos)
+            nodes[callee].name = i32(intern("pow"))
+            nodes[pw].a = i32(callee)
+            set_list(pw, [clone(e), parse_expr()])
+            nodes[a].b = i32(pw)
+            return a
         if opk == .kw_and or opk == .kw_or or opk == .kw_xor:
             # and= or= xor= (bitwise on integers, logical on bools)
             advance()

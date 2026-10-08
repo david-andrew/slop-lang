@@ -9,6 +9,9 @@
 # xs .< 0.5, and f.(xs) applies f to each element. A whole dotted expression runs as one loop.
 # On 2-D arrays the plain operators follow linear algebra: a * b is the matrix product.
 
+# another spelling of T[]
+type Array[T] = T[]
+
 struct Array2[T]:
     data: T[]
     rows: int

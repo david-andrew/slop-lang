@@ -1516,6 +1516,8 @@ check_binary = (n: int, expected: int) -> int:
         nodes[n].b = i32(last_checked)
         add_flag(int(nodes[n].b), NF_CHECKED)
         if is_int(tb): charlike_to_int(int(nodes[n].a))
+    if op == .kw_in and nodes[int(nodes[n].b)].kind == .range and not has_flag(int(nodes[n].b), NF_STEP):
+        return check_in_range(n, expected)
     if op == .kw_in:
         call = mk(.call, nodes[n].pos)
         callee = mk(.field, nodes[n].pos)
@@ -2399,10 +2401,7 @@ check_expr = (n: int, expected: int) -> int:
         if fk == .ptr and (tk == .str_ or tk == .array): ok = true
         if not ok: fatal(nodes[n].pos, "cannot cast {type_str(ft)} to {type_str(tt)}")
         t = tt
-    else if k == .range:
-        if nodes[n].a != 0: check_to(int(nodes[n].a), T_INT)
-        if nodes[n].b != 0: check_to(int(nodes[n].b), T_INT)
-        t = T_RANGE
+    else if k == .range: return check_range_value(n, expected)
     else if k == .addr:
         at = check_expr(int(nodes[n].a), 0)
         ak = nodes[int(nodes[n].a)].kind
@@ -2488,6 +2487,63 @@ check_if = (n: int, ex: int) -> int:
         coerce(vb, ex)
         return ex
     join_types(va, vb, nodes[n].pos)
+
+# ---------------- ranges as values ----------------
+# a range used as a value is the array of its numbers: [0..n) is [0, 1, ... n-1]
+check_range_value = (n: int, expected: int) -> int:
+    pos = nodes[n].pos
+    if nodes[n].b == 0: fatal(pos, "a range with no end (a..) can only be looped over")
+    inner = nodes.len()
+    nodes.push(nodes[n])
+    on = "__rv{bc_count}"
+    iv = "__ri{bc_count}"
+    bc_count += 1
+    od = mk(.vardecl, pos)
+    nodes[od].name = i32(intern(on))
+    ty = mk(.tname, pos)
+    nodes[ty].aux = -7
+    nodes[ty].ival = mk_array(T_INT)
+    nodes[od].a = i32(ty)
+    f = mk(.for_, pos)
+    set_list(f, [bc_ident(iv, pos)])
+    nodes[f].a = i32(inner)
+    nodes[f].b = i32(bc_block([bc_stmt(bc_method(bc_ident(on, pos), "push", [bc_ident(iv, pos)], pos), pos)], pos))
+    nodes[n] = nodes[bc_block([od, f, bc_stmt(bc_ident(on, pos), pos)], pos)]
+    check_expr(n, expected)
+
+# x in a..b: a <= x and x <= b (no array)
+check_in_range = (n: int, expected: int) -> int:
+    pos = nodes[n].pos
+    r = int(nodes[n].b)
+    x = int(nodes[n].a)
+    stmts: int[]
+    xk = nodes[x].kind
+    xr = x
+    if xk != .ident and xk != .int_lit:
+        xn = "__rx{bc_count}"
+        bc_count += 1
+        stmts.push(bc_let(xn, x, pos))
+        xr = bc_ident(xn, pos)
+    again = (e: int) -> int:
+        if e == x: return clone(x)
+        bc_ident(name_of(int(nodes[e].name)), pos)
+    lo = 0
+    if nodes[r].a != 0: lo = bc_bin(.ge, xr, int(nodes[r].a), pos)
+    hi = 0
+    if nodes[r].b != 0:
+        op = Tok.lt
+        if has_flag(r, NF_INCLUSIVE): op = .le
+        hi = bc_bin(op, again(xr), int(nodes[r].b), pos)
+    c = lo
+    if lo == 0: c = hi
+    else if hi != 0:
+        c = mk(.and_, pos)
+        nodes[c].a = i32(lo)
+        nodes[c].b = i32(hi)
+    if c == 0: fatal(pos, "invalid range")
+    stmts.push(bc_stmt(c, pos))
+    nodes[n] = nodes[bc_block(stmts, pos)]
+    check_expr(n, expected)
 
 # ---------------- struct-of-arrays ----------------
 # soa P[] is a struct with an array per field of P; these rewrite its array operations into
