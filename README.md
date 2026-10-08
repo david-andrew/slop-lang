@@ -223,6 +223,6 @@ and a small JavaScript runtime for WebGL 2, input and audio.
 
 ## License
 
-MIT (see [LICENSE](LICENSE)), so programs built with Jot, which include its runtime and
+MIT (see [LICENSE](LICENSE) and [NOTICE](NOTICE)), so programs built with Jot, which include its runtime and
 library, can be released under any license. The logo is not covered by it; the default font
 is Noto Sans, under the SIL Open Font License ([lib/game/assets/OFL.txt](lib/game/assets/OFL.txt)).
