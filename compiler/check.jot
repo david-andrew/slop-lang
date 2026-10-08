@@ -487,6 +487,11 @@ resolve_type = (tn: int) -> int:
     if k == .tarray:
         if nodes[tn].b != 0: fatal(nodes[tn].pos, "fixed-size arrays are not supported yet")
         if nodes[tn].aux == 2: return array2_of(resolve_type(int(nodes[tn].a)), nodes[tn].pos)
+        if has_flag(tn, NF_SOA):
+            et = resolve_type(int(nodes[tn].a))
+            if tkind(et) != .struct_ or is_soa(et): fatal(nodes[tn].pos, "soa T[] needs a struct type T, not {type_str(et)}")
+            if soa_decl == 0: soa_decl = mk(.struct_, 0)
+            return soa_inst(et)
         return mk_array(resolve_type(int(nodes[tn].a)))
     if k == .tmap:
         s = prelude.get(intern("Map")) ?? 0
@@ -980,7 +985,38 @@ check_block = (b: int, expected: int, want_value: bool) -> int:
 block_value = (b: int) -> int: int(nodes[kid(b, nkids(b) - 1)].a)
 set_block_value = (b: int, e: int): nodes[kid(b, nkids(b) - 1)].a = i32(e)
 
+# loop p in ps (ps a soa array): loop i in [0..len(ps)): p = ps[i]
+soa_loop = (s: int):
+    it = int(nodes[s].a)
+    if nodes[it].kind == .range: return
+    t = prune(check_expr(it, 0))
+    it = last_checked
+    nodes[s].a = i32(it)
+    if not is_soa(t): return
+    pos = nodes[s].pos
+    if has_flag(s, NF_MUT): fatal(pos, "`loop mut` over a soa array is not supported (in an index loop, write ps[i].x = ...)")
+    ik = nodes[it].kind
+    if ik != .ident and ik != .field: fatal(pos, "a loop over a soa array needs the array in a variable")
+    nv = nkids(s)
+    pv = kid(s, nv - 1)
+    ixn = "__sl{bc_count}"
+    bc_count += 1
+    if nv == 2: ixn = name_of(int(nodes[kid(s, 0)].name))
+    r = mk(.range, pos)
+    nodes[r].a = i32(bc_int(0, pos))
+    nodes[r].b = i32(bc_call("len", [clone(it)], pos))
+    ix = mk(.index, pos)
+    nodes[ix].a = i32(clone(it))
+    nodes[ix].b = i32(bc_ident(ixn, pos))
+    body = int(nodes[s].b)
+    stmts = [bc_let(name_of(int(nodes[pv].name)), ix, pos)]
+    loop x in kids(body): stmts.push(x)
+    set_list(body, stmts)
+    set_list(s, [bc_ident(ixn, pos)])
+    nodes[s].a = i32(r)
+
 check_for = (s: int):
+    soa_loop(s)
     mark = scope_mark()
     enter_loop()
     it = int(nodes[s].a)
@@ -1162,6 +1198,7 @@ check_assign = (s: int) -> int:
     if nodes[lhs].kind == .index:
         bt = prune(check_expr(int(nodes[lhs].a), 0))
         nodes[lhs].a = i32(last_checked)
+        if is_soa(bt) and nodes[lhs].b != 0: return soa_assign(s)
         if types[bt].kind == .struct_:
             call = mk(.call, nodes[s].pos)
             callee = mk(.ident, nodes[s].pos)
@@ -1283,6 +1320,7 @@ check_vardecl = (s: int):
 
 check_stmt = (s: int):
     k = nodes[s].kind
+    if k == .vardecl and has_flag(s, NF_CHECKED): return
     if k == .vardecl: check_vardecl(s)
     else if k == .const_:
         g = Global(name = nodes[s].name, decl = 0, mod = i32(cur_mod()), is_const = true, state = 2)

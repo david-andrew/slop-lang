@@ -42,6 +42,7 @@ const NF_SPREAD = 1024        # array literal element `xs...`
 const NF_BROADCAST = 16384    # f.(x): applied elementwise
 const NF_STEP = 32768         # range `a,b..c`: c holds the second value
 const NF_BARE = 65536         # a range written without brackets (while parsing)
+const NF_SOA = 131072         # array type `soa T[]`: stored as one array per field of T
 
 struct Node:
     kind: NK

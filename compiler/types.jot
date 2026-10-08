@@ -59,6 +59,7 @@ struct StructInfo:
     type: i32
     name: str
     union_: bool     # A | B: an enum whose variant i holds type argument (member) i
+    soa_: bool       # soa T[]: a struct with an array for each field of T (type argument 0)
 
 types: TypeInfo[] = [TypeInfo()]
 type_args: i32[]
@@ -487,7 +488,7 @@ type_str = (t0: int) -> str:
         struct_, enum_:
             si = int(ti.st)
             nm = structs[si].name
-            if structs[si].union_: return nm
+            if structs[si].union_ or structs[si].soa_: return nm
             if nm == "Array2" and int(structs[si].ntargs) == 1: return "{type_str_postfix(struct_targ(si, 0))}[,]"
             if nm == "Map" and int(structs[si].ntargs) == 2: return "\{{type_str(struct_targ(si, 0))}: {type_str(struct_targ(si, 1))}}"
             s = nm
@@ -584,9 +585,42 @@ union_inst = (ms: int[]) -> int:
     structs[idx].type = i32(types.len() - 1)
     types.len() - 1
 
+# ---------- struct-of-arrays ----------
+# soa T[] behaves like T[] but keeps each field of T in an array of its own (see check_soa_*)
+soa_decl = 0       # the declaration node standing for all soa types
+
+is_soa = (t0: int) -> bool:
+    t = prune(t0)
+    types[t].kind == .struct_ and structs[int(types[t].st)].soa_
+
+soa_elem = (t: int) -> int: struct_targ(int(types[prune(t)].st), 0)
+
+soa_inst = (p: int) -> int:
+    loop i in 0.. and si in structs:
+        if si.soa_ and type_eq(struct_targ(i, 0), p): return int(si.type)
+    pt = prune(p)
+    psi = int(types[pt].st)
+    check_struct_fields(psi)
+    si = StructInfo(decl = i32(soa_decl), ntargs = 1, name = "soa {type_str(p)}[]", soa_ = true, resolved = true)
+    si.targs = i32(type_args.len())
+    type_args.push(i32(p))
+    si.fields = i32(fields.len())
+    si.nfields = structs[psi].nfields
+    loop i in [0..int(structs[psi].nfields)):
+        f = fields[int(structs[psi].fields) + i]
+        fields.push(Field(name = f.name, type = i32(mk_array(int(f.type)))))
+    idx = structs.len()
+    structs.push(si)
+    flags = 0
+    if has_var(pt): flags = TF_HAS_VAR
+    types.push(TypeInfo(kind = .struct_, st = i32(idx), flags = i32(flags)))
+    structs[idx].type = i32(types.len() - 1)
+    types.len() - 1
+
 # ---------- struct instances ----------
 get_struct_inst = (decl: int, targs: int[]) -> int:
     if decl == 0: return mk_union(targs)
+    if decl == soa_decl: return soa_inst(targs[0])
     loop i in 0.. and si in structs:
         if int(si.decl) != decl or int(si.ntargs) != targs.len(): continue
         same = true

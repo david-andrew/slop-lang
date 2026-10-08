@@ -106,6 +106,13 @@ parse_type_primary = () -> int:
         set_list(n, ps)
         if accept(.arrow): nodes[n].a = i32(parse_type())
         return n
+    if k == .ident and toks[ti].ival == id_soa and (pkn(1) == .ident or pkn(1) == .lparen):
+        # soa T[]: an array of structs kept as one array per field
+        advance()
+        t = parse_type()
+        if nodes[t].kind != .tarray or nodes[t].aux != 1: fatal(pos, "soa applies to an array type: soa T[]")
+        add_flag(t, NF_SOA)
+        return t
     if k == .ident:
         if toks[ti].ival == id_float: fatal(pos, "there is no 'float' type: use f64 (or f32)")
         n = mk(.tname, pos)
@@ -392,6 +399,7 @@ id_void = 0
 id_cfn = 0
 id_end = 0
 id_type = 0
+id_soa = 0
 
 # parser modes
 p_matrix = 0          # > 0 inside array brackets: a space separates elements
@@ -621,7 +629,7 @@ parse_postfix = (e0: int) -> int:
         if p_matrix > 0 and (k == .lparen or k == .lbrack) and space_before(ti): return e
         if k == .lparen:
             ek = nodes[e].kind
-            if (ek == .int_lit or ek == .float_lit) and not space_before(ti) and is_unit_group(ti):
+            if (ek == .int_lit or ek == .float_lit or ek == .array or ek == .matrix) and not space_before(ti) and is_unit_group(ti):
                 e = apply_unit(e)
                 continue
             advance()
@@ -724,7 +732,8 @@ is_unit_group = (i: int) -> bool:
         j += 1
     true
 
-apply_unit = (e: int) -> int:
+# the scale of the unit group at ti, e.g. (km/h); consumes it
+unit_group_scale = () -> f64:
     close = partner(ti)
     advance()
     scale = 1.0
@@ -749,12 +758,36 @@ apply_unit = (e: int) -> int:
             else: scale = scale * f
         else: fatal(cur_pos(), "unexpected token in a unit")
     expect(.rparen, "")
+    scale
+
+scaled_literal = (e: int, scale: f64) -> int:
+    k = nodes[e].kind
+    if k != .int_lit and k != .float_lit:
+        # [x 0](m/s): any element times the scale
+        if scale == 1.0: return e
+        f = mk(.float_lit, nodes[e].pos)
+        nodes[f].fval = scale
+        add_flag(f, NF_LITERAL)
+        b = mk(.binary, nodes[e].pos)
+        nodes[b].op = i32(int(Tok.star))
+        nodes[b].a = i32(e)
+        nodes[b].b = i32(f)
+        return b
     v = f64(nodes[e].ival)
-    if nodes[e].kind == .float_lit: v = nodes[e].fval
+    if k == .float_lit: v = nodes[e].fval
     n = mk(.float_lit, nodes[e].pos)
     nodes[n].fval = v * scale
     add_flag(n, NF_LITERAL)
     n
+
+apply_unit = (e: int) -> int:
+    scale = unit_group_scale()
+    k = nodes[e].kind
+    if k == .array or k == .matrix:
+        # [1.2 0](m/s): each element
+        loop i in [0..nkids(e)): set_kid(e, i, scaled_literal(kid(e, i), scale))
+        return e
+    scaled_literal(e, scale)
 
 parse_prefix = () -> int:
     pos = cur_pos()
@@ -1985,6 +2018,7 @@ parse_file = (file: int) -> int[]:
         id_cfn = intern("cfn")
         id_end = intern("end")
         id_type = intern("type")
+        id_soa = intern("soa")
     toks = lex(file, files[file].src)
     if stop_after == "lex":
         toks = []

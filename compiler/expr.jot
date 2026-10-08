@@ -96,6 +96,7 @@ can_coerce = (n: int, from0: int, to0: int) -> bool:
     if fk == .int_ and tk == .float_: return true
     if fk == .float_ and tk == .float_: return true
     if tk == .enum_ and fk != .enum_ and is_union(to): return union_target(n, from, to) >= 0
+    if fk == .array and is_soa(to): return can_coerce(0, int(types[from].elem), soa_elem(to))
     if tk == .opt:
         if fk == .none_lit: return true
         if fk == .opt: return type_eq(int(types[from].elem), int(types[to].elem)) or tkind(int(types[from].elem)) == .var
@@ -175,6 +176,9 @@ coerce = (n: int, target: int) -> int:
         clear_flag(n, NF_LITERAL)
         return n
     fk = types[from].kind
+    if fk == .array and is_soa(to) and can_coerce(0, int(types[from].elem), soa_elem(to)):
+        soa_from_array(n, to)
+        return n
     if tk == .enum_ and fk != .enum_ and is_union(to):
         vi = union_target(n, from, to)
         if vi < 0: fatal(nodes[n].pos, "type mismatch: expected {type_str(to)}, found {type_str(from)}")
@@ -1004,11 +1008,21 @@ check_expr_in_module = (n: int, m: int) -> int:
     cx = saved
     t
 
+id_len = 0
+
 check_call = (n: int, expected: int) -> int:
     callee = int(nodes[n].a)
     args = kids(n)
     ck = nodes[callee].kind
-    if ck == .ident: return call_by_name(n, int(nodes[callee].name), -1, args, expected, false)
+    if ck == .ident:
+        if id_len == 0: id_len = intern("len")
+        if args.len() == 1 and int(nodes[callee].name) == id_len:
+            # len(ps) for a soa array
+            at = prune(check_expr(args[0], 0))
+            args[0] = last_checked
+            set_kid(n, 0, args[0])
+            if is_soa(at): return check_soa_method(n, args[0], int(nodes[callee].name), [], expected)
+        return call_by_name(n, int(nodes[callee].name), -1, args, expected, false)
     if ck == .dotname:
         et = prune(expected)
         if expected != 0 and types[et].kind == .opt: et = prune(int(types[et].elem))
@@ -1029,6 +1043,7 @@ check_call = (n: int, expected: int) -> int:
                 if vi < 0: fatal(nodes[callee].pos, "{type_str(tt)} has no variant '{name_of(fname)}'")
                 return variant_ctor(n, tt, vi, args)
             fatal(nodes[callee].pos, "type {type_str(tt)} has no member '{name_of(fname)}'")
+        if is_soa(rt): return check_soa_method(n, recv, fname, args, expected)
         st = rt
         if rk == .ptr: st = prune(int(types[rt].elem))
         if types[st].kind == .struct_:
@@ -1119,6 +1134,7 @@ check_intrinsic = (n: int, id: IN, args: int[], expected: int) -> int:
     if id == .len or id == .arrcap:
         nargs_check(n, nargs, 1, 1, "len")
         t = arg_type(args, 0, 0)
+        if is_soa(t): return check_soa_method(n, args[0], intern("len"), [], expected)
         if types[t].kind != .array and types[t].kind != .str_: fatal(nodes[n].pos, "len() expects an array or string, found {type_str(t)}")
         r = T_INT
     else if id == .push:
@@ -2016,6 +2032,17 @@ check_expr = (n: int, expected: int) -> int:
         else if sk == .builtin: fatal(nodes[n].pos, "'{name_of(nm)}' must be called")
         else: fatal(nodes[n].pos, "invalid use of '{name_of(nm)}'")
     else if k == .field:
+        a0 = int(nodes[n].a)
+        if nodes[a0].kind == .index and nodes[a0].b != 0:
+            # ps[i].x on a soa array is ps.x[i]
+            abt = prune(check_expr(int(nodes[a0].a), 0))
+            nodes[a0].a = i32(last_checked)
+            if is_soa(abt):
+                f = mk(.field, nodes[n].pos)
+                nodes[f].a = nodes[a0].a
+                nodes[f].name = nodes[n].name
+                nodes[n] = Node(kind = .index, pos = nodes[n].pos, a = i32(f), b = nodes[a0].b)
+                return check_expr(n, expected)
         bt = prune(check_expr(int(nodes[n].a), 0))
         fname = int(nodes[n].name)
         bk = types[bt].kind
@@ -2079,6 +2106,7 @@ check_expr = (n: int, expected: int) -> int:
         bk = types[bt].kind
         b = int(nodes[n].b)
         if bk == .typeval: t = mk_typeval(expr_as_type(n))
+        else if b != 0 and nodes[b].kind != .range and is_soa(bt): return check_soa_index(n, expected)
         else if b != 0 and nodes[b].kind == .range:
             if nodes[b].a != 0: check_to(int(nodes[b].a), T_INT)
             if nodes[b].b != 0: check_to(int(nodes[b].b), T_INT)
@@ -2460,6 +2488,175 @@ check_if = (n: int, ex: int) -> int:
         coerce(vb, ex)
         return ex
     join_types(va, vb, nodes[n].pos)
+
+# ---------------- struct-of-arrays ----------------
+# soa P[] is a struct with an array per field of P; these rewrite its array operations into
+# operations on the field arrays
+
+# a fresh copy of expression e (evaluated again where it is used)
+soa_again = (e: int) -> int: clone(e)
+
+# the struct value P(f0, f1, ...) from checked field values (in field order)
+soa_struct = (st: int, vals: int[], pos: int) -> int:
+    c = mk(.call, pos)
+    set_list(c, vals)
+    nodes[c].aux = 2
+    nodes[c].type = i32(st)
+    add_flag(c, NF_CHECKED)
+    c
+
+soa_field_names = (t: int) -> int[]:
+    si = int(types[prune(t)].st)
+    out: int[]
+    loop i in [0..int(structs[si].nfields)): out.push(int(fields[int(structs[si].fields) + i].name))
+    out
+
+# ps[i]: P(ps.x[i], ps.y[i], ...)
+check_soa_index = (n: int, expected: int) -> int:
+    pos = nodes[n].pos
+    base = int(nodes[n].a)
+    st = prune(ntype(base))
+    pt = soa_elem(st)
+    stmts: int[]
+    iname = "__si{bc_count}"
+    bc_count += 1
+    stmts.push(bc_let(iname, int(nodes[n].b), pos))
+    vals: int[]
+    loop i in 0.. and fname in soa_field_names(st):
+        f = mk(.field, pos)
+        nodes[f].a = i32(soa_again(base))
+        nodes[f].name = i32(fname)
+        ix = mk(.index, pos)
+        nodes[ix].a = i32(f)
+        nodes[ix].b = i32(bc_ident(iname, pos))
+        vals.push(ix)
+    blk = bc_block(stmts, pos)
+    mark = scope_mark()
+    check_stmt(stmts[0])
+    add_flag(stmts[0], NF_CHECKED)
+    loop i in [0..vals.len()):
+        check_expr(vals[i], 0)
+        vals[i] = last_checked
+    scope_reset(mark)
+    stmts.push(bc_stmt(soa_struct(pt, vals, pos), pos))
+    set_list(blk, stmts)
+    nodes[n] = nodes[blk]
+    check_expr(n, expected)
+
+# ps[i] = p: each field
+soa_assign = (s: int) -> int:
+    pos = nodes[s].pos
+    lhs = int(nodes[s].a)
+    base = int(nodes[lhs].a)
+    st = prune(ntype(base))
+    if nodes[s].op != i32(int(Tok.assign)): fatal(pos, "only `=` assigns a whole element of a soa array")
+    tn = "__st{bc_count}"
+    iname = "__si{bc_count}"
+    bc_count += 1
+    stmts = [bc_let(iname, int(nodes[lhs].b), pos)]
+    vd = bc_let(tn, int(nodes[s].b), pos)
+    ty = mk(.tname, pos)
+    nodes[ty].aux = -7
+    nodes[ty].ival = soa_elem(st)
+    nodes[vd].a = i32(ty)
+    stmts.push(vd)
+    loop fname in soa_field_names(st):
+        f = mk(.field, pos)
+        nodes[f].a = i32(soa_again(base))
+        nodes[f].name = i32(fname)
+        ix = mk(.index, pos)
+        nodes[ix].a = i32(f)
+        nodes[ix].b = i32(bc_ident(iname, pos))
+        a = mk(.assign, pos)
+        nodes[a].op = i32(int(Tok.assign))
+        nodes[a].a = i32(ix)
+        nodes[a].b = i32(bc_field(bc_ident(tn, pos), name_of(fname), pos))
+        stmts.push(a)
+    es = bc_stmt(bc_block(stmts, pos), pos)
+    check_stmt(es)
+    es
+
+check_soa_method = (n: int, recv: int, fname: int, args: int[], expected: int) -> int:
+    pos = nodes[n].pos
+    st = prune(ntype(recv))
+    pt = soa_elem(st)
+    fnms = soa_field_names(st)
+    m = name_of(fname)
+    if fnms.len() == 0: fatal(pos, "{type_str(st)}: the struct has no fields")
+    fld = (i: int) -> int:
+        f = mk(.field, pos)
+        nodes[f].a = i32(soa_again(recv))
+        nodes[f].name = i32(fnms[i])
+        f
+    stmts: int[]
+    if m == "len":
+        nodes[n] = nodes[bc_call("len", [fld(0)], pos)]
+        return check_expr(n, expected)
+    if m == "push":
+        if args.len() != 1: fatal(pos, "push takes one element")
+        tn = "__st{bc_count}"
+        bc_count += 1
+        vd = bc_let(tn, args[0], pos)
+        ty = mk(.tname, pos)
+        nodes[ty].aux = -7
+        nodes[ty].ival = pt
+        nodes[vd].a = i32(ty)
+        stmts.push(vd)
+        loop i in 0.. and nm in fnms: stmts.push(bc_stmt(bc_method(fld(i), "push", [bc_field(bc_ident(tn, pos), name_of(nm), pos)], pos), pos))
+    else if m == "clear" or m == "reserve" or m == "truncate":
+        loop i in [0..fnms.len()):
+            cl: int[]
+            loop a in args: cl.push(clone(a))
+            stmts.push(bc_stmt(bc_method(fld(i), m, cl, pos), pos))
+    else if m == "pop" or m == "remove":
+        if m == "remove" and args.len() != 1: fatal(pos, "remove takes an index")
+        vals: int[]
+        if m == "remove":
+            iname = "__si{bc_count}"
+            bc_count += 1
+            stmts.push(bc_let(iname, args[0], pos))
+            loop i in [0..fnms.len()): vals.push(bc_method(fld(i), "remove", [bc_ident(iname, pos)], pos))
+        else:
+            loop i in [0..fnms.len()): vals.push(bc_method(fld(i), "pop", [], pos))
+        blk = bc_block(stmts, pos)
+        mark = scope_mark()
+        loop x in stmts:
+            check_stmt(x)
+            add_flag(x, NF_CHECKED)
+        loop i in [0..vals.len()):
+            check_expr(vals[i], 0)
+            vals[i] = last_checked
+        scope_reset(mark)
+        stmts.push(bc_stmt(soa_struct(pt, vals, pos), pos))
+        set_list(blk, stmts)
+        nodes[n] = nodes[blk]
+        return check_expr(n, expected)
+    else: fatal(pos, "a soa array has len, push, pop, remove, clear, reserve and truncate (and its field arrays: xs.{name_of(fnms[0])})")
+    nodes[n] = nodes[bc_block(stmts, pos)]
+    check_expr(n, expected)
+
+# P[] -> soa P[]: n becomes a loop pushing each element
+soa_from_array = (n: int, to: int):
+    pos = nodes[n].pos
+    inner = nodes.len()
+    nodes.push(nodes[n])
+    cn = "__sc{bc_count}"
+    on = "__so{bc_count}"
+    pn = "__sp{bc_count}"
+    bc_count += 1
+    od = mk(.vardecl, pos)
+    nodes[od].name = i32(intern(on))
+    ty = mk(.tname, pos)
+    nodes[ty].aux = -7
+    nodes[ty].ival = to
+    nodes[od].a = i32(ty)
+    lp = mk(.for_, pos)
+    set_list(lp, [bc_ident(pn, pos)])
+    nodes[lp].a = i32(bc_ident(cn, pos))
+    nodes[lp].b = i32(bc_block([bc_stmt(bc_method(bc_ident(on, pos), "push", [bc_ident(pn, pos)], pos), pos)], pos))
+    stmts = [bc_let(cn, inner, pos), od, bc_stmt(bc_method(bc_ident(on, pos), "reserve", [bc_call("len", [bc_ident(cn, pos)], pos)], pos), pos), lp, bc_stmt(bc_ident(on, pos), pos)]
+    nodes[n] = nodes[bc_block(stmts, pos)]
+    check_expr(n, to)
 
 # ---------------- 2-D array literals ----------------
 # [1 2; 3 4] is __array2([1, 2, 3, 4], 2, 2); [a; b] with arrays a, b is __array2_rows([a, b])
