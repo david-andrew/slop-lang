@@ -1,0 +1,24 @@
+# a mut parameter may be the caller's global: code called inside a loop that writes its
+# elements can copy that global, and the copy must keep its old elements (release builds hoist
+# copy-on-write checks out of loops only where nothing like this can happen)
+g: int[] = [1, 2, 3]
+saved: int[] = []
+snap = (): saved = g
+
+work_while = (xs: mut int[]):
+    i = 0
+    loop i < xs.len():
+        if i == 1: snap()
+        xs[i] += 100
+        i += 1
+
+work_range = (xs: mut int[]):
+    loop i in [0..xs.len()):
+        if i == 1: snap()
+        xs[i] += 1000
+
+main = ():
+    work_while(g)
+    print(g, saved)
+    work_range(g)
+    print(g, saved)

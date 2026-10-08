@@ -2961,6 +2961,7 @@ fixed_path_of = (a: int) -> int:
 uq_written: int[]
 uq_escaped: int[]
 uq_lambda = false
+uq_calls = false            # the loop calls code that might copy a mut parameter's variable
 uniq_locals: int[]          # locals known to be unique while lowering the current loop
 
 uq_scan = (n: int, ctx: int):
@@ -2970,6 +2971,7 @@ uq_scan = (n: int, ctx: int):
     if k == .lambda:
         uq_lambda = true
         return
+    if k == .call and not harmless_call(n): uq_calls = true
     if k == .ident:
         if nodes[n].aux == i32(int(SK.local)):
             if ctx == 2: uq_written.push(int(nodes[n].sym))
@@ -3015,6 +3017,7 @@ uq_begin = (s: int) -> int:
     uq_written.clear()
     uq_escaped.clear()
     uq_lambda = false
+    uq_calls = false
     uq_scan(s, 1)
     if uq_lambda: return 0
     added = 0
@@ -3025,6 +3028,8 @@ uq_begin = (s: int) -> int:
         fl = int(locals[l].flags)
         if fl & (LF_ALIAS | LF_CAPTURE | LF_BYREF) != 0 or is_shared(l): continue
         if fl & LF_PARAM != 0 and fl & LF_MUTPARAM == 0: continue
+        # (a mut parameter may be the caller's global, which code the loop calls could copy)
+        if fl & LF_MUTPARAM != 0 and uq_calls: continue
         # only variables that exist before the loop: one declared inside it gets a new value
         # (maybe a shared or read-only one) on every iteration
         if fl & LF_PARAM == 0 and not declared_in_scope(l): continue
