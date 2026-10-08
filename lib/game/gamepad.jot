@@ -54,6 +54,8 @@ else:
     __js_buf: u8[] = fill(0, 128)
 
     __pad_poll = ():
+        # (a screenshot run is a test: the same frames on any machine, whatever is plugged in)
+        if __fixed_step: return
         if __js_fd < 0:
             if elapsed() < __js_retry: return
             __js_retry = elapsed() + 2.0          # look for a controller every two seconds
