@@ -1,0 +1,19 @@
+# loops over 0..xs.len() skip provably redundant bounds checks; the results must not change
+fn total(v: [int]) -> int:
+    s := 0
+    n := v.len()
+    for i in 0..n: s += v[i]
+    for i in 0..v.len(): s += v[i] * 2
+    for i in 1..n: s += v[i - 1]
+    s
+xs := [1, 2, 3, 4]
+print(total(xs), total([]))
+ys := [5, 6, 7]
+for i in 0..ys.len():
+    if i == 1: ys.push(9)
+    print(ys[i])
+empty: [int]
+for i in 0..empty.len(): print(empty[i])
+zs := [1, 2, 3]
+m := zs.len()
+for i in 0..m: print(zs[i])

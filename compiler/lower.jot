@@ -562,7 +562,7 @@ fn gen_place(e: int, write: bool) -> Place:
             else:
                 arr = gen_borrowed(a).v
                 idx = gen_expr(int(nodes[e].b)).v
-            bounds_check(arr, idx, nodes[e].pos)
+            if not index_is_safe(a, int(nodes[e].b)): bounds_check(arr, idx, nodes[e].pos)
             sz := tsize(int(types[bt].elem))
             return Place(true, e_bin(.add, VI, e_addi(arr, 24), e_bin(.mul, VI, idx, e_iconst(sz))))
         if bk == .str_:
@@ -2305,12 +2305,53 @@ fn gen_vardecl(s: int):
     t := int(locals[l].type)
     pl := local_place(l, true)
     if nodes[s].b != 0:
+        a := fixed_array_len(int(nodes[s].b))
+        if a >= 0 and int(locals[l].flags) & LF_ASSIGNED == 0: len_of_local[l] = a
         val := gen_owned(int(nodes[s].b))
         write_place(pl, t, val.v)
     else:
         if pl.mem: e_zero(pl.v, tsize(t))
         else: e_mov(pl.v, zero_val(t))
     scope_add_local(l)
+
+# ---- bounds checks that cannot fail ----
+# In `for j in K..A.len()` (K a non-negative literal; the bound may also be a variable declared
+# as `n := A.len()` and never changed) where A is never modified in the function, A[j] is in
+# bounds: the length is fixed, and an empty (null) A never enters the loop.
+len_of_local: {int: int}        # local n -> local A when n := A.len() and neither ever changes
+safe_index: [(int, int)]        # (array local, loop variable local) pairs proven in bounds
+
+# A, if e is A.len() / len(A) for an array local A that is never modified, else -1
+fn fixed_array_len(e: int) -> int:
+    if e == 0 or nodes[e].kind != .intrinsic or (nodes[e].aux as IN) != .len or nkids(e) != 1: return -1
+    a := kid(e, 0)
+    if nodes[a].kind != .ident or nodes[a].aux != i32(int(SK.local)): return -1
+    if types[prune(ntype(a))].kind != .array: return -1
+    l := int(nodes[a].sym)
+    if int(locals[l].flags) & (LF_ASSIGNED | LF_ALIAS | LF_BYREF | LF_MUTPARAM) != 0: return -1
+    l
+
+# the array local whose length bounds the range `it`, or -1
+fn range_bounds_array(it: int) -> int:
+    lo := int(nodes[it].a)
+    if lo == 0 or nodes[lo].kind != .int_lit or nodes[lo].ival < 0 or has_flag(it, NF_INCLUSIVE): return -1
+    hi := int(nodes[it].b)
+    a := fixed_array_len(hi)
+    if a >= 0: return a
+    if hi != 0 and nodes[hi].kind == .ident and nodes[hi].aux == i32(int(SK.local)):
+        n := int(nodes[hi].sym)
+        if int(locals[n].flags) & LF_ASSIGNED == 0: return len_of_local.get(n) ?? -1
+    -1
+
+fn index_is_safe(arr: int, idx: int) -> bool:
+    if safe_index.len() == 0: return false
+    if nodes[arr].kind != .ident or nodes[idx].kind != .ident: return false
+    if nodes[arr].aux != i32(int(SK.local)) or nodes[idx].aux != i32(int(SK.local)): return false
+    a := int(nodes[arr].sym)
+    j := int(nodes[idx].sym)
+    for p in safe_index:
+        if p.0 == a and p.1 == j: return true
+    false
 
 fn gen_loop_body(b: int):
     scope_push()
@@ -2338,6 +2379,9 @@ fn gen_for(s: int):
             e_mov(endv, e_load(VI, r, 8, 8))
         stmt_end()
         sg := types[prune(lt)].sign
+        safe_arr := -1
+        if aux == 0: safe_arr = range_bounds_array(int(nodes[s].a))
+        if safe_arr >= 0: safe_index.push((safe_arr, l))
         blk()
         brk := ctl
         lop()
@@ -2351,6 +2395,7 @@ fn gen_for(s: int):
         loops.push(LoopInfo(brk, cont, scope_locals.len()))
         gen_loop_body(int(nodes[s].b))
         loops.pop()
+        if safe_arr >= 0: safe_index.pop()
         endc()
         e_mov(ctr, e_addi(ctr, 1))
         br_to(top)

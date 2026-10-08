@@ -168,6 +168,20 @@ class Gen:
         if r.random() < 0.1:
             self.vstmt()
             return
+        if r.random() < 0.05 and self.arrays and self.depth < 3:
+            # index loops over a whole array (their bounds checks may be removed)
+            arr = r.choice(self.arrays)
+            k = self.fresh("j")
+            acc = self.fresh("sum")
+            self.emit(f"{acc} := 0")
+            if r.random() < 0.5:
+                self.emit(f"for {k} in 0..{arr}.len(): {acc} += {arr}[{k}] * {r.randint(1, 5)}")
+            else:
+                n = self.fresh("n")
+                self.emit(f"{n} := {arr}.len()")
+                self.emit(f"for {k} in 0..{n}: {acc} ^= {arr}[{k}]")
+            self.emit(f"print({acc})")
+            return
         c = r.random()
         if c < 0.2 or not self.ints:
             v = self.fresh("i")
