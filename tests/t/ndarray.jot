@@ -8,7 +8,7 @@ main = ():
     sq = (x: f64): x * x
     print(sq.(a), sqrt.(b), abs.(a .- 2.0))
     m = [1 2; 3 4]
-    print(m, m[1, 0], shape(m))
+    print(m, m[1, 0], m.shape)
     m[0, 1] = 20
     print(m)
     f = [1.0 2.0
@@ -30,3 +30,23 @@ dotted_compound = ():
     xs .*= xs
     print(xs, 2.0 .* [1.0 2.0] .^ 2, [2.0] .^ [3.0] .^ [2.0])
 dotted_compound()
+
+nd_demo = ():
+    m = [1 2; 3 4]
+    print(m, m.shape, m[1, 0], len(m), ndim(m))
+    a = [m; m .* 10]
+    print(a, a.shape, a[1, 0, 1])
+    a[0, 1, 1] = 99
+    print(a)
+    v = zeros(2, 3, 4)
+    print(v.shape, size(v))
+    w = v .+ [1.0 2.0 3.0 4.0]
+    print(w[1, 2, 3], w[0, 0, 0])
+    col = reshape([1.0, 2.0, 3.0], 3, 1)
+    print(col .* [10.0 20.0], transpose(col))
+    t = reshape([1 2 3 4 5 6 7 8], 2, 2, 2)
+    print(t .+ t, transpose(t)[1, 0, 0], sum(t))
+    print([1.0 2.0; 3.0 4.0] * [1.0 0.0; 0.0 1.0], eye(2) * [5.0, 6.0])
+    f: f32[,] = [1 2; 3 4]
+    print(f .* 2.0, sqrt.(f))
+nd_demo()

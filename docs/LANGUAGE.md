@@ -95,7 +95,7 @@ Top-level statements in the main file run in order, like a script.
 | `bool` | `true` / `false` |
 | `str` | immutable UTF-8 string (`+` concatenates, `*` repeats) |
 | `T[]` | growable array (value semantics); `push pop insert remove extend len` ... (also `Array[T]`) |
-| `T[,]` | 2-D array (see section 8) |
+| `T[,]` | n-dimensional array (see section 8) |
 | `soa T[]` | array of structs stored as one array per field (see section 8) |
 | `{K: V}` | hash map, insertion ordered (value semantics) |
 | `(A, B)` | tuple |
@@ -357,24 +357,33 @@ roots = sqrt.(xs)
 
 (Plain `+` on 1-D arrays concatenates, as for lists.)
 
-**2-D arrays** (`T[,]`): rows are separated by `;` or line breaks.
+**n-dimensional arrays** (`T[,]`). How many dimensions an array has is part of its value, as
+in numpy: `T[,]`, `T[,,]` ... all name the same type (the commas are for the reader), and
+`m.shape` holds the dimensions. Rows are separated by `;` or line breaks; `[a; b]` stacks arrays
+(1-D arrays become rows, n-dimensional ones gain a dimension).
 
 ```jot
 m = [1.0 2.0; 3.0 4.0]
 grid = [0 1 0
         1 1 1]
 rows = [a; b]                    # stack arrays a and b as rows
-print(m[1, 0], shape(m), m.rows, m.cols)
+print(m[1, 0], m.shape)          # 3.0 [2, 2]
 m[0, 1] = 5.0
 v = m * [1.0, 1.0]               # matrix times vector
 p = m * transpose(m)             # matrix product
 k = m .* 2.0 .+ [10.0 20.0]      # broadcasting a row
+cube = zeros(4, 4, 4)            # 3-D
+cube[1, 2, 3] = 1.0
+layers = cube .* reshape([1.0, 2.0, 3.0, 4.0], 4, 1, 1)   # broadcasting along the first axis
 ```
 
-`zeros(n)`, `zeros(r, c)`, `ones`, `eye(n)`, `rand(n)` / `rand(r, c)` (uniform in [0, 1)),
-`randn` (normal), `linspace(a, b, n)`, `reshape(xs, r, c)`, `transpose`, `row(m, i)`,
-`col(m, j)`, `flatten`, `sum`, `mean`, `dot`, `norm`. On 2-D arrays `+ -` work elementwise on
-equal shapes and `*` is the matrix product.
+`zeros`, `ones`, `rand` (uniform in [0, 1)) and `randn` (normal) take 1 to 4 dimensions (with
+one, they make a plain `f64[]`); also `eye(n)`, `linspace(a, b, n)`, `reshape(xs, dims...)` or
+`reshape(xs, shape)`, `ndarray(data, shape)`, `transpose` (reverses the axes), `row(m, i)`,
+`col(m, j)`, `flatten`, `size`, `ndim`, `len` (the first dimension), `sum`, `mean`, `dot`,
+`norm`. On 2-D arrays `+ -` work elementwise on equal shapes and `*` is the matrix product.
+Indexing with the wrong number of indexes, and shapes that do not broadcast, are errors when
+the program runs, with the shapes in the message.
 
 **Struct-of-arrays.** `ps: soa Particle[]` is used exactly like `Particle[]` — `push`, `pop`,
 `remove`, `len`, `ps[i]`, `ps[i].x += 1`, `loop p in ps`, `loop mut p in ps`, conversion from
@@ -401,7 +410,8 @@ h = wave.(g) .* 0.5 .+ g          # one GPU program
 ys = cpu(h)
 ```
 
-Values on the GPU are `f32`, and arrays in one expression must have the same length. GPU
+GPU arrays have the shape of the array they were made from (up to 4 dimensions) and broadcast
+like arrays on the CPU; `cpu(g)` gives an `f32[,]` of that shape. Values on the GPU are `f32`. GPU
 memory is reused automatically once no copy of a GPU array is left. Where there is no GPU (no
 OpenGL ES driver, `JOT_SOFTWARE=1`, or a web build, for now) the same expressions run on the CPU,
 so programs work everywhere; `gpu_available()` tells which.

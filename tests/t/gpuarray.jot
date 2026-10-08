@@ -13,3 +13,15 @@ main = ():
     loop _ in [0..20): big = big .+ 1.0
     out = cpu(big)
     print(out[0], out[1023], out.len())
+
+wave2 = (x: f32) -> f32: x * 0.5 + 0.25
+broadcast_demo = ():
+    m = gpu([1.0 2.0 3.0; 4.0 5.0 6.0])
+    r = gpu([10.0 20.0 30.0])
+    c = gpu(reshape([100.0, 200.0], 2, 1))
+    print(m .+ r, m .* c, wave2.(m) .+ c .- r)
+    one = gpu([7.0])
+    print(r .+ one, cpu(m).shape, len(m))
+    t = gpu(reshape([1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0], 2, 2, 2))
+    print(t .* gpu([1.0 10.0]))
+broadcast_demo()

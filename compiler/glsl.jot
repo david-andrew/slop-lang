@@ -420,21 +420,26 @@ glsl_build = (vsf: int, fsf: int) -> (str, str, str):
 
 # the fragment program of a dotted expression on GPU arrays (see check_dotted): kernel f takes the
 # current element of each array (texture uniforms t0, t1...) and each number (uniforms s0, s1...),
-# in the order desc lists them ('t' or 's'); the result goes to the red channel
+# in the order desc lists them ('t' or 's'); the result goes to the red channel. Each fragment is
+# one element of the result: its index in the result's shape (od, padded to 4 dimensions) picks
+# each array's element through that array's steps (st0, st1...; 0 where it is stretched).
+# (see __gpu_run in lib/game/gpuarray.jot)
 glsl_kernel = (f: int, desc: str) -> str:
     gl_decls = []
     gl_done_fns = {}
     gl_done_structs = {}
     gl_function(f)
     pos = nodes[int(fns[f].decl)].pos
-    src = "#version 300 es\nprecision highp float;\nprecision highp int;\n"
+    src = "#version 300 es\nprecision highp float;\nprecision highp int;\nuniform ivec4 od;\nuniform int ow;\n"
     args: str[]
+    fetch = ""
     nt = 0
     ns = 0
     loop c in desc:
         if c == 't':
-            src += "uniform highp sampler2D t{nt};\n"
-            args.push("texelFetch(t{nt}, p, 0).r")
+            src += "uniform highp sampler2D t{nt};\nuniform ivec4 st{nt};\nuniform int w{nt};\n"
+            fetch += "    int o{nt} = i0 * st{nt}.x + i1 * st{nt}.y + i2 * st{nt}.z + i3 * st{nt}.w;\n"
+            args.push("texelFetch(t{nt}, ivec2(o{nt} % w{nt}, o{nt} / w{nt}), 0).r")
             nt += 1
         else:
             src += "uniform float s{ns};\n"
@@ -443,7 +448,9 @@ glsl_kernel = (f: int, desc: str) -> str:
     src += "out vec4 o_;\n" + join(gl_decls, "")
     val = "{gl_fn_name(f)}({join(args, ", ")})"
     if gl_type(int(fns[f].ret), pos) != "float": val = "float({val})"
-    src + "void main() \{\n    ivec2 p = ivec2(gl_FragCoord.xy);\n    o_ = vec4({val}, 0.0, 0.0, 1.0);\n}\n"
+    src += "void main() \{\n    int lin = int(gl_FragCoord.y) * ow + int(gl_FragCoord.x);\n"
+    src += "    int i3 = lin % od.w;\n    int q = lin / od.w;\n    int i2 = q % od.z;\n    q /= od.z;\n    int i1 = q % od.y;\n    int i0 = q / od.y;\n"
+    src + fetch + "    o_ = vec4({val}, 0.0, 0.0, 1.0);\n}\n"
 
 # move every struct definition above the first `uniform` declaration
 __hoist_struct = (src: str, ustruct: str) -> str:

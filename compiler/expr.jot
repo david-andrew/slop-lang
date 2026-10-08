@@ -2739,12 +2739,13 @@ check_matrix = (n: int, expected: int) -> int:
         t0 = prune(check_expr(els[0], 0))
         els[0] = last_checked
         if types[t0].kind == .array: fname = "__array2_rows"
+        else if is_nd(t0): fname = "__array_stack"
     set_list(arr, els)
     args.push(arr)
     if fname == "__array2":
         # with a known element type, literals take it (m: f32[,] = [1 2; 3 4])
         ex = prune(expected)
-        if ex != 0 and types[ex].kind == .struct_ and structs[int(types[ex].st)].name == "Array2":
+        if ex != 0 and is_nd(ex):
             check_expr(arr, mk_array(struct_targ(int(types[ex].st), 0)))
         rows = 0
         if ncols > 0: rows = els.len() / ncols
@@ -2874,6 +2875,51 @@ dot_template = (n: int, leaves: mut int[], tag: str) -> int:
     leaves.push(n)
     bc_ident("__b{tag}e{leaves.len() - 1}", pos)
 
+# the loops computing a dotted expression over n-dimensional arrays: kinds[k] is 1 for a 1-D
+# array, 2 for an n-dimensional one, 0 for a number; arrs[k] names the array. The result's last
+# dimension is the inner loop (the whole array when no operand is stretched); the outer loop
+# finds where each operand's row starts.
+bc_loop_nd = (tmpl: int, arrs: str[], kinds: int[], pre: str, epre: str, pos: int) -> int[]:
+    stmts: int[]
+    rowpre: int[]
+    body: int[]
+    out = "{pre}o"
+    shp = (k: int) -> int:
+        if kinds[k] == 2: return bc_field(bc_ident(arrs[k], pos), "shape", pos)
+        a = mk(.array, pos)
+        set_list(a, [bc_call("len", [bc_ident(arrs[k], pos)], pos)])
+        a
+    shs: int[]
+    loop k in [0..kinds.len()):
+        if kinds[k] > 0: shs.push(shp(k))
+    sa = mk(.array, pos)
+    set_list(sa, shs)
+    id = (nm: str) -> int: bc_ident("{pre}{nm}", pos)
+    stmts.push(bc_let("{pre}shs", sa, pos))
+    stmts.push(bc_let("{pre}shp", bc_call("__bcast_shape", [id("shs")], pos), pos))
+    stmts.push(bc_let("{pre}n", bc_call("__nd_size", [id("shp")], pos), pos))
+    stmts.push(bc_let("{pre}in", bc_call("__bcast_inner", [id("shs"), id("shp")], pos), pos))
+    stmts.push(bc_let("{pre}on", bc_bin(.slash, id("n"), bc_call("max", [id("in"), bc_int(1, pos)], pos), pos), pos))
+    loop k in [0..kinds.len()):
+        if kinds[k] == 0: continue
+        src = bc_ident(arrs[k], pos)
+        if kinds[k] == 2: src = bc_field(bc_ident(arrs[k], pos), "data", pos)
+        stmts.push(bc_let("{pre}x{k}", src, pos))
+        stmts.push(bc_let("{pre}st{k}", bc_call("__bcast_strides", [shp(k), id("shp")], pos), pos))
+        stmts.push(bc_let("{pre}ls{k}", bc_call("__bcast_last", [id("st{k}"), bc_call("len", [id("x{k}")], pos), id("n")], pos), pos))
+        rowpre.push(bc_let("{pre}b{k}", bc_call("__bcast_offset", [id("r"), id("shp"), id("st{k}")], pos), pos))
+        ix = mk(.index, pos)
+        nodes[ix].a = i32(id("x{k}"))
+        nodes[ix].b = i32(bc_bin(.plus, id("b{k}"), bc_bin(.star, id("j"), id("ls{k}"), pos), pos))
+        body.push(bc_let("{epre}e{k}", ix, pos))
+    stmts.push(bc_let(out, mk(.array, pos), pos))
+    stmts.push(bc_stmt(bc_method(bc_ident(out, pos), "reserve", [id("n")], pos), pos))
+    body.push(bc_stmt(bc_method(bc_ident(out, pos), "push", [tmpl], pos), pos))
+    rowpre.push(bc_loop("{pre}j", id("in"), body, pos))
+    stmts.push(bc_loop("{pre}r", id("on"), rowpre, pos))
+    stmts.push(bc_stmt(bc_call("ndarray", [bc_ident(out, pos), id("shp")], pos), pos))
+    stmts
+
 # the loop computing a dotted expression over 1-D arrays: arrs[k] names operand k's array ("" for
 # a number, whose element variable already exists); `pre` names the loop's variables, `epre` the
 # element variables the template uses. The last statement is the result.
@@ -2901,9 +2947,9 @@ bc_loop1 = (tmpl: int, arrs: str[], pre: str, epre: str, pos: int) -> int[]:
     stmts.push(bc_stmt(bc_ident(out, pos), pos))
     stmts
 
-is_array2 = (t0: int) -> bool:
+is_nd = (t0: int) -> bool:
     t = prune(t0)
-    types[t].kind == .struct_ and structs[int(types[t].st)].name == "Array2"
+    types[t].kind == .struct_ and structs[int(types[t].st)].name == "NDArray"
 
 check_dotted = (n: int, expected: int) -> int:
     pos = nodes[n].pos
@@ -2924,7 +2970,7 @@ check_dotted = (n: int, expected: int) -> int:
         t = prune(ntype(lf))
         r = 0
         if types[t].kind == .array: r = 1
-        else if is_array2(t): r = 2
+        else if is_nd(t): r = 2
         else if types[t].kind == .struct_ and structs[int(types[t].st)].name == "GpuArray":
             r = 3
             gpu = true
@@ -2963,7 +3009,7 @@ check_dotted = (n: int, expected: int) -> int:
                 desc += "t"
                 gins.push(d(k))
                 harrs[k] = "{pre}h{k}"
-                hstmts.push(bc_let(harrs[k], bc_call("__gpu_host", [d(k)], pos), pos))
+                hstmts.push(bc_let(harrs[k], bc_call("cpu", [d(k)], pos), pos))
             else if ranks[k] == 0:
                 desc += "s"
                 scal.push(bc_call("f32", [d(k)], pos))
@@ -2984,7 +3030,11 @@ check_dotted = (n: int, expected: int) -> int:
         nodes[sc].a = i32(sa)
         nodes[sc].b = i32(st)
         run = bc_call("__gpu_run", [bc_call("__gpu_kernel", [lam, ds], pos), ga, sc], pos)
-        loop x in bc_loop1(tmpl, harrs, "{pre}c", pre, pos): hstmts.push(x)
+        hkinds: int[]
+        loop k in [0..leaves.len()):
+            if ranks[k] == 3: hkinds.push(2)
+            else: hkinds.push(0)
+        loop x in bc_loop_nd(tmpl, harrs, hkinds, "{pre}c", pre, pos): hstmts.push(x)
         hb = bc_block(hstmts, pos)
         cpu = bc_call("__gpu_from", [hb], pos)
         iff = mk(.if_, pos)
@@ -3001,45 +3051,14 @@ check_dotted = (n: int, expected: int) -> int:
         loop i in [0..ls.len() - 1): stmts.push(ls[i])
         result = int(nodes[ls[ls.len() - 1]].a)
     else:
-        # 2-D: a vector is a row (numpy aligns trailing dimensions)
-        rows: int[]
-        cols: int[]
+        # n-dimensional: shapes broadcast like numpy (a 1-D array is a row)
+        arrs: str[]
         loop k in [0..leaves.len()):
-            if ranks[k] == 2:
-                rows.push(bc_field(d(k), "rows", pos))
-                cols.push(bc_field(d(k), "cols", pos))
-            else if ranks[k] == 1: cols.push(bc_call("len", [d(k)], pos))
-        ra = mk(.array, pos)
-        set_list(ra, rows)
-        ca = mk(.array, pos)
-        set_list(ca, cols)
-        stmts.push(bc_let("{pre}r", bc_call("__bcast", [ra], pos), pos))
-        stmts.push(bc_let("{pre}c", bc_call("__bcast", [ca], pos), pos))
-        loop k in [0..leaves.len()):
-            ij = 0
-            src = 0
-            if ranks[k] == 2:
-                # element (i, j) of a rows x cols operand: data[i * rstep + j * cstep]
-                stmts.push(bc_let("{pre}x{k}", bc_field(d(k), "data", pos), pos))
-                stmts.push(bc_let("{pre}rs{k}", bc_bin(.star, bc_step(bc_field(d(k), "rows", pos), pos), bc_field(d(k), "cols", pos), pos), pos))
-                stmts.push(bc_let("{pre}cs{k}", bc_step(bc_field(d(k), "cols", pos), pos), pos))
-                ij = bc_bin(.plus, bc_bin(.star, bc_ident("{pre}i", pos), bc_ident("{pre}rs{k}", pos), pos), bc_bin(.star, bc_ident("{pre}j", pos), bc_ident("{pre}cs{k}", pos), pos), pos)
-                src = bc_ident("{pre}x{k}", pos)
-            else if ranks[k] == 1:
-                stmts.push(bc_let("{pre}cs{k}", bc_step(bc_call("len", [d(k)], pos), pos), pos))
-                ij = bc_bin(.star, bc_ident("{pre}j", pos), bc_ident("{pre}cs{k}", pos), pos)
-                src = d(k)
-            else: continue
-            ix = mk(.index, pos)
-            nodes[ix].a = i32(src)
-            nodes[ix].b = i32(ij)
-            body.push(bc_let("{pre}e{k}", ix, pos))
-        stmts.push(bc_let(out, mk(.array, pos), pos))
-        stmts.push(bc_stmt(bc_method(bc_ident(out, pos), "reserve", [bc_bin(.star, bc_ident("{pre}r", pos), bc_ident("{pre}c", pos), pos)], pos), pos))
-        body.push(bc_stmt(bc_method(bc_ident(out, pos), "push", [tmpl], pos), pos))
-        inner = bc_loop("{pre}j", bc_ident("{pre}c", pos), body, pos)
-        stmts.push(bc_loop("{pre}i", bc_ident("{pre}r", pos), [inner], pos))
-        result = bc_call("__array2", [bc_ident(out, pos), bc_ident("{pre}r", pos), bc_ident("{pre}c", pos)], pos)
+            if ranks[k] == 1 or ranks[k] == 2: arrs.push("{pre}d{k}")
+            else: arrs.push("")
+        ls = bc_loop_nd(tmpl, arrs, ranks, pre, pre, pos)
+        loop i in [0..ls.len() - 1): stmts.push(ls[i])
+        result = int(nodes[ls[ls.len() - 1]].a)
     stmts.push(bc_stmt(result, pos))
     nodes[n] = nodes[bc_block(stmts, pos)]
     check_expr(n, expected)

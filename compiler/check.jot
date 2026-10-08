@@ -492,7 +492,7 @@ resolve_type = (tn: int) -> int:
         fatal(nodes[tn].pos, "'{name_of(nm)}' is not a type")
     if k == .tarray:
         if nodes[tn].b != 0: fatal(nodes[tn].pos, "fixed-size arrays are not supported yet")
-        if nodes[tn].aux == 2: return array2_of(resolve_type(int(nodes[tn].a)), nodes[tn].pos)
+        if nodes[tn].aux >= 2: return nd_of(resolve_type(int(nodes[tn].a)), nodes[tn].pos)
         if has_flag(tn, NF_SOA):
             et = resolve_type(int(nodes[tn].a))
             if tkind(et) != .struct_ or is_soa(et): fatal(nodes[tn].pos, "soa T[] needs a struct type T, not {type_str(et)}")
@@ -527,10 +527,10 @@ resolve_type = (tn: int) -> int:
     fatal(nodes[tn].pos, "invalid type")
     0
 
-# T[,] (lib/std/nd.jot)
-array2_of = (t: int, pos: int) -> int:
-    s = prelude.get(intern("Array2")) ?? 0
-    if s == 0: fatal(pos, "2-D arrays are not available (lib/std/nd.jot is missing)")
+# T[,], T[,,] ...: n-dimensional arrays (lib/std/nd.jot)
+nd_of = (t: int, pos: int) -> int:
+    s = prelude.get(intern("NDArray")) ?? 0
+    if s == 0: fatal(pos, "n-dimensional arrays are not available (lib/std/nd.jot is missing)")
     get_struct_inst(int(syms[s].ref), [t])
 
 # type Name[T] = ...: the type it stands for, given its type arguments

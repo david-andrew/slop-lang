@@ -489,7 +489,7 @@ type_str = (t0: int) -> str:
             si = int(ti.st)
             nm = structs[si].name
             if structs[si].union_ or structs[si].soa_: return nm
-            if nm == "Array2" and int(structs[si].ntargs) == 1: return "{type_str_postfix(struct_targ(si, 0))}[,]"
+            if nm == "NDArray" and int(structs[si].ntargs) == 1: return "{type_str_postfix(struct_targ(si, 0))}[,]"
             if nm == "Map" and int(structs[si].ntargs) == 2: return "\{{type_str(struct_targ(si, 0))}: {type_str(struct_targ(si, 1))}}"
             s = nm
             if int(structs[si].ntargs) > 0:

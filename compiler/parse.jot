@@ -197,7 +197,6 @@ parse_type_postfix = (t0: int) -> int:
             expect(.rbrack, "")
             nodes[a].a = i32(t)
             nodes[a].aux = i32(rank)
-            if rank > 2: fatal(nodes[a].pos, "arrays of more than 2 dimensions are not supported yet")
             t = a
         else: return t
     t

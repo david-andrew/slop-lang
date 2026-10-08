@@ -212,51 +212,73 @@ hash = (s: str) -> u64
 
 Arrays for numeric work, in the spirit of numpy and MATLAB.  
   
-T[,] is a 2-D array (Array2[T]): its elements in row-major order, and its shape. Write one as  
-[1 2; 3 4] (rows separated by ';' or line breaks), or make one with zeros(r, c), ones, eye,  
-rand, reshape. m[i, j] reads and writes an element.  
+T[,] is an n-dimensional array (NDArray[T]): its elements in row-major order, and its shape.  
+How many dimensions it has is part of the value, as in numpy (T[,,] is the same type; the  
+commas are only for the reader). Write a 2-D one as [1 2; 3 4] (rows separated by ';' or line  
+breaks), stack arrays with [a; b], or make one with zeros(2, 3, 4), ones, eye, rand, reshape.  
+m[i, j] (with as many indexes as dimensions) reads and writes an element; m.shape is its shape.  
   
 The dotted operators work element by element on arrays of any shape, and broadcast like numpy  
-(a dimension of length 1, or a missing one, stretches to fit): a .* b, m .+ 1.0, v .^ 2,  
+(a dimension of length 1, or a missing leading one, stretches to fit): a .* b, m .+ 1.0, v .^ 2,  
 xs .< 0.5, and f.(xs) applies f to each element. A whole dotted expression runs as one loop.  
 On 2-D arrays the plain operators follow linear algebra: a * b is the matrix product.  
 
 ```
 type Array[T] = T[]    # another spelling of T[]
-struct Array2[T]
-([])[T] = (m: Array2[T], i: int, j: int) -> T
-([]=)[T] = (m: mut Array2[T], i: int, j: int, v: T)
-shape[T] = (m: Array2[T]) -> (int, int)
-size[T] = (m: Array2[T]) -> int
-flatten[T] = (m: Array2[T]) -> T[]
-row[T] = (m: Array2[T], i: int) -> T[]
-col[T] = (m: Array2[T], j: int) -> T[]
-reshape[T] = (xs: T[], rows: int, cols: int) -> Array2[T]
-reshape[T] = (m: Array2[T], rows: int, cols: int) -> Array2[T]
-transpose[T] = (m: Array2[T]) -> Array2[T]
+struct NDArray[T]
+ndarray[T] = (data: T[], shape: int[]) -> NDArray[T]
+ndim[T] = (m: NDArray[T]) -> int
+size[T] = (m: NDArray[T]) -> int
+len[T] = (m: NDArray[T]) -> int
+rows[T] = (m: NDArray[T]) -> int
+cols[T] = (m: NDArray[T]) -> int
+flatten[T] = (m: NDArray[T]) -> T[]
+([])[T] = (m: NDArray[T], i: int) -> T
+([])[T] = (m: NDArray[T], i: int, j: int) -> T
+([])[T] = (m: NDArray[T], i: int, j: int, k: int) -> T
+([])[T] = (m: NDArray[T], i: int, j: int, k: int, l: int) -> T
+([]=)[T] = (m: mut NDArray[T], i: int, v: T)
+([]=)[T] = (m: mut NDArray[T], i: int, j: int, v: T)
+([]=)[T] = (m: mut NDArray[T], i: int, j: int, k: int, v: T)
+([]=)[T] = (m: mut NDArray[T], i: int, j: int, k: int, l: int, v: T)
 zeros = (n: int) -> f64[]
-zeros = (rows: int, cols: int) -> f64[,]
+zeros = (a: int, b: int) -> NDArray[f64]
+zeros = (a: int, b: int, c: int) -> NDArray[f64]
+zeros = (a: int, b: int, c: int, d: int) -> NDArray[f64]
 ones = (n: int) -> f64[]
-ones = (rows: int, cols: int) -> f64[,]
-eye = (n: int) -> f64[,]    # the identity matrix
+ones = (a: int, b: int) -> NDArray[f64]
+ones = (a: int, b: int, c: int) -> NDArray[f64]
+ones = (a: int, b: int, c: int, d: int) -> NDArray[f64]
+eye = (n: int) -> NDArray[f64]    # the identity matrix
 rand = (n: int) -> f64[]    # uniformly random in [0, 1)
-rand = (rows: int, cols: int) -> f64[,]
+rand = (a: int, b: int) -> NDArray[f64]
+rand = (a: int, b: int, c: int) -> NDArray[f64]
 randn = () -> f64    # normally distributed (mean 0, standard deviation 1)
 randn = (n: int) -> f64[]
-randn = (rows: int, cols: int) -> f64[,]
+randn = (a: int, b: int) -> NDArray[f64]
+randn = (a: int, b: int, c: int) -> NDArray[f64]
 linspace = (a: f64, b: f64, n: int) -> f64[]    # n evenly spaced values from a to b (both included)
-sum[T] = (m: Array2[T]) -> T
+reshape[T] = (xs: T[], shape: int[]) -> NDArray[T]
+reshape[T] = (xs: T[], a: int, b: int) -> NDArray[T]
+reshape[T] = (xs: T[], a: int, b: int, c: int) -> NDArray[T]
+reshape[T] = (m: NDArray[T], shape: int[]) -> NDArray[T]
+reshape[T] = (m: NDArray[T], a: int, b: int) -> NDArray[T]
+reshape[T] = (m: NDArray[T], a: int, b: int, c: int) -> NDArray[T]
+transpose[T] = (m: NDArray[T]) -> NDArray[T]    # the axes in reverse order (rows and columns swapped, for a 2-D array)
+row[T] = (m: NDArray[T], i: int) -> T[]
+col[T] = (m: NDArray[T], j: int) -> T[]
+sum[T] = (m: NDArray[T]) -> T
 mean = (xs: f64[]) -> f64
-mean = (m: f64[,]) -> f64
+mean = (m: NDArray[f64]) -> f64
 dot = (a: f64[], b: f64[]) -> f64
 norm = (a: f64[]) -> f64
-(*)[T] = (a: T[,], b: T[,]) -> T[,]    # matrix product
-(*)[T] = (a: T[,], v: T[]) -> T[]    # matrix times column vector
-(*)[T] = (k: T, m: T[,]) -> T[,]
-(*)[T] = (m: T[,], k: T) -> T[,]
-(/)[T] = (m: T[,], k: T) -> T[,]
-(+)[T] = (a: T[,], b: T[,]) -> T[,]
-(-)[T] = (a: T[,], b: T[,]) -> T[,]
+(*)[T] = (a: NDArray[T], b: NDArray[T]) -> NDArray[T]    # matrix product
+(*)[T] = (a: NDArray[T], v: T[]) -> T[]    # matrix times column vector
+(*)[T] = (k: T, m: NDArray[T]) -> NDArray[T]
+(*)[T] = (m: NDArray[T], k: T) -> NDArray[T]
+(/)[T] = (m: NDArray[T], k: T) -> NDArray[T]
+(+)[T] = (a: NDArray[T], b: NDArray[T]) -> NDArray[T]
+(-)[T] = (a: NDArray[T], b: NDArray[T]) -> NDArray[T]
 ```
 
 ### thread.jot
@@ -608,13 +630,13 @@ step = (edge: f32, x: f32) -> f32
 
 GPU arrays: numbers kept in GPU memory and computed on by GPU programs.  
   
-g = gpu(xs)                       # upload (f32 values)  
+g = gpu(xs)                       # upload (f32 values; xs may have up to 4 dimensions)  
 h = g .* 2.0 .+ sin.(g)           # one GPU program, made from the expression at compile time  
-ys = cpu(h)                       # download  
+ys = cpu(h)                       # download: an f32[,] of the same shape  
   
 A dotted expression whose arrays are GPU arrays runs on the GPU as one fragment program (the  
 functions applied with f.(g) are translated to GLSL, like shader functions; numbers in the  
-expression become f32 uniforms). Where there is no GPU (no OpenGL ES driver, JOT_SOFTWARE=1,  
+expression become f32 uniforms). Shapes broadcast as on the CPU. Where there is no GPU (no OpenGL ES driver, JOT_SOFTWARE=1,  
 or a web build) the same expressions run on the CPU, so programs work everywhere.  
 gpu_available() tells which.  
 
@@ -622,10 +644,12 @@ gpu_available() tells which.
 struct GpuArray
 gpu_available = () -> bool
 gpu = (xs: f32[]) -> GpuArray
+gpu = (m: NDArray[f32]) -> GpuArray
+gpu = (m: NDArray[f64]) -> GpuArray
 gpu = (xs: f64[]) -> GpuArray
 gpu = (xs: int[]) -> GpuArray
 gpu = (xs: bool[]) -> GpuArray
-cpu = (g: GpuArray) -> f32[]
+cpu = (g: GpuArray) -> NDArray[f32]    # the values (an array of the GPU array's shape)
 len = (g: GpuArray) -> int
 sum = (g: GpuArray) -> f64
 ```
