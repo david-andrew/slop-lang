@@ -1639,6 +1639,7 @@ gen_intrinsic = (e: int) -> Val:
         pa = place_addr(gen_place(args[0], false), t)
         return V(e_call(lf_helper(.hash, t, 0), [pa], VI), false)
     if id == .fmt_struct: return gen_fmt_struct(e)
+    if id == .gpu_kernel: return V(e_daddr(str_data(glsl_kernel(int(nodes[args[0]].sym), name_of(int(nodes[args[1]].sval))))), false)
     if id == .shader:
         vsf = int(nodes[args[0]].sym)
         fsf = int(nodes[args[1]].sym)

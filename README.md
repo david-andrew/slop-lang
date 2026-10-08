@@ -55,7 +55,8 @@ draw = ():
   (`120ms`, `1.2(m/s)`).
 - **Numeric arrays.** numpy-style elementwise operators that broadcast (`a .* b .+ 1`,
   `f.(xs)`) and compile to one fused loop, 2-D arrays (`[1 2; 3 4]`, matrix products),
-  `zeros`/`linspace`/`rand`..., and struct-of-arrays storage (`soa Particle[]`).
+  `zeros`/`linspace`/`rand`..., struct-of-arrays storage (`soa Particle[]`), and GPU arrays
+  (`gpu(xs)`): the same dotted expressions on them compile to a GPU program.
 - **Predictable.** Plain value semantics: arrays, strings and maps are reference counted with
   copy-on-write, so there is no garbage collector, no reference cycles and no hidden aliasing.
 - **Batteries for games.** Windows and input, 2D drawing with SDF text, a 3D renderer with

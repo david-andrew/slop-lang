@@ -981,6 +981,9 @@ check_block = (b: int, expected: int, want_value: bool) -> int:
             continue
         check_stmt(s)
     if want_value and nodes[b].aux == 0 and n > 0 and stmt_terminates(kid(b, n - 1)): result = T_NEVER
+    # (an array built by pushing has a solved inference variable inside its type: the plain type
+    # matches overloads exactly)
+    if want_value and result != 0 and int(types[result].flags) & TF_HAS_VAR != 0: result = zonk(result)
     nodes[b].type = i32(result)
     scope_reset(mark)
     result

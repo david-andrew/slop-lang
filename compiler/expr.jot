@@ -11,7 +11,7 @@ enum IN:
     none_, len, push, pop, insert, remove, clear, reserve, slice, syscall, memcpy, memset, sizeof,
     arrdata, panic, assert, print, embed, from_bytes, to_bytes, argv, setlen, truncate, resize,
     hash, alignof, unreachable, arrcap, fmt_struct, sqrt, vec_ctor, cfn_cast, wasm_call, callc, floor_,
-    ceil_, fabs, fmin, fmax, setjmp, longjmp, jump, shader, extend, clone_thread, atomic_add, atomic_cas, stack_ptr, fill, fmt_elem
+    ceil_, fabs, fmin, fmax, setjmp, longjmp, jump, shader, extend, clone_thread, atomic_add, atomic_cas, stack_ptr, fill, fmt_elem, gpu_kernel
 
 enum CV: none_, int_, int2float, float2int, float_, opt, ptr, bits, fn2clos
 
@@ -30,7 +30,7 @@ intrinsics = [
     Intrinsic("size_of", .sizeof, false), Intrinsic("align_of", .alignof, false), Intrinsic("panic", .panic, false),
     Intrinsic("assert", .assert, false), Intrinsic("print", .print, false), Intrinsic("embed", .embed, false),
     Intrinsic("str_from_bytes", .from_bytes, false), Intrinsic("bytes", .to_bytes, false), Intrinsic("__argv", .argv, false),
-    Intrinsic("unreachable", .unreachable, false), Intrinsic("sqrt", .sqrt, false), Intrinsic("__fmt_fields", .fmt_struct, false), Intrinsic("__fmt_elem_value", .fmt_elem, false),
+    Intrinsic("unreachable", .unreachable, false), Intrinsic("sqrt", .sqrt, false), Intrinsic("__fmt_fields", .fmt_struct, false), Intrinsic("__fmt_elem_value", .fmt_elem, false), Intrinsic("__gpu_kernel", .gpu_kernel, false),
     Intrinsic("__hash_value", .hash, false), Intrinsic("__set_len", .setlen, false), Intrinsic("__call_c", .callc, false),
     Intrinsic("shader", .shader, false), Intrinsic("__setjmp", .setjmp, false), Intrinsic("__longjmp", .longjmp, false), Intrinsic("__jump", .jump, false),
     Intrinsic("__clone_thread", .clone_thread, false), Intrinsic("__atomic_add", .atomic_add, false),
@@ -1365,6 +1365,12 @@ check_intrinsic = (n: int, id: IN, args: int[], expected: int) -> int:
         arg_type(args, 1, T_INT)
         arg_type(args, 2, T_INT)
         r = T_INT
+    else if id == .gpu_kernel:
+        # __gpu_kernel(lambda, desc): the GLSL fragment program (see glsl_kernel)
+        nargs_check(n, nargs, 2, 2, "__gpu_kernel")
+        if nodes[args[0]].kind != .lambda or nodes[args[1]].kind != .str_lit: fatal(nodes[n].pos, "__gpu_kernel takes a function literal and a string")
+        check_expr(args[0], 0)
+        r = T_STR
     else if id == .fmt_elem:
         # __fmt_elem_value(buf, x): x inside a container (strings quoted): a union formats its
         # member that way; anything else is __fmt(buf, x)
@@ -2862,6 +2868,33 @@ dot_template = (n: int, leaves: mut int[], tag: str) -> int:
     leaves.push(n)
     bc_ident("__b{tag}e{leaves.len() - 1}", pos)
 
+# the loop computing a dotted expression over 1-D arrays: arrs[k] names operand k's array ("" for
+# a number, whose element variable already exists); `pre` names the loop's variables, `epre` the
+# element variables the template uses. The last statement is the result.
+bc_loop1 = (tmpl: int, arrs: str[], pre: str, epre: str, pos: int) -> int[]:
+    stmts: int[]
+    body: int[]
+    out = "{pre}o"
+    lens: int[]
+    loop a in arrs:
+        if len(a) > 0: lens.push(bc_call("len", [bc_ident(a, pos)], pos))
+    larr = mk(.array, pos)
+    set_list(larr, lens)
+    stmts.push(bc_let("{pre}n", bc_call("__bcast", [larr], pos), pos))
+    loop k in 0.. and a in arrs:
+        if len(a) == 0: continue
+        stmts.push(bc_let("{pre}s{k}", bc_step(bc_call("len", [bc_ident(a, pos)], pos), pos), pos))
+        ix = mk(.index, pos)
+        nodes[ix].a = i32(bc_ident(a, pos))
+        nodes[ix].b = i32(bc_bin(.star, bc_ident("{pre}i", pos), bc_ident("{pre}s{k}", pos), pos))
+        body.push(bc_let("{epre}e{k}", ix, pos))
+    stmts.push(bc_let(out, mk(.array, pos), pos))
+    stmts.push(bc_stmt(bc_method(bc_ident(out, pos), "reserve", [bc_ident("{pre}n", pos)], pos), pos))
+    body.push(bc_stmt(bc_method(bc_ident(out, pos), "push", [tmpl], pos), pos))
+    stmts.push(bc_loop("{pre}i", bc_ident("{pre}n", pos), body, pos))
+    stmts.push(bc_stmt(bc_ident(out, pos), pos))
+    stmts
+
 is_array2 = (t0: int) -> bool:
     t = prune(t0)
     types[t].kind == .struct_ and structs[int(types[t].st)].name == "Array2"
@@ -2876,6 +2909,7 @@ check_dotted = (n: int, expected: int) -> int:
     stmts: int[]
     ranks: int[]
     rank = 0
+    gpu = false
     loop k in [0..leaves.len()):
         lf = leaves[k]
         check_expr(lf, 0)
@@ -2885,39 +2919,81 @@ check_dotted = (n: int, expected: int) -> int:
         r = 0
         if types[t].kind == .array: r = 1
         else if is_array2(t): r = 2
+        else if types[t].kind == .struct_ and structs[int(types[t].st)].name == "GpuArray":
+            r = 3
+            gpu = true
         ranks.push(r)
-        if r > rank: rank = r
+        if r > rank and r < 3: rank = r
         stmts.push(bc_let("{pre}d{k}", lf, pos))
     d = (k: int) -> int: bc_ident("{pre}d{k}", pos)
     # scalars: the same value for every element
     loop k in [0..leaves.len()):
         if ranks[k] == 0: stmts.push(bc_let("{pre}e{k}", d(k), pos))
-    if rank == 0:
+    if rank == 0 and not gpu:
         stmts.push(bc_stmt(tmpl, pos))
         nodes[n] = nodes[bc_block(stmts, pos)]
         return check_expr(n, expected)
     out = "{pre}o"
     body: int[]
     result = 0
-    if rank == 1:
-        lens: int[]
+    if gpu:
+        # GPU arrays: one fragment program, or the same loop on the CPU where there is no GPU
+        desc = ""
+        params: int[]
+        gins: int[]
+        scal: int[]
+        harrs: str[]
+        hstmts: int[]
         loop k in [0..leaves.len()):
-            if ranks[k] == 1: lens.push(bc_call("len", [d(k)], pos))
-        larr = mk(.array, pos)
-        set_list(larr, lens)
-        stmts.push(bc_let("{pre}n", bc_call("__bcast", [larr], pos), pos))
+            pm = mk(.param, pos)
+            nodes[pm].name = i32(intern("{pre}e{k}"))
+            ty = mk(.tname, pos)
+            nodes[ty].aux = -7
+            nodes[ty].ival = T_F32
+            nodes[pm].a = i32(ty)
+            params.push(pm)
+            harrs.push("")
+            if ranks[k] == 3:
+                desc += "t"
+                gins.push(d(k))
+                harrs[k] = "{pre}h{k}"
+                hstmts.push(bc_let(harrs[k], bc_call("__gpu_host", [d(k)], pos), pos))
+            else if ranks[k] == 0:
+                desc += "s"
+                scal.push(bc_call("f32", [d(k)], pos))
+            else: fatal(nodes[leaves[k]].pos, "this array is in CPU memory: upload it with gpu(xs) to use it with GPU arrays")
+        lam = mk(.lambda, pos)
+        set_list(lam, params)
+        nodes[lam].b = i32(bc_block([bc_stmt(clone(tmpl), pos)], pos))
+        ds = mk(.str_lit, pos)
+        nodes[ds].sval = i32(intern(desc))
+        ga = mk(.array, pos)
+        set_list(ga, gins)
+        sa = mk(.array, pos)
+        set_list(sa, scal)
+        st = mk(.tname, pos)
+        nodes[st].aux = -7
+        nodes[st].ival = mk_array(T_F32)
+        sc = mk(.cast, pos)
+        nodes[sc].a = i32(sa)
+        nodes[sc].b = i32(st)
+        run = bc_call("__gpu_run", [bc_call("__gpu_kernel", [lam, ds], pos), ga, sc], pos)
+        loop x in bc_loop1(tmpl, harrs, "{pre}c", pre, pos): hstmts.push(x)
+        hb = bc_block(hstmts, pos)
+        cpu = bc_call("__gpu_from", [hb], pos)
+        iff = mk(.if_, pos)
+        nodes[iff].a = i32(bc_call("gpu_available", [], pos))
+        nodes[iff].b = i32(bc_block([bc_stmt(run, pos)], pos))
+        nodes[iff].c = i32(bc_block([bc_stmt(cpu, pos)], pos))
+        result = iff
+    else if rank == 1:
+        arrs: str[]
         loop k in [0..leaves.len()):
-            if ranks[k] == 1:
-                stmts.push(bc_let("{pre}s{k}", bc_step(bc_call("len", [d(k)], pos), pos), pos))
-                ix = mk(.index, pos)
-                nodes[ix].a = i32(d(k))
-                nodes[ix].b = i32(bc_bin(.star, bc_ident("{pre}i", pos), bc_ident("{pre}s{k}", pos), pos))
-                body.push(bc_let("{pre}e{k}", ix, pos))
-        stmts.push(bc_let(out, mk(.array, pos), pos))
-        stmts.push(bc_stmt(bc_method(bc_ident(out, pos), "reserve", [bc_ident("{pre}n", pos)], pos), pos))
-        body.push(bc_stmt(bc_method(bc_ident(out, pos), "push", [tmpl], pos), pos))
-        stmts.push(bc_loop("{pre}i", bc_ident("{pre}n", pos), body, pos))
-        result = bc_ident(out, pos)
+            if ranks[k] == 1: arrs.push("{pre}d{k}")
+            else: arrs.push("")
+        ls = bc_loop1(tmpl, arrs, pre, pre, pos)
+        loop i in [0..ls.len() - 1): stmts.push(ls[i])
+        result = int(nodes[ls[ls.len() - 1]].a)
     else:
         # 2-D: a vector is a row (numpy aligns trailing dimensions)
         rows: int[]

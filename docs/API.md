@@ -604,6 +604,32 @@ fract = (v: vec2) -> vec2
 step = (edge: f32, x: f32) -> f32
 ```
 
+### gpuarray.jot
+
+GPU arrays: numbers kept in GPU memory and computed on by GPU programs.  
+  
+g = gpu(xs)                       # upload (f32 values)  
+h = g .* 2.0 .+ sin.(g)           # one GPU program, made from the expression at compile time  
+ys = cpu(h)                       # download  
+  
+A dotted expression whose arrays are GPU arrays runs on the GPU as one fragment program (the  
+functions applied with f.(g) are translated to GLSL, like shader functions; numbers in the  
+expression become f32 uniforms). Where there is no GPU (no OpenGL ES driver, JOT_SOFTWARE=1,  
+or a web build) the same expressions run on the CPU, so programs work everywhere.  
+gpu_available() tells which.  
+
+```
+struct GpuArray
+gpu_available = () -> bool
+gpu = (xs: f32[]) -> GpuArray
+gpu = (xs: f64[]) -> GpuArray
+gpu = (xs: int[]) -> GpuArray
+gpu = (xs: bool[]) -> GpuArray
+cpu = (g: GpuArray) -> f32[]
+len = (g: GpuArray) -> int
+sum = (g: GpuArray) -> f64
+```
+
 ### image.jot
 
 Images: RGBA8 pixel buffers, PNG decoding (with a built-in inflate), procedural helpers.  

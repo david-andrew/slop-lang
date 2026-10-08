@@ -1,0 +1,15 @@
+# requires: jot
+# GPU arrays: dotted expressions on them run as GPU programs (or on the CPU without a GPU);
+# only operations that are exact in f32 here, so both give the same output
+half_plus = (x: f32) -> f32: x * 0.5 + 0.25
+main = ():
+    xs = [1.0 2.0 3.0 4.0]
+    g = gpu(xs)
+    h = g .* 2.0 .+ 1.0
+    print(h, len(h), sum(h))
+    k = 4.0
+    print(half_plus.(g) .- k, g .> 2.5, g .* g)
+    big = gpu(linspace(0, 1023, 1024))
+    loop _ in [0..20): big = big .+ 1.0
+    out = cpu(big)
+    print(out[0], out[1023], out.len())

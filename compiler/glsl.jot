@@ -74,7 +74,8 @@ gl_function = (f: int):
     if gl_done_fns.get(f) != none: return
     gl_done_fns[f] = true
     decl = int(fns[f].decl)
-    if decl == 0 or nodes[decl].kind != .fn_: gl_err(0, "only named functions can be used in shaders")
+    if decl == 0 or (nodes[decl].kind != .fn_ and nodes[decl].kind != .lambda): gl_err(0, "only named functions can be used in shaders")
+    if fns[f].caps.len() > 0: gl_err(nodes[decl].pos, "a function that captures variables cannot run on the GPU")
     ret = gl_type(int(fns[f].ret), nodes[decl].pos)
     sig = "{ret} {gl_fn_name(f)}("
     loop i in 0.. and l in fns[f].params:
@@ -416,6 +417,33 @@ glsl_build = (vsf: int, fsf: int) -> (str, str, str):
     vs = __hoist_struct(vs, ustruct)
     fs = __hoist_struct(fs, ustruct)
     (vs, fs, "{adesc}|{udesc}{idesc}")
+
+# the fragment program of a dotted expression on GPU arrays (see check_dotted): kernel f takes the
+# current element of each array (texture uniforms t0, t1...) and each number (uniforms s0, s1...),
+# in the order desc lists them ('t' or 's'); the result goes to the red channel
+glsl_kernel = (f: int, desc: str) -> str:
+    gl_decls = []
+    gl_done_fns = {}
+    gl_done_structs = {}
+    gl_function(f)
+    pos = nodes[int(fns[f].decl)].pos
+    src = "#version 300 es\nprecision highp float;\nprecision highp int;\n"
+    args: str[]
+    nt = 0
+    ns = 0
+    loop c in desc:
+        if c == 't':
+            src += "uniform highp sampler2D t{nt};\n"
+            args.push("texelFetch(t{nt}, p, 0).r")
+            nt += 1
+        else:
+            src += "uniform float s{ns};\n"
+            args.push("s{ns}")
+            ns += 1
+    src += "out vec4 o_;\n" + join(gl_decls, "")
+    val = "{gl_fn_name(f)}({join(args, ", ")})"
+    if gl_type(int(fns[f].ret), pos) != "float": val = "float({val})"
+    src + "void main() \{\n    ivec2 p = ivec2(gl_FragCoord.xy);\n    o_ = vec4({val}, 0.0, 0.0, 1.0);\n}\n"
 
 # move every struct definition above the first `uniform` declaration
 __hoist_struct = (src: str, ustruct: str) -> str:

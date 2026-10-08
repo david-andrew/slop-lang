@@ -389,6 +389,22 @@ ps: soa Particle[] = make_particles()
 ps.x = ps.x .+ ps.vx .* dt
 ```
 
+**GPU arrays.** `gpu(xs)` copies an array to GPU memory and `cpu(g)` copies it back. A dotted
+expression whose arrays are GPU arrays runs on the GPU as one fragment program, generated from
+the expression at compile time — functions applied with `f.(g)` are translated to GLSL like
+shader functions, and the numbers in the expression become uniforms:
+
+```jot
+g = gpu(rand(4_000_000))
+h = wave.(g) .* 0.5 .+ g          # one GPU program
+ys = cpu(h)
+```
+
+Values on the GPU are `f32`, and arrays in one expression must have the same length. GPU
+memory is reused automatically once no copy of a GPU array is left. Where there is no GPU (no
+OpenGL ES driver, `JOT_SOFTWARE=1`, or a web build, for now) the same expressions run on the CPU,
+so programs work everywhere; `gpu_available()` tells which.
+
 ## 9. Modules
 
 `use 'util.jot'` loads a file relative to the importing file and makes its names available
