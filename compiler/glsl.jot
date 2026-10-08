@@ -64,7 +64,7 @@ builtin_map: {str: str} = {
     "fract": "fract", "mod": "mod", "min": "min", "max": "max", "clamp": "clamp", "mix": "mix", "lerp": "mix",
     "step": "step", "smoothstep": "smoothstep", "length": "length", "distance": "distance", "dot": "dot",
     "cross": "cross", "normalize": "normalize", "reflect": "reflect", "transpose": "transpose", "inverse": "inverse",
-    "sign": "sign", "round": "floor", "sinf": "sin", "cosf": "cos", "sample": "texture", "exp2": "exp2", "log2": "log2",
+    "sign": "sign", "sinf": "sin", "cosf": "cos", "sample": "texture", "exp2": "exp2", "log2": "log2",
 }
 
 fn gl_fn_name(f: int) -> str: "f_{sanitize(name_of(int(nodes[int(fns[f].decl)].name)))}_{f}"

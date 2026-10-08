@@ -627,6 +627,7 @@ fn __sw_draw_mesh(prog: int, vbo: int, stride: int, nverts: int, ibo: int, nidx:
     scrp := data(scratch)
     dtest := __s_depth and dp != null
     dwrite := __s_depth_write and dp != null
+    inv_scale := f32(1.0 / __s_fb_scale[__s_fb])
     __sw_raster(pvp, pstride, tp, ntris, fn(band: int, y: int, xa: int, xb: int, t: int, l0: f32, l1: f32, l2: f32, d0: f32, d1: f32, d2: f32):
         a := pvp + int(tp[t * 3]) * pstride
         b := pvp + int(tp[t * 3 + 1]) * pstride
@@ -651,8 +652,14 @@ fn __sw_draw_mesh(prog: int, vbo: int, stride: int, nverts: int, ibo: int, nidx:
             if dtest and not __depth_ok(z, dp[pix * 4]): continue
             if dwrite: dp[pix * 4] = z
             if not color: continue
-            rw := 1.0 / (w0 + dw * k)
+            iw := w0 + dw * k
+            rw := 1.0 / iw
             for f in 0..nf: vin[f] = (s0[f] + sd[f] * k) * rw
+            # like gl_FragCoord: window pixel center (at the size the program sees), depth, 1/w
+            vin[0] = (f32(x) + 0.5) * inv_scale
+            vin[1] = (f32(y) + 0.5) * inv_scale
+            vin[2] = z
+            vin[3] = iw
             fs(col as *u8, vin as *u8, uni)
             __sw_put(cp + pix * 4, vec4(col[0], col[1], col[2], col[3]))
     )
