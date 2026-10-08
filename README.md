@@ -85,6 +85,41 @@ bin/jot check file.jot        # type check only
 
 `bin/jot` finds the standard library in `lib/` next to its own directory (or `$JOT_LIB`).
 
+## Editors
+
+`jot lsp` is a language server (the Language Server Protocol, on standard input and output):
+errors as you type, hover with types and doc comments, go to definition, references, rename,
+completion, signature help, inlay hints for inferred types, and an outline. It is the compiler
+itself answering, so it agrees with the compiler by construction.
+
+VS Code: `tools/vsix.py` packages the extension in `editors/vscode` (highlighting, the language
+server, and commands to run a file in a terminal or the browser, or its tests);
+`code --install-extension build/jot-0.1.0.vsix` installs it.
+
+Other editors: run `jot lsp` for `*.jot` files. For example, Neovim (0.11):
+
+```lua
+vim.lsp.config('jot', { cmd = { 'jot', 'lsp' }, filetypes = { 'jot' }, root_markers = { '.git' } })
+vim.lsp.enable('jot')
+vim.filetype.add({ extension = { jot = 'jot' } })
+```
+
+and Helix (`languages.toml`):
+
+```toml
+[language-server.jot]
+command = "jot"
+args = ["lsp"]
+
+[[language]]
+name = "jot"
+scope = "source.jot"
+file-types = ["jot"]
+comment-token = "#"
+indent = { tab-width = 4, unit = "    " }
+language-servers = ["jot"]
+```
+
 ## Documentation
 
 - [docs/LANGUAGE.md](docs/LANGUAGE.md) — the language
@@ -102,16 +137,18 @@ compiler/      the Jot compiler, in Jot
   x64, elf               IR -> x86-64 machine code -> static ELF executable
   wasm                   IR -> WebAssembly, packaged into one HTML file
   glsl                   shader functions written in Jot -> GLSL ES 3.00
+  ide, lsp               the language server (jot lsp): what the checker learns, for editors
 stage0/        bootstrap compiler in C (compiles compiler/ once)
 lib/core/      runtime, strings, arrays, maps, math, files, formatting
 lib/std/       thread pool and parallel helpers, numeric arrays (nd.jot)
 lib/game/      windows (Wayland, X11), input, OpenGL ES / WebGL, 2D, 3D, images, audio
 lib/web/       JavaScript glue embedded into web builds
+editors/       the VS Code extension (tools/vsix.py packages it)
 examples/      demos: lumen (2D), dunes (3D), shapes, cube, scene3d
 tests/         test programs with expected output (tools/runtests.py), render references
 bench/         benchmarks (Jot and equivalent C)
-tools/         bootstrap, test runner, render test, differential fuzzer, report, profiler,
-               instruction counter
+tools/         bootstrap, test runner, render test, differential fuzzer, language server test,
+               report, profiler, instruction counter
 ```
 
 Testing: `tools/runtests.py` runs the test programs in each mode (native/web, debug/release,

@@ -1,5 +1,7 @@
 # Shared compiler utilities: string interning, source files, diagnostics.
 
+use 'ide.jot'
+
 struct SrcFile:
     path: str
     dir: str
@@ -19,7 +21,9 @@ intern = (s: str) -> int: intern_sub(s, 0, len(s))
 
 # intern s[start..start + n] without allocating unless the name is new
 intern_sub = (s: str, start: int, n: int) -> int:
-    if name_tab.len() == 0: name_tab = fill(0, 1 << 14)
+    if name_tab.len() == 0:
+        name_tab = fill(0, 1 << 14)
+        intern_sub("", 0, 0)             # (name 0 is "": 0 stands for no name)
     p = data(s) + start
     h = hash_bytes(p, n)
     mask = name_tab.len() - 1
@@ -93,6 +97,7 @@ source_line = (p: int) -> str:
 
 # p < 0: no source position
 fatal = (p: int, msg: str):
+    if ide_on: ide_fatal(p, msg)
     if p < 0:
         eprint("error: {msg}")
         exit(1)
@@ -107,7 +112,9 @@ fatal = (p: int, msg: str):
         eprint("    {line}\n    {caret}^")
     exit(1)
 
-warn = (p: int, msg: str): eprint("{pos_str(p)}: warning: {msg}")
+warn = (p: int, msg: str):
+    if ide_on: ide_warn(p, msg)
+    else: eprint("{pos_str(p)}: warning: {msg}")
 
 ice = (msg: str):
     eprint("internal compiler error: {msg}")

@@ -6,6 +6,7 @@ use 'lex.jot'
 use 'ast.jot'
 use 'types.jot'
 use 'check.jot'
+use 'ide.jot'
 
 enum IN:
     none_, len, push, pop, insert, remove, clear, reserve, slice, syscall, memcpy, memset, sizeof,
@@ -792,6 +793,9 @@ resolve_fn_call = (n: int, name: int, decls: int[], args: int[], expected: int) 
             if int(nodes[decl].nlist2) > i: tp = "'{name_of(int(nodes[kid2(decl, i)].name))}'"
             fatal(nodes[n].pos, "cannot infer type parameter {tp} of '{name_of(name)}' from the arguments")
     f = get_fn_inst(decl, cd.binds, nodes[n].pos)
+    if ide_on:
+        if nodes[n].a != 0: ide_fn_ref(nodes[int(nodes[n].a)].pos, name, f)
+        ide_named_args(args, decl, IK_PARAM, fns[f].ptypes)
     fin: int[]
     loop i in [0..np):
         a = cd.args[i]
@@ -882,6 +886,10 @@ struct_ctor = (n: int, st_type: int, decl: int, args: int[], expected: int) -> i
     mapped: int[]
     err = map_args(pnames, hasdef, args, mapped)
     if len(err) > 0: fatal(nodes[n].pos, "in {name_of(int(nodes[decl].name))}(...): {err}")
+    if ide_on:
+        fts: int[]
+        loop i in [0..nf): fts.push(int(fields[int(structs[si].fields) + i].type))
+        ide_named_args(args, decl, IK_FIELD, fts)
     fin: int[]
     loop i in [0..nf):
         fi = int(structs[si].fields) + i
@@ -996,6 +1004,11 @@ collect_fns = (name: int, out: mut int[]):
     collect_in(prelude, name, out)
 
 call_by_name = (n: int, name: int, mod_scope: int, args: int[], expected: int, ufcs: bool) -> int:
+    if ide_sentinel != 0 and name == ide_sentinel:
+        if ufcs and args.len() > 0:
+            check_expr(args[0], 0)
+            ide_complete_members(ntype(args[0]))
+        ide_complete_names()
     ii = intrinsic_of(name)
     if ii >= 0 and intrinsics[ii].arr and args.len() > 0:
         a0 = args[0]
@@ -1003,7 +1016,9 @@ call_by_name = (n: int, name: int, mod_scope: int, args: int[], expected: int, u
             check_expr(a0, 0)
             add_flag(a0, NF_CHECKED)
         t0 = prune(ntype(a0))
-        if types[t0].kind == .array or types[t0].kind == .str_: return check_intrinsic(n, intrinsics[ii].id, args, expected)
+        if types[t0].kind == .array or types[t0].kind == .str_:
+            if ide_on: ide_builtin_ref(n, name)
+            return check_intrinsic(n, intrinsics[ii].id, args, expected)
     decls: int[]
     if not ufcs:
         s = 0
@@ -1011,6 +1026,7 @@ call_by_name = (n: int, name: int, mod_scope: int, args: int[], expected: int, u
         else: s = lookup(name)
         if s != 0:
             sk = syms[s].kind
+            if ide_on and (sk == .struct_ or sk == .type_ or sk == .enum_) and nodes[n].a != 0: ide_sym_ref(int(nodes[n].a), s)
             if sk == .local or sk == .global:
                 vt = 0
                 if sk == .local: vt = int(locals[int(syms[s].ref)].type)
@@ -1031,14 +1047,18 @@ call_by_name = (n: int, name: int, mod_scope: int, args: int[], expected: int, u
             else if sk == .const_ or sk == .module: fatal(nodes[n].pos, "'{name_of(name)}' is not a function")
             else if sk == .builtin:
                 collect_fns(name, decls)
-                if decls.len() == 0: return check_intrinsic(n, int(syms[s].ref) as IN, args, expected)
+                if decls.len() == 0:
+                    if ide_on: ide_builtin_ref(n, name)
+                    return check_intrinsic(n, int(syms[s].ref) as IN, args, expected)
     if mod_scope >= 0: collect_module(mod_scope, name, decls)
     else: collect_fns(name, decls)
     if ufcs and args.len() > 0:
         tm = module_of_type(ntype(args[0]))
         if tm >= 0: collect_module(tm, name, decls)
     if decls.len() == 0:
-        if ii >= 0 and not intrinsics[ii].arr: return check_intrinsic(n, intrinsics[ii].id, args, expected)
+        if ii >= 0 and not intrinsics[ii].arr:
+            if ide_on: ide_builtin_ref(n, name)
+            return check_intrinsic(n, intrinsics[ii].id, args, expected)
         if ii >= 0 and intrinsics[ii].arr and args.len() > 0: fatal(nodes[n].pos, "'{name_of(name)}' expects an array or string, found {type_str(ntype(args[0]))}")
         if ufcs:
             t0 = prune(ntype(args[0]))
@@ -1084,16 +1104,19 @@ check_call = (n: int, expected: int) -> int:
             if is_soa(at): return check_soa_method(n, args[0], int(nodes[callee].name), [], expected)
         return call_by_name(n, int(nodes[callee].name), -1, args, expected, false)
     if ck == .dotname:
+        if ide_sentinel != 0 and int(nodes[callee].name) == ide_sentinel: ide_complete_variants(expected)
         et = prune(expected)
         if expected != 0 and types[et].kind == .opt: et = prune(int(types[et].elem))
         if expected == 0 or types[et].kind != .enum_: fatal(nodes[callee].pos, "cannot infer the enum type for '.{name_of(int(nodes[callee].name))}'")
         vi = find_variant(int(types[et].st), int(nodes[callee].name))
         if vi < 0: fatal(nodes[callee].pos, "{type_str(et)} has no variant '{name_of(int(nodes[callee].name))}'")
+        if ide_on: ide_variant_ref(nodes[callee].pos, int(nodes[callee].name), et, vi)
         return variant_ctor(n, et, vi, args)
     if ck == .field:
         recv = int(nodes[callee].a)
         rt = prune(check_expr(recv, 0))
         fname = int(nodes[callee].name)
+        if ide_sentinel != 0 and fname == ide_sentinel: ide_complete_members(rt)
         rk = types[rt].kind
         if rk == .module: return call_by_name(n, fname, int(types[rt].mod), args, expected, false)
         if rk == .typeval:
@@ -1101,6 +1124,7 @@ check_call = (n: int, expected: int) -> int:
             if tt != 0 and types[tt].kind == .enum_:
                 vi = find_variant(int(types[tt].st), fname)
                 if vi < 0: fatal(nodes[callee].pos, "{type_str(tt)} has no variant '{name_of(fname)}'")
+                if ide_on: ide_variant_ref(nodes[callee].pos, fname, tt, vi)
                 return variant_ctor(n, tt, vi, args)
             fatal(nodes[callee].pos, "type {type_str(tt)} has no member '{name_of(fname)}'")
         if is_soa(rt): return check_soa_method(n, recv, fname, args, expected)
@@ -1112,6 +1136,7 @@ check_call = (n: int, expected: int) -> int:
             loop i in [0..int(structs[si].nfields)):
                 fi = int(structs[si].fields) + i
                 if int(fields[fi].name) == fname and (tkind(int(fields[fi].type)) == .fn_ or tkind(int(fields[fi].type)) == .cfn):
+                    if ide_on: ide_field_ref(nodes[callee].pos, fname, int(structs[si].decl), i, int(fields[fi].type))
                     check_expr(callee, 0)
                     return value_call(n, callee, args)
         # uniform call syntax
@@ -1516,6 +1541,21 @@ op_overload = (n: int, opname: str) -> int:
     if decls.len() == 0: return 0
     a = int(nodes[n].a)
     b = int(nodes[n].b)
+    # (only overloads the operands could be given to: otherwise the operator is just undefined
+    # for these types, which says more than why some unrelated overload does not fit)
+    ops = [a]
+    if b != 0: ops.push(b)
+    fit: int[]
+    loop d in decls:
+        if nkids(d) != ops.len(): continue
+        sig = fn_sig(d)
+        binds = fill(0, int(sig.ntp))
+        ok = true
+        loop i in 0.. and x in ops:
+            if arg_cost(x, sig.params[i], binds) < 0: ok = false
+        if ok: fit.push(d)
+    if fit.len() == 0: return 0
+    decls = fit
     add_flag(a, NF_CHECKED)
     args = [a]
     if b != 0:
@@ -2062,9 +2102,11 @@ check_expr = (n: int, expected: int) -> int:
         else: t = T_NULL
     else if k == .ident:
         nm = int(nodes[n].name)
+        if ide_sentinel != 0 and nm == ide_sentinel: ide_complete_names()
         s = lookup(nm)
         if s == 0: fatal(nodes[n].pos, "unknown name '{name_of(nm)}'{suggestion(name_of(nm), visible_names())}")
         sk = syms[s].kind
+        if ide_on and sk != .fns: ide_sym_ref(n, s)
         nodes[n].aux = i32(int(sk))
         if sk == .local:
             l0 = int(syms[s].ref)
@@ -2095,7 +2137,9 @@ check_expr = (n: int, expected: int) -> int:
             last_checked = n
             return ntype(n)
         else if sk == .fns:
+            fpos = nodes[n].pos
             t = fn_value(n, expected)
+            if ide_on: ide_fn_ref(fpos, nm, int(nodes[n].sym))
             last_checked = n
             return t
         else if sk == .struct_ or sk == .enum_:
@@ -2124,6 +2168,7 @@ check_expr = (n: int, expected: int) -> int:
                 return check_expr(n, expected)
         bt = prune(check_expr(int(nodes[n].a), 0))
         fname = int(nodes[n].name)
+        if ide_sentinel != 0 and fname == ide_sentinel: ide_complete_members(bt)
         bk = types[bt].kind
         if bk == .module:
             m = int(types[bt].mod)
@@ -2139,6 +2184,7 @@ check_expr = (n: int, expected: int) -> int:
                 vi = find_variant(int(types[tt].st), fname)
                 if vi < 0: fatal(nodes[n].pos, "{type_str(tt)} has no variant '{name_of(fname)}'")
                 if variants[int(structs[int(types[tt].st)].variants) + vi].nfields != 0: fatal(nodes[n].pos, "variant '{name_of(fname)}' needs arguments")
+                if ide_on: ide_variant_ref(nodes[n].pos, fname, tt, vi)
                 nodes[n].kind = .dotname
                 nodes[n].aux = i32(vi)
                 nodes[n].a = 0
@@ -2150,6 +2196,7 @@ check_expr = (n: int, expected: int) -> int:
             t = targ(bt, nodes[n].ival)
         else if bk == .vec:
             t = check_swizzle(n, bt)
+            if ide_on: ide_ref(nodes[n].pos, fname, IK_FIELD, 0, t, 0)
         else:
             st = bt
             if bk == .ptr: st = prune(int(types[bt].elem))
@@ -2162,6 +2209,7 @@ check_expr = (n: int, expected: int) -> int:
                 if fi >= 0:
                     nodes[n].aux = i32(fi)
                     t = int(fields[int(structs[si].fields) + fi].type)
+                    if ide_on: ide_field_ref(nodes[n].pos, fname, int(structs[si].decl), fi, t)
                     if path_narrows > 0 and not no_path_narrow and bk == .struct_:
                         al = path_alias(n)
                         if al >= 0:
@@ -2174,12 +2222,14 @@ check_expr = (n: int, expected: int) -> int:
                     loop i in [0..int(structs[si].nfields)): cands.push(int(fields[int(structs[si].fields) + i].name))
                 fatal(nodes[n].pos, "{type_str(bt)} has no field '{name_of(fname)}'{suggestion(name_of(fname), cands)}")
     else if k == .dotname:
+        if ide_sentinel != 0 and int(nodes[n].name) == ide_sentinel: ide_complete_variants(ex)
         et = ex
         if et != 0 and exk == .opt: et = prune(int(types[et].elem))
         if et == 0 or types[et].kind != .enum_: fatal(nodes[n].pos, "cannot infer the enum type for '.{name_of(int(nodes[n].name))}'")
         vi = find_variant(int(types[et].st), int(nodes[n].name))
         if vi < 0: fatal(nodes[n].pos, "{type_str(et)} has no variant '{name_of(int(nodes[n].name))}'")
         if variants[int(structs[int(types[et].st)].variants) + vi].nfields != 0: fatal(nodes[n].pos, "variant '{name_of(int(nodes[n].name))}' needs arguments")
+        if ide_on: ide_variant_ref(nodes[n].pos, int(nodes[n].name), et, vi)
         nodes[n].aux = i32(vi)
         t = et
     else if k == .call:

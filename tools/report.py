@@ -104,6 +104,8 @@ for label, args in [("native, debug", []), ("native, release", ["--release"]),
     r = run(cmd)
     last = (r.stdout.strip().splitlines() or ["?"])[-1]
     say(f"| {label} | {last} |")
+r = run(["python3", "tools/lsptest.py", JOT], timeout=300)
+say(f"| language server (`jot lsp`, driven as an editor would) | {(r.stdout.strip().splitlines() or ['?'])[-1]} |")
 r = run(["python3", "tools/rendertest.py"], timeout=1200)
 say(f"| rendering (software renderer vs references; also on the GPU when there is a display) | {(r.stdout.strip().splitlines() or ['?'])[-1]} |")
 if not QUICK:

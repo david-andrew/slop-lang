@@ -1,0 +1,620 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Jot",
+  "scopeName": "source.jot",
+  "patterns": [
+    {
+      "include": "#statement"
+    }
+  ],
+  "repository": {
+    "statement": {
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#declaration"
+        },
+        {
+          "include": "#expression"
+        }
+      ]
+    },
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.jot",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "declaration": {
+      "patterns": [
+        {
+          "begin": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)(\\[[^\\]]*\\])?\\s*(:)",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.jot"
+            },
+            "2": {
+              "name": "entity.name.type.jot"
+            },
+            "3": {
+              "patterns": [
+                {
+                  "include": "#type-params"
+                }
+              ]
+            },
+            "4": {
+              "name": "punctuation.separator.jot"
+            }
+          },
+          "end": "$",
+          "patterns": [
+            {
+              "include": "#comment"
+            },
+            {
+              "include": "#number"
+            },
+            {
+              "name": "constant.other.enum.jot",
+              "match": "[A-Za-z_][A-Za-z0-9_]*"
+            },
+            {
+              "include": "#operator"
+            },
+            {
+              "include": "#bracket"
+            }
+          ]
+        },
+        {
+          "match": "\\b(struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.jot"
+            },
+            "2": {
+              "name": "entity.name.type.jot"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(type)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*(\\[[^\\]]*\\])?\\s*=)",
+          "captures": {
+            "1": {
+              "name": "storage.type.jot"
+            },
+            "2": {
+              "name": "entity.name.type.jot"
+            }
+          }
+        },
+        {
+          "match": "\\b(const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.jot"
+            },
+            "2": {
+              "name": "variable.other.constant.jot"
+            }
+          }
+        },
+        {
+          "match": "\\b(extern)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.jot"
+            },
+            "2": {
+              "name": "entity.name.function.jot"
+            }
+          }
+        },
+        {
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(\\[[^\\]]*\\])?\\s*(=)\\s*(?=\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\)\\s*(->|:))",
+          "captures": {
+            "1": {
+              "name": "entity.name.function.jot"
+            },
+            "2": {
+              "patterns": [
+                {
+                  "include": "#type-params"
+                }
+              ]
+            },
+            "3": {
+              "name": "keyword.operator.assignment.jot"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(use|import)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.jot"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(test)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.other.test.jot"
+            }
+          }
+        },
+        {
+          "match": "^(build)(?=\\s*:)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.build.jot"
+            }
+          }
+        },
+        {
+          "match": "(@)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.decorator.jot"
+            },
+            "2": {
+              "name": "entity.name.function.decorator.jot"
+            }
+          }
+        }
+      ]
+    },
+    "type-params": {
+      "patterns": [
+        {
+          "name": "entity.name.type.parameter.jot",
+          "match": "[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "expression": {
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#keyword"
+        },
+        {
+          "include": "#type"
+        },
+        {
+          "include": "#parameter"
+        },
+        {
+          "include": "#call"
+        },
+        {
+          "include": "#variant"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#bracket"
+        }
+      ]
+    },
+    "bracket": {
+      "patterns": [
+        {
+          "begin": "\\(",
+          "end": "\\)",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.parenthesis.begin.jot"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.parenthesis.end.jot"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#expression"
+            }
+          ]
+        },
+        {
+          "begin": "\\[",
+          "end": "\\]",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.list.begin.jot"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.list.end.jot"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#expression"
+            }
+          ]
+        },
+        {
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.dict.begin.jot"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.dict.end.jot"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#expression"
+            }
+          ]
+        }
+      ]
+    },
+    "string": {
+      "patterns": [
+        {
+          "name": "string.quoted.raw.jot",
+          "begin": "r\"\"\"",
+          "end": "\"\"\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.jot"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.jot"
+            }
+          },
+          "patterns": []
+        },
+        {
+          "name": "string.quoted.raw.jot",
+          "begin": "r\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.jot"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.jot"
+            }
+          },
+          "patterns": []
+        },
+        {
+          "name": "string.quoted.triple.jot",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.jot"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.jot"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.jot",
+              "match": "\\\\(x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]+\\}|.)"
+            },
+            {
+              "name": "constant.character.escape.jot",
+              "match": "\\{\\{|\\}\\}"
+            },
+            {
+              "name": "meta.interpolation.jot",
+              "begin": "\\{",
+              "end": "(:[^{}\\\"']*)?\\}",
+              "beginCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.begin.jot"
+                }
+              },
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.end.jot"
+                },
+                "1": {
+                  "name": "storage.modifier.format.jot"
+                }
+              },
+              "contentName": "source.jot",
+              "patterns": [
+                {
+                  "include": "#expression"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.jot",
+          "begin": "\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.jot"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.jot"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.jot",
+              "match": "\\\\(x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]+\\}|.)"
+            },
+            {
+              "name": "constant.character.escape.jot",
+              "match": "\\{\\{|\\}\\}"
+            },
+            {
+              "name": "meta.interpolation.jot",
+              "begin": "\\{",
+              "end": "(:[^{}\\\"']*)?\\}",
+              "beginCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.begin.jot"
+                }
+              },
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.end.jot"
+                },
+                "1": {
+                  "name": "storage.modifier.format.jot"
+                }
+              },
+              "contentName": "source.jot",
+              "patterns": [
+                {
+                  "include": "#expression"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.jot",
+          "begin": "'",
+          "end": "'",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.jot"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.jot"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.jot",
+              "match": "\\\\(x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]+\\}|.)"
+            },
+            {
+              "name": "constant.character.escape.jot",
+              "match": "\\{\\{|\\}\\}"
+            },
+            {
+              "name": "meta.interpolation.jot",
+              "begin": "\\{",
+              "end": "(:[^{}\\\"']*)?\\}",
+              "beginCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.begin.jot"
+                }
+              },
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.end.jot"
+                },
+                "1": {
+                  "name": "storage.modifier.format.jot"
+                }
+              },
+              "contentName": "source.jot",
+              "patterns": [
+                {
+                  "include": "#expression"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.jot",
+          "match": "\\b0[xX][0-9A-Fa-f_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.jot",
+          "match": "\\b0[bB][01_]+\\b"
+        },
+        {
+          "match": "\\b(\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?)([A-Za-z_\\u00b5\\u00b0]+)?",
+          "captures": {
+            "1": {
+              "name": "constant.numeric.jot"
+            },
+            "2": {
+              "name": "keyword.other.unit.jot"
+            }
+          }
+        }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "name": "keyword.control.jot",
+          "match": "\\b(if|else|loop|in|break|continue|return|match|when|defer|pass)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.jot",
+          "match": "\\b(and|or|not|xor|is|as)\\b"
+        },
+        {
+          "name": "storage.modifier.jot",
+          "match": "\\b(mut|let|soa)\\b"
+        },
+        {
+          "name": "storage.type.jot",
+          "match": "\\b(struct|enum|type|const|extern)\\b"
+        },
+        {
+          "name": "keyword.control.import.jot",
+          "match": "\\b(use|import)\\b"
+        },
+        {
+          "name": "constant.language.jot",
+          "match": "\\b(true|false|none|null)\\b"
+        },
+        {
+          "name": "variable.language.jot",
+          "match": "\\b(TARGET|DEBUG)\\b"
+        },
+        {
+          "name": "variable.language.hole.jot",
+          "match": "\\b_\\b"
+        }
+      ]
+    },
+    "type": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.jot",
+          "match": "\\b(int|i8|i16|i32|i64|u8|u16|u32|u64|byte|f32|f64|bool|str|void|never|vec2|vec3|vec4|ivec2|mat4|cfn)\\b(?!\\s*\\()"
+        },
+        {
+          "name": "entity.name.type.jot",
+          "match": "\\b[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "parameter": {
+      "patterns": [
+        {
+          "match": "(?<=[(,]|^)\\s*(mut\\s+)?(?!(?:_|if|else|loop|match|when|defer|test|build|struct|enum|return|in|and|or|not)\\b)([A-Za-z_][A-Za-z0-9_]*)\\s*(?=:(?!=))",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.jot"
+            },
+            "2": {
+              "name": "variable.parameter.jot"
+            }
+          }
+        }
+      ]
+    },
+    "call": {
+      "patterns": [
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(\\.)?(?=\\()",
+          "captures": {
+            "1": {
+              "name": "entity.name.function.call.jot"
+            },
+            "2": {
+              "name": "keyword.operator.broadcast.jot"
+            }
+          }
+        }
+      ]
+    },
+    "variant": {
+      "patterns": [
+        {
+          "match": "(?<![\\w)\\]}\\\"'])(\\.)([a-z_][A-Za-z0-9_]*)\\b(?!\\s*\\()",
+          "captures": {
+            "1": {
+              "name": "punctuation.accessor.jot"
+            },
+            "2": {
+              "name": "constant.other.enum.jot"
+            }
+          }
+        }
+      ]
+    },
+    "operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.jot",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.range.jot",
+          "match": "\\.\\.\\.?"
+        },
+        {
+          "name": "keyword.operator.broadcast.jot",
+          "match": "\\.(\\*\\*|[-+*/%^<>=!&|]=?|==)"
+        },
+        {
+          "name": "keyword.operator.comparison.jot",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.assignment.compound.jot",
+          "match": "(\\+|-|\\*|/|%|&|\\||\\^|<<|>>)="
+        },
+        {
+          "name": "keyword.operator.assignment.jot",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.optional.jot",
+          "match": "\\?\\?|\\?|!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.jot",
+          "match": "\\*\\*|[-+*/%]|<<|>>|[&|^~]"
+        },
+        {
+          "name": "punctuation.accessor.jot",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.separator.jot",
+          "match": "[,;:]"
+        }
+      ]
+    }
+  }
+}

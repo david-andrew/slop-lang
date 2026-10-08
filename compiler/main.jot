@@ -19,9 +19,11 @@ use 'inline.jot'
 use 'x64.jot'
 use 'elf.jot'
 use 'wasm.jot'
+use 'ide.jot'
+use 'lsp.jot'
 
 usage = ():
-    eprint("usage: jot [--web] [--release] file.jot [args...]   (--web: build for the browser and open it there)\n       jot test file.jot\n       jot check file.jot\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
+    eprint("usage: jot [--web] [--release] file.jot [args...]   (--web: build for the browser and open it there)\n       jot test file.jot\n       jot check file.jot\n       jot lsp   (a language server for editors, on standard input and output)\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
     exit(2)
 
 find_lib_dir = () -> str:
@@ -51,7 +53,7 @@ build_output = ""
 cli_target = ""
 
 scan_build_block = (path: str):
-    src = read_file(path) ?? ""
+    src = read_source(path) ?? ""
     # find a top-level `build:` line, then read its indented lines
     at = -1
     if starts_with(src, "build:"): at = 0
@@ -83,7 +85,10 @@ scan_build_block = (path: str):
                 exit(1)
             opt_release = val == "release"
 
+lower_only = false      # (the language server: what lowering finds wrong, without code)
+
 emit_function = ():
+    if lower_only: return
     if dump: dump_ir()
     if target_wasm: wasm_collect()
     else: x64_function()
@@ -109,6 +114,7 @@ compile = (path: str, out0: str) -> str:
     t0 = time()
     scan_build_block(path)
     if cli_release: opt_release = true
+    if lower_only: opt_release = false
     tgt = build_target
     if len(cli_target) > 0: tgt = cli_target
     target_wasm = tgt == "wasm"
@@ -117,6 +123,8 @@ compile = (path: str, out0: str) -> str:
     if target_wasm and not ends_with(out, ".html"): out = out + ".html"
     init_types()
     check_program(path)
+    # (functions left unchecked after errors in them cannot be lowered)
+    if lower_only and ide_skip.len() > 0: return ""
     t1 = time()
     roots: int[]
     loop f in init_fns: roots.push(lf_of_inst(f))
@@ -149,7 +157,7 @@ compile = (path: str, out0: str) -> str:
                                 lf_of_inst(f)
             if lfuncs[i].kind == LK_INST and fns[lfuncs[i].inst].decl != 0 and has_flag(int(fns[lfuncs[i].inst].decl), NF_EXTERN):
                 fi = lfuncs[i].inst
-                if target_wasm:
+                if target_wasm or lower_only:
                     i += 1
                     continue
                 if len(fns[fi].clib) == 0: fatal(nodes[int(fns[fi].decl)].pos, "extern functions need @lib(\"library.so\") on native targets")
@@ -177,6 +185,7 @@ compile = (path: str, out0: str) -> str:
         if opt_release: rel_collect()
         else: emit_function()
         break
+    if lower_only: return ""
     if opt_release: release_pipeline()
     t2 = time()
     ok = false
@@ -228,6 +237,9 @@ main = ():
             out = path
             if ends_with(out, ".jot"): out = out[..len(out) - 4)
         if len(compile(path, out)) == 0: exit(1)
+        return
+    if a[1] == "lsp":
+        lsp_main()
         return
     if a[1] == "check":
         # type check only
