@@ -108,7 +108,7 @@ r = run(["python3", "tools/rendertest.py"], timeout=1200)
 say(f"| rendering (software renderer vs references; also on the GPU when there is a display) | {(r.stdout.strip().splitlines() or ['?'])[-1]} |")
 if not QUICK:
     r = run(["python3", "tools/fuzz.py", "60"], timeout=3000)
-    say(f"| differential fuzzing: random programs built 4 ways + by the C bootstrap compiler | {(r.stdout.strip().splitlines() or ['?'])[-1]} |")
+    say(f"| differential fuzzing: random programs (unions, closures, soa, n-D arrays...) built 4 ways (+ the C bootstrap compiler for its subset) | {(r.stdout.strip().splitlines() or ['?'])[-1]} |")
 say()
 
 # ---------------- compile speed ----------------
@@ -188,6 +188,25 @@ if ratios:
     geo **= 1.0 / len(ratios)
     say()
     say(f"Geometric mean, Jot release / C -O2: **{fmt_ratio(geo)}**.")
+say()
+say("Hot loops of a game (`bench/loops`): nanoseconds per element, Jot release vs C -O2 (the C dotted "
+    "expression also makes a new array each time):")
+say()
+say("| loop | C -O2 | Jot release | ratio |")
+say("|---|---|---|---|")
+run(["gcc", "-O2", "-o", f"{BUILD}/loops_c", "bench/loops/loops.c", "-lm"])
+run([JOT, "build", "bench/loops/loops.jot", "-o", f"{BUILD}/loops_j"])
+def loop_times(exe):
+    best = {}
+    for _ in range(3):
+        for line in run([exe]).stdout.splitlines():
+            k, v = line.split()
+            if k != "check": best[k] = min(best.get(k, 1e9), float(v))
+    return best
+lc = loop_times(f"{BUILD}/loops_c")
+lj = loop_times(f"{BUILD}/loops_j")
+for k in lc:
+    if k in lj: say(f"| {k.replace('_', ' ')} | {lc[k]:.2f} ns | {lj[k]:.2f} ns | {fmt_ratio(lj[k] / lc[k])} |")
 say()
 
 # ---------------- parallelism ----------------
@@ -273,8 +292,8 @@ say()
 say("## 9. Games (native, OpenGL ES 3)")
 say()
 if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
-    say("| game | mode | frame CPU time (update + draw + submit) | screenshot |")
-    say("|---|---|---|---|")
+    say("| game | mode | frame CPU time (update + draw + submit) | pixels, how frames reach the screen | screenshot |")
+    say("|---|---|---|---|---|")
     for g in ["lumen", "dunes"]:
         for mode in ["debug", "release"]:
             exe = f"{BUILD}/{g}_{mode}"
@@ -283,8 +302,9 @@ if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
             env = dict(ENV, JOT_FRAMES="240", JOT_SCREENSHOT=png, JOT_FRAME_STATS="1")
             r = run([exe], env=env, timeout=120)
             m = re.search(r"frame cpu: ([\d.]+) ms", r.stderr)
+            how = re.search(r"ms; (.*)$", r.stderr.strip())
             ncol = png_colors(png) if os.path.exists(png) else 0
-            say(f"| {g} | {mode} | {m.group(1) + ' ms' if m else 'n/a'} | {ncol} colors |")
+            say(f"| {g} | {mode} | {m.group(1) + ' ms' if m else 'n/a'} | {how.group(1) if how else 'n/a'} | {ncol} colors |")
 else:
     say("(no display: skipped)")
 say()
@@ -312,7 +332,7 @@ for g in ["cube", "lumen", "dunes"]:
     diff = "n/a (no display for the GPU frame)"
     if has_display:
         gpu_png = f"{BUILD}/{g}_gpu.png"
-        run([exe], env=dict(ENV, JOT_FRAMES="60", JOT_SCREENSHOT=gpu_png), timeout=120)
+        run([exe], env=dict(ENV, JOT_FRAMES="60", JOT_SCREENSHOT=gpu_png, JOT_SCALE="1"), timeout=120)
         if os.path.exists(soft_png) and os.path.exists(gpu_png):
             d = png_diff(soft_png, gpu_png)
             diff = f"{d:.2f}" if d is not None else "size mismatch"
