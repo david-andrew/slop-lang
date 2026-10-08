@@ -1288,6 +1288,13 @@ fn gen_swizzle(e: int) -> Val:
     for i in 0..len(nm): e_store(d, 4 * i, e_load(ty, pa, 4 * swizzle_index(nm[i]), mode), mode)
     Val(d, true, s)
 
+fn data_writable(e: int) -> bool:
+    if nodes[e].aux == i32(int(SK.global)): return true
+    if nodes[e].aux != i32(int(SK.local)): return false
+    f := int(locals[int(nodes[e].sym)].flags)
+    if f & (LF_CAPTURE | LF_BYREF | LF_ALIAS) != 0: return false
+    f & LF_PARAM == 0 or f & LF_MUTPARAM != 0
+
 # ---------------- intrinsics ----------------
 fn gen_intrinsic(e: int) -> Val:
     id := nodes[e].aux as IN
@@ -1500,6 +1507,13 @@ fn gen_intrinsic(e: int) -> Val:
         if not pl.mem: e_mov(pl.v, e_load(VI, sa, 0, ptr_size))
         return V(-1, false)
     if id == .arrdata:
+        # a raw pointer into a variable's array may be written through: give the variable its own
+        # copy first (a literal, or a shared one, must not change)
+        a0 := args[0]
+        at := prune(ntype(a0))
+        if types[at].kind == .array and nodes[a0].kind == .ident and data_writable(a0):
+            pl := gen_place(a0, true)
+            arr_unique(pl, at)
         p := gen_borrowed(args[0]).v
         r := vreg(VI)
         e_mov(r, e_iconst(0))

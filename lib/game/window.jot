@@ -264,6 +264,7 @@ else:
     __xev: *u8 = null
     __xscr: i32 = 0
     __xproto := false             # connected through x11.jot instead of libX11
+    __wayland := false            # connected through wayland.jot
 
     # a missing display or driver is an environment problem, not a program bug: say so and exit
     fn __need(ok: bool, what: str):
@@ -274,6 +275,20 @@ else:
     fn __platform_open():
         __soft = (env("JOT_SOFTWARE") ?? "") == "1"
         headless := __soft and env("JOT_SCREENSHOT") != none
+        # Wayland first where it is running (JOT_PLATFORM=x11 or wayland chooses)
+        plat := env("JOT_PLATFORM") ?? ""
+        if plat != "x11" and (env("WAYLAND_DISPLAY") != none or plat == "wayland") and not headless:
+            why := __wl_open(__win_title, __win_w, __win_h)
+            if len(why) == 0:
+                __wayland = true
+                if not __soft:
+                    why2 := __egl_open_surfaceless()
+                    if len(why2) > 0:
+                        eprint("note: {why2}; using the software renderer")
+                        __soft = true
+                if __soft: __sw_init_window(__win_w, __win_h)
+                return
+            if plat == "wayland": __need(false, why)
         if not lib_available("libX11.so.6") or (env("JOT_X11") ?? "") == "protocol":
             # no Xlib: talk to the X server directly and render in software
             __soft = true
@@ -307,10 +322,32 @@ else:
         if __soft: __sw_init_window(__win_w, __win_h)
 
     fn __platform_title():
-        if __xproto: __xp_property(39, 31, 8, bytes(__win_title))         # WM_NAME, STRING
+        if __wayland: __wl_set_title(__win_title)
+        else if __xproto: __xp_property(39, 31, 8, bytes(__win_title))         # WM_NAME, STRING
         else if __xdpy != null:
             XStoreName(__xdpy, __xwin, data(__zstr(__win_title)))
             XFlush(__xdpy)
+
+    # OpenGL ES without a window surface: drawing goes to an offscreen framebuffer that is
+    # copied into the Wayland window's buffers
+    fn __egl_open_surfaceless() -> str:
+        if not lib_available("libEGL.so.1") or not lib_available("libGLESv2.so.2"): return "no OpenGL ES driver (libEGL/libGLESv2) found"
+        __egl_dpy = eglGetPlatformDisplay(0x31DD, null, null)        # EGL_PLATFORM_SURFACELESS_MESA
+        if __egl_dpy == null: return "no surfaceless EGL display"
+        maj: i32 = 0
+        mn: i32 = 0
+        if eglInitialize(__egl_dpy, &maj, &mn) == 0: return "eglInitialize failed"
+        eglBindAPI(0x30A0)
+        attrs: [i32] = [0x3033, 0, 0x3040, 0x40, 0x3038]               # any surface type; ES3
+        cfg: *u8 = null
+        n: i32 = 0
+        if eglChooseConfig(__egl_dpy, data(attrs), &cfg, 1, &n) == 0 or n == 0: return "no suitable EGL config"
+        cattrs: [i32] = [0x3098, 3, 0x30FB, 0, 0x3038]
+        ctx := eglCreateContext(__egl_dpy, cfg, null, data(cattrs))
+        if ctx == null: return "eglCreateContext failed (OpenGL ES 3 needed)"
+        if eglMakeCurrent(__egl_dpy, null, null, ctx) == 0: return "the GL driver cannot render without a window surface"
+        __gl_screen_resize(__win_w, __win_h)
+        ""
 
     # set up OpenGL ES on the window; returns why that is impossible, or ""
     fn __egl_open() -> str:
@@ -403,6 +440,9 @@ else:
             _: 0
 
     fn __platform_poll():
+        if __wayland:
+            __wl_poll()
+            return
         if __xproto:
             __xp_poll()
             return
@@ -442,7 +482,10 @@ else:
                 for mut kd in __key_down: kd = false
 
     fn __platform_present():
-        if __soft: __sw_present()
+        if __wayland:
+            if __soft: __wl_present(fn(out: *u8, w: int, h: int): __sw_present_pixels(out, w, h))
+            else: __wl_present(fn(out: *u8, w: int, h: int): __gl_screen_copy(out, w, h))
+        else if __soft: __sw_present()
         else: eglSwapBuffers(__egl_dpy, __egl_surf)
 
     fn __game_run(update: fn(float), draw: fn()):
@@ -456,6 +499,7 @@ else:
             last = now
             if __fixed_step: dt = 1.0 / 60.0
             if __soft: __sw_init_window(__win_w, __win_h)
+            else if __wayland: __gl_screen_resize(__win_w, __win_h)
             __run_frame(dt, update, draw)
             __platform_present()
             # without vsync, software frames are paced to 60 per second

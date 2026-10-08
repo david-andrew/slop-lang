@@ -519,7 +519,51 @@ else:
         if __soft:
             sgl_bind_framebuffer(f)
             return
+        # without a window surface (Wayland), framebuffer 0 is an offscreen one that is copied out
+        if f == 0 and __screen_fbo != 0:
+            __glBindFramebuffer(target, u32(__screen_fbo))
+            return
         __glBindFramebuffer(target, f)
+
+    __screen_fbo := 0
+    __screen_rb: [u32] = [0, 0]
+    __screen_w := 0
+    __screen_h := 0
+
+    # (re)size the offscreen stand-in for the window's framebuffer
+    fn __gl_screen_resize(w: int, h: int):
+        if __screen_fbo != 0 and __screen_w == w and __screen_h == h: return
+        if __screen_fbo == 0:
+            id: u32 = 0
+            __glGenFramebuffers(1, &id)
+            __screen_fbo = int(id)
+            __glGenRenderbuffers(2, data(__screen_rb))
+        __glBindRenderbuffer(GL_RENDERBUFFER, __screen_rb[0])
+        __glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, i32(w), i32(h))
+        __glBindRenderbuffer(GL_RENDERBUFFER, __screen_rb[1])
+        __glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, i32(w), i32(h))
+        __glBindFramebuffer(GL_FRAMEBUFFER, u32(__screen_fbo))
+        __glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, __screen_rb[0])
+        __glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, __screen_rb[1])
+        __screen_w = w
+        __screen_h = h
+
+    # copy the offscreen framebuffer into 32-bit BGRX pixels, top row first
+    __screen_tmp: [u8]
+    fn __gl_screen_copy(out: *u8, w: int, h: int):
+        if __screen_tmp.len() != w * h * 4: __screen_tmp = [u8(0); w * h * 4]
+        __glBindFramebuffer(GL_FRAMEBUFFER, u32(__screen_fbo))
+        __glReadPixels(0, 0, i32(w), i32(h), GL_RGBA, GL_UNSIGNED_BYTE, data(__screen_tmp))
+        src := data(__screen_tmp)
+        parallel_range(h, fn(r: int):
+            s := src + (h - 1 - r) * w * 4
+            d := out + r * w * 4
+            for k in 0..w:
+                d[k * 4] = s[k * 4 + 2]
+                d[k * 4 + 1] = s[k * 4 + 1]
+                d[k * 4 + 2] = s[k * 4]
+                d[k * 4 + 3] = 255
+        )
     fn glFramebufferTexture2D(target: u32, attachment: u32, textarget: u32, tex: u32, level: i32):
         if __soft:
             sgl_framebuffer_texture(attachment, tex)
