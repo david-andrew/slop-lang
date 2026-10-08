@@ -111,6 +111,9 @@ fn log(x: float) -> float
 fn log2(x: float) -> float
 fn log10(x: float) -> float
 fn pow(x: float, y: float) -> float
+fn exp(x: f32) -> f32    # f32 versions (shader code, games): computed in double with shorter polynomials, so they are within an ulp of the f32 result at a fraction of the cost of the full-precision ones
+fn log(x: f32) -> f32
+fn pow(x: f32, y: f32) -> f32
 fn pow(x: int, n: int) -> int
 fn hypot(x: float, y: float) -> float
 fn radians(deg: float) -> float
@@ -543,7 +546,7 @@ fn mesh[V](vertices: [V], indices: [u32] = [], mode: int = GL_TRIANGLES) -> Mesh
 fn update_mesh[V](m: mut Mesh, vertices: [V])
 fn draw[U](sh: Shader, m: Mesh, params: U)    # draw a mesh with a shader; `params` is the uniforms struct the shader functions take
 fn draw_instanced[U, I](sh: Shader, m: mut Mesh, instances: [I], params: U)    # draw many copies of a mesh in one call; `instances` holds the per-instance shader input
-fn sample(t: Texture, uv: vec2) -> vec4    # texture lookup inside shader functions (maps to GLSL texture()); on the CPU it returns white
+fn sample(t: Texture, uv: vec2) -> vec4    # texture lookup inside shader functions (maps to GLSL texture()); outside the software renderer, calling it on the CPU returns white
 fn fract(v: vec2) -> vec2
 fn step(edge: f32, x: f32) -> f32
 ```
@@ -565,6 +568,46 @@ fn load_image(file: [u8]) -> Image    # load an image from an embedded file: loa
 fn encode_png(img: Image) -> [u8]
 fn save_png(img: Image, path: str) -> bool
 fn screenshot() -> Image    # read the current framebuffer into an image
+```
+
+### softgl.jot
+
+Software rendering: a CPU implementation of the part of OpenGL ES the game library uses,  
+for machines without a GPU driver (or with JOT_SOFTWARE=1). Shaders written in Jot run as  
+the compiled Jot functions they are; triangles are rasterized in horizontal bands on all  
+cores. Frames are rendered at a reduced internal resolution and scaled up on screen.  
+
+```
+fn soft_rendering() -> bool
+fn sgl_clear_color(r: f32, g: f32, b: f32, a: f32)
+fn sgl_clear(mask: u32)
+fn sgl_viewport(x: i32, y: i32, w: i32, h: i32)
+fn sgl_scissor(x: i32, y: i32, w: i32, h: i32)
+fn sgl_enable(cap: u32, on: bool)
+fn sgl_blend_func(s: u32, d: u32, sa: u32, da: u32)
+fn sgl_depth_func(f: u32)
+fn sgl_depth_mask(on: u32)
+fn sgl_color_mask(r: u32, g: u32, b: u32, a: u32)
+fn sgl_cull_face(mode: u32)
+fn sgl_create_buffer() -> int
+fn sgl_bind_buffer(target: u32, b: u32)
+fn sgl_buffer_data(target: u32, size: int, p: *u8)
+fn sgl_buffer_sub_data(target: u32, off: int, size: int, p: *u8)
+fn sgl_create_texture() -> int
+fn sgl_active_texture(unit: u32)
+fn sgl_bind_texture(t: u32)
+fn sgl_tex_image(w: int, h: int, format: int, ty: int, pixels: *u8)
+fn sgl_tex_sub_image(x: int, y: int, w: int, h: int, format: int, ty: int, pixels: *u8)
+fn sgl_tex_parameter(pname: u32, v: i32)
+fn sgl_create_framebuffer() -> int
+fn sgl_bind_framebuffer(f: u32)
+fn sgl_framebuffer_texture(attachment: u32, tex: u32)
+fn sgl_create_renderbuffer() -> int
+fn sgl_bind_renderbuffer(r: u32)
+fn sgl_renderbuffer_storage(w: i32, h: i32)
+fn sgl_framebuffer_renderbuffer(attachment: u32, r: u32)
+fn sgl_create_program() -> int
+fn sgl_read_pixels(x: int, y: int, w: int, h: int, out: *u8)    # read the window (or bound target) as RGBA bytes, bottom row first, scaled to w x h
 ```
 
 ### vmath.jot

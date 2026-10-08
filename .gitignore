@@ -6,3 +6,4 @@ tools/prof
 bench/
 tools/icount
 build/
+__pycache__/

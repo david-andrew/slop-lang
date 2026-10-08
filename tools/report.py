@@ -8,6 +8,8 @@ performance (vs C), parallel speedup, static binaries, web builds (single HTML f
 from file:// in headless Chrome), game frame times.
 """
 import os, re, shutil, subprocess, sys, time, glob, struct, zlib, platform
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pngutil import png_rows, png_colors, png_diff
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
@@ -60,47 +62,6 @@ def instructions(cmd):
     r = run([icount] + cmd)
     m = re.search(r"([\d.]+) G instructions", r.stderr)
     return float(m.group(1)) if m else None
-
-
-def png_colors(path):
-    """number of distinct colors in a PNG (a rendered frame has many; a blank one has 1)"""
-    data = open(path, "rb").read()
-    if data[:8] != b"\x89PNG\r\n\x1a\n":
-        return 0
-    pos, idat, w, h, ct = 8, b"", 0, 0, 0
-    while pos < len(data):
-        ln, typ = struct.unpack(">I4s", data[pos:pos + 8])
-        body = data[pos + 8:pos + 8 + ln]
-        if typ == b"IHDR":
-            w, h, _, ct = struct.unpack(">IIBB", body[:10])
-        elif typ == b"IDAT":
-            idat += body
-        pos += 12 + ln
-    raw = zlib.decompress(idat)
-    bpp = {2: 3, 6: 4}.get(ct, 4)
-    stride = w * bpp + 1
-    colors = set()
-    # sample pixels from unfiltered bytes is wrong for filtered rows; reconstruct a few rows
-    prev = bytearray(w * bpp)
-    for y in range(h):
-        f = raw[y * stride]
-        row = bytearray(raw[y * stride + 1:(y + 1) * stride])
-        for i in range(len(row)):
-            a = row[i - bpp] if i >= bpp else 0
-            b = prev[i]
-            c = prev[i - bpp] if i >= bpp else 0
-            if f == 1: row[i] = (row[i] + a) & 255
-            elif f == 2: row[i] = (row[i] + b) & 255
-            elif f == 3: row[i] = (row[i] + (a + b) // 2) & 255
-            elif f == 4:
-                p = a + b - c
-                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-                row[i] = (row[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
-        if y % 16 == 0:
-            for x in range(0, w, 8):
-                colors.add(bytes(row[x * bpp:x * bpp + 3]))
-        prev = row
-    return len(colors)
 
 
 def fmt_ratio(x):
@@ -271,7 +232,7 @@ ph = run(["readelf", "-lW", f"{BUILD}/dunes"]).stdout
 dy = run(["readelf", "-dW", f"{BUILD}/dunes"]).stdout
 say(f"- 3D game (dunes): {os.path.getsize(f'{BUILD}/dunes') // 1024} KB; static: "
     f"**{'yes' if 'INTERP' not in ph and 'NEEDED' not in dy else 'NO'}** (the GPU driver is loaded at run time "
-    "if present; without one the program reports it and exits cleanly)")
+    "if present; without one it renders in software, see section 10)")
 say("- the compiler writes machine code and ELF files itself: no assembler, linker or C toolchain is used")
 say()
 
@@ -322,6 +283,36 @@ if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
             say(f"| {g} | {mode} | {m.group(1) + ' ms' if m else 'n/a'} | {ncol} colors |")
 else:
     say("(no display: skipped)")
+say()
+
+# ---------------- software rendering ----------------
+say("## 10. Without a GPU driver (software renderer)")
+say()
+say("With no OpenGL ES driver (or `JOT_SOFTWARE=1`) the same binaries draw with a multithreaded software "
+    "renderer that runs the Jot shader functions on the CPU, at half resolution. Without libX11 it speaks "
+    "the X11 protocol itself, and screenshot runs need no display at all. Below, frame 60 of each game "
+    "rendered with no display and no GPU, compared with the GPU's frame:")
+say()
+say("| game | software frame CPU time | mean abs difference vs GPU frame (0-255) |")
+say("|---|---|---|")
+has_display = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+for g in ["cube", "lumen", "dunes"]:
+    src = f"examples/{g}.jot" if g == "cube" else f"examples/{g}/{g}.jot"
+    exe = f"{BUILD}/{g}_sw"
+    run([JOT, "build", src, "-o", exe, "--release"])
+    soft_png = f"{BUILD}/{g}_soft.png"
+    env = {k: v for k, v in ENV.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+    env.update(JOT_SOFTWARE="1", JOT_FRAMES="60", JOT_SCREENSHOT=soft_png, JOT_FRAME_STATS="1")
+    r = run([exe], env=env, timeout=300)
+    m = re.search(r"frame cpu: ([\d.]+) ms", r.stderr)
+    diff = "n/a (no display for the GPU frame)"
+    if has_display:
+        gpu_png = f"{BUILD}/{g}_gpu.png"
+        run([exe], env=dict(ENV, JOT_FRAMES="60", JOT_SCREENSHOT=gpu_png), timeout=120)
+        if os.path.exists(soft_png) and os.path.exists(gpu_png):
+            d = png_diff(soft_png, gpu_png)
+            diff = f"{d:.2f}" if d is not None else "size mismatch"
+    say(f"| {g} | {m.group(1) + ' ms' if m else 'FAILED'} | {diff} |")
 say()
 
 open("docs/REPORT.md", "w").write("\n".join(out) + "\n")

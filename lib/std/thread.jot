@@ -74,6 +74,7 @@ fn __worker_main(id: int):
 fn __pool_start():
     when TARGET != "wasm":
         n := cpu_count() - 1
+        if t := env("JOT_THREADS"): n = (to_int(t) ?? (n + 1)) - 1      # JOT_THREADS caps the threads used
         if n > __MAX_THREADS: n = __MAX_THREADS
         if n < 1: return
         __pool_ctl = __alloc(64) as *int

@@ -90,6 +90,7 @@ struct FnInst:
     export_name: str
     aux_void: bool
     clib: str
+    csym: str
 
 struct FnSig:
     ntp: i32
@@ -636,6 +637,9 @@ fn get_fn_inst(decl: int, targs: [int], use_pos: int) -> int:
             else if an == "lib":
                 if nodes[at].a == 0 or nodes[int(nodes[at].a)].kind != .str_lit: fatal(nodes[at].pos, "@lib needs a library name, e.g. @lib(\"libGL.so.1\")")
                 fns[f].clib = name_of(int(nodes[int(nodes[at].a)].sval))
+            else if an == "symbol":
+                if nodes[at].a == 0 or nodes[int(nodes[at].a)].kind != .str_lit: fatal(nodes[at].pos, "@symbol needs the C name, e.g. @symbol(\"glClear\")")
+                fns[f].csym = name_of(int(nodes[int(nodes[at].a)].sval))
             else if an == "export":
                 fns[f].cabi = true
                 if nodes[at].a != 0: fns[f].export_name = name_of(int(nodes[int(nodes[at].a)].sval))

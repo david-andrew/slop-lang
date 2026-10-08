@@ -14,6 +14,10 @@ struct ShaderSource:
     vs: str
     fs: str
     layout: str
+    cpu_vs: *u8           # the shader functions, for the software renderer
+    cpu_fs: *u8
+    out_size: int         # bytes of the vertex function's result
+    vs_args: int          # 2: vs(vertex, uniforms), 3: vs(vertex, instance, uniforms)
 
 struct ShaderAttrib:
     comps: int
@@ -71,6 +75,7 @@ fn make_shader(src: ShaderSource) -> Shader:
         kind := f[1][0]
         if kind == 'v': kind = f[1][1]
         sh.uniforms.push(ShaderUniform(loc, kind, to_int(f[2]) ?? 0))
+    if __soft: __sw_program_info(prog, src)
     sh
 
 # upload vertices (any struct type matching the shader's vertex input) and optional indices
@@ -131,8 +136,12 @@ fn __bind_uniforms(sh: Shader, p: *u8):
 # draw a mesh with a shader; `params` is the uniforms struct the shader functions take
 fn draw[U](sh: Shader, m: Mesh, params: U):
     flush()
-    glUseProgram(u32(sh.prog))
     p := params
+    when TARGET != "wasm":
+        if __soft:
+            if m.mode == GL_TRIANGLES: __sw_draw_mesh(sh.prog, m.vbo, m.stride, m.count, m.ibo, m.index_count, (&p) as *u8, 0, 0, 0)
+            return
+    glUseProgram(u32(sh.prog))
     __bind_uniforms_sized(sh, (&p) as *u8)
     __bind_attribs(sh, m)
     if m.index_count > 0:
@@ -147,13 +156,18 @@ fn __bind_uniforms_sized(sh: Shader, p: *u8): __bind_uniforms(sh, p)
 fn draw_instanced[U, I](sh: Shader, m: mut Mesh, instances: [I], params: U):
     if instances.len() == 0: return
     flush()
-    glUseProgram(u32(sh.prog))
     p := params
-    __bind_uniforms(sh, (&p) as *u8)
-    __bind_attribs(sh, m)
     if m.instance_vbo == 0: m.instance_vbo = gl_create_buffer()
     glBindBuffer(GL_ARRAY_BUFFER, u32(m.instance_vbo))
     glBufferData(GL_ARRAY_BUFFER, instances.len() * size_of(I), data(instances) as *u8, GL_STREAM_DRAW)
+    when TARGET != "wasm":
+        if __soft:
+            if m.mode == GL_TRIANGLES: __sw_draw_mesh(sh.prog, m.vbo, m.stride, m.count, m.ibo, m.index_count, (&p) as *u8, m.instance_vbo, size_of(I), instances.len())
+            return
+    glUseProgram(u32(sh.prog))
+    __bind_uniforms(sh, (&p) as *u8)
+    __bind_attribs(sh, m)
+    glBindBuffer(GL_ARRAY_BUFFER, u32(m.instance_vbo))
     base := sh.attribs.len()
     for i, a in sh.iattribs:
         loc := u32(base + i)
@@ -169,8 +183,12 @@ fn draw_instanced[U, I](sh: Shader, m: mut Mesh, instances: [I], params: U):
         glDisableVertexAttribArray(u32(base + i))
     glBindVertexArray(0)
 
-# texture lookup inside shader functions (maps to GLSL texture()); on the CPU it returns white
-fn sample(t: Texture, uv: vec2) -> vec4: vec4(1, 1, 1, 1)
+# texture lookup inside shader functions (maps to GLSL texture()); outside the software
+# renderer, calling it on the CPU returns white
+fn sample(t: Texture, uv: vec2) -> vec4:
+    when TARGET != "wasm":
+        if __soft: return __sw_sample(t.id, uv)
+    vec4(1, 1, 1, 1)
 fn fract(v: vec2) -> vec2: v - floor(v)
 fn step(edge: f32, x: f32) -> f32:
     if x < edge: return 0.0

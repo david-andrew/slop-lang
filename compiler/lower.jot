@@ -1556,6 +1556,15 @@ fn gen_intrinsic(e: int) -> Val:
         e_zero(d, tsize(t))
         srcs := [vs, fs, lay]
         for i in 0..3: e_store(d, int(fields[int(structs[si].fields) + i].offset), e_daddr(str_data(srcs[i])), ptr_size)
+        # for the software renderer: the shader functions themselves (callable through C function
+        # pointers: the result pointer comes first, then the arguments' addresses) and the size of
+        # the vertex function's output (the values interpolated across triangles)
+        if int(structs[si].nfields) >= 7:
+            fo := int(structs[si].fields)
+            e_store(d, int(fields[fo + 3].offset), e_faddr(lf_of_inst(vsf)), ptr_size)
+            e_store(d, int(fields[fo + 4].offset), e_faddr(lf_of_inst(fsf)), ptr_size)
+            e_store(d, int(fields[fo + 5].offset), e_iconst(tsize(int(fns[vsf].ret))), 8)
+            e_store(d, int(fields[fo + 6].offset), e_iconst(fns[vsf].ptypes.len()), 8)
         return Val(d, true, s)
     if id == .vec_ctor: return gen_vec_ctor(e)
     fatal(nodes[e].pos, "intrinsic not supported in codegen")
@@ -2945,6 +2954,7 @@ fn lower_extern_thunk(lf: int, f: int):
     begin_fn(fns[f].sym, lf)
     lib := fns[f].clib
     nm := name_of(int(nodes[int(fns[f].decl)].name))
+    if len(fns[f].csym) > 0: nm = fns[f].csym
     ps: [int]
     for t in fns[f].ptypes:
         if vc(t) == VC_AGG: fatal(nodes[int(fns[f].decl)].pos, "C functions can only take scalar or pointer arguments")

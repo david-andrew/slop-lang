@@ -56,8 +56,8 @@ fn draw():
   sun/sky lighting, shadows, fog and bloom, GPU programs written in Jot itself (translated to
   GLSL), PNG/WAV loading, a software audio mixer and synthesizer.
 - **Programs keep working.** Native executables are static (they talk to the kernel directly);
-  the GPU driver is loaded at run time when present. Web builds are one HTML file with the
-  WebAssembly embedded. The compiler needs no assembler, linker or C toolchain.
+  the GPU driver is loaded at run time when present, and without one games still run on a
+  multithreaded software renderer. Web builds are one HTML file with the WebAssembly embedded. The compiler needs no assembler, linker or C toolchain.
 - **Self-hosted.** The compiler is written in Jot (~13k lines) and compiles itself; a small
   C compiler in `stage0/` bootstraps it.
 
@@ -118,8 +118,13 @@ array indexing into x86 addressing modes.
 Native programs are static executables that make Linux system calls directly. Programs that
 open a window load the system's X11, EGL and OpenGL ES libraries at run time with a tiny
 in-process loader (the static binary maps the system dynamic linker and asks it for the
-libraries), so a missing driver produces a clear message instead of a load-time failure, and
-nothing is loaded at all by programs that do not use graphics.
+libraries), so nothing is loaded at all by programs that do not use graphics, and a missing
+library is a run-time decision instead of a load-time failure: without an OpenGL ES driver
+(or with `JOT_SOFTWARE=1`) games draw with a software renderer (`lib/game/softgl.jot`) that
+runs the Jot shader functions on the CPU in parallel, at half resolution; without libX11 the
+window is opened by speaking the X11 protocol over the socket (`lib/game/x11.jot`). The
+software frames match the GPU's within about 1/255 per channel (`tools/rendertest.py` checks
+them against references, with no GPU or display needed).
 
 The web backend emits WebAssembly from the same IR; the HTML file contains the module (base64)
 and a small JavaScript runtime for WebGL 2, input and audio.

@@ -185,6 +185,8 @@ fn render_target(w: int, h: int, smooth: bool = true) -> RenderTarget:
     glBindRenderbuffer(GL_RENDERBUFFER, u32(rb))
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, i32(w), i32(h))
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, u32(rb))
+    when TARGET != "wasm":
+        if __soft: __sw_scale_target(fbo, w, h)
     glBindFramebuffer(GL_FRAMEBUFFER, 0)
     RenderTarget(tex, fbo, rb)
 
@@ -247,6 +249,11 @@ fn screen_to_world(p: vec2) -> vec2:
 # ---------------- batching ----------------
 fn flush():
     if __b_count == 0: return
+    when TARGET != "wasm":
+        if __soft:
+            __sw_draw2d(__b_buf, __b_count, __proj, __b_tex)
+            __b_count = 0
+            return
     glUseProgram(u32(__b_prog))
     glUniformMatrix4fv(i32(__b_loc_proj), 1, 0, (&__proj) as *u8)
     glActiveTexture(GL_TEXTURE0)

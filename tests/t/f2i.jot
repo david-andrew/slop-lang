@@ -1,4 +1,5 @@
 # float to int conversion saturates (NaN -> 0) identically on every target
+# requires: jot (the C bootstrap compiler does not saturate)
 fn conv(x: float) -> int: int(x)
 fn conv32(x: f32) -> int: int(x)
 fn main():

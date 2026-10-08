@@ -292,7 +292,19 @@ fn draw():
     circle(pos, 20, rgb(1, 0.5, 0.2))
 ```
 
-## 12. Command line
+Native games use the system's OpenGL ES driver when there is one. Without it (or with
+`JOT_SOFTWARE=1`) the same program draws with the built-in software renderer, which runs your
+shader functions (see `make_shader`) on the CPU; `soft_rendering()` tells the program which
+is in use, e.g. to draw fewer particles. Frames are rendered at half resolution and paced to
+60 per second.
+
+Environment variables for testing and tuning: `JOT_SCREENSHOT=out.png` (with `JOT_FRAMES=n`)
+saves frame n and exits — the clock then advances exactly 1/60 s per frame, so the image is
+reproducible, and with `JOT_SOFTWARE=1` no display is needed at all; `JOT_INPUT="5:space+,9:space-"`
+presses and releases keys at given frames; `JOT_THREADS=n` caps the threads used by the
+parallel functions.
+
+
 
 ```
 jot file.jot [args]     compile and run (wasm target: opens the browser)
@@ -300,3 +312,21 @@ jot build file.jot      write the executable / .html
 jot test file.jot       run `test` blocks
 jot check file.jot      type check only
 ```
+
+## 13. Calling C
+
+Native programs can call functions from system shared libraries; the library is loaded the
+first time one of its functions is called, so a missing library only matters to code that
+actually uses it (check with `lib_available("libfoo.so.1")`).
+
+```jot
+@lib("libm.so.6")
+extern fn cbrt(x: float) -> float
+
+@lib("libGLESv2.so.2")
+@symbol("glClear")                 # the C name, when the Jot name differs
+extern fn gl_clear_native(mask: u32)
+```
+
+Arguments and results must be scalars or pointers; `cfn(...) -> T` is the type of a C function
+pointer, and `@cabi` makes a Jot function callable from C.

@@ -350,13 +350,16 @@ fn __render3d():
     vp := __proj3 * __view
     # shadow pass: orthographic projection around the camera target
     if __shadows:
-        if __shadow_rt.fbo == 0: __shadow_rt = __depth_target(2048)
+        if __shadow_rt.fbo == 0:
+            res := 2048
+            if __soft: res = 1024
+            __shadow_rt = __depth_target(res)
         center := __cam_target
         lpos := center + __sun_dir * f32(__shadow_size * 2.0)
         s := __shadow_size
         __shadow_vp = orthographic(-s, s, -s, s, 0.1, s * 5.0) * look_at(lpos, center, vec3(0, 1, 0))
         glBindFramebuffer(GL_FRAMEBUFFER, u32(__shadow_rt.fbo))
-        glViewport(0, 0, 2048, 2048)
+        glViewport(0, 0, i32(__shadow_rt.texture.width), i32(__shadow_rt.texture.height))
         glClear(GL_DEPTH_BUFFER_BIT)
         glEnable(GL_DEPTH_TEST)
         glDepthFunc(GL_LEQUAL)

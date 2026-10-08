@@ -31,6 +31,7 @@ __mouse_pressed: [bool]
 __mouse_released: [bool]
 __text_input := ""
 __time0 := 0.0
+__fixed_step := false          # screenshot runs advance exactly 1/60 s per frame
 __frame_count := 0
 __dt := 0.0
 __fps := 0.0
@@ -115,7 +116,9 @@ fn screen_height() -> int: __win_h
 fn screen_size() -> vec2: vec2(f32(__win_w), f32(__win_h))
 fn frame_time() -> float: __dt
 fn fps() -> float: __fps
-fn elapsed() -> float: time() - __time0
+fn elapsed() -> float:
+    if __fixed_step: return float(__frame_count) / 60.0
+    time() - __time0
 fn frame_number() -> int: __frame_count
 fn quit(): __win_close = true
 
@@ -205,6 +208,20 @@ else:
     extern fn XFlush(d: *u8) -> i32
     @lib("libX11.so.6")
     extern fn XSetWMNormalHints(d: *u8, w: int, hints: *u8)
+    @lib("libX11.so.6")
+    extern fn XDefaultVisual(d: *u8, screen: i32) -> *u8
+    @lib("libX11.so.6")
+    extern fn XDefaultDepth(d: *u8, screen: i32) -> i32
+    @lib("libX11.so.6")
+    extern fn XDefaultGC(d: *u8, screen: i32) -> *u8
+    @lib("libX11.so.6")
+    extern fn XCreateImage(d: *u8, visual: *u8, depth: u32, format: i32, offset: i32, data: *u8, w: u32, h: u32, pad: i32, bpl: i32) -> *u8
+    @lib("libX11.so.6")
+    extern fn XPutImage(d: *u8, win: int, gc: *u8, img: *u8, sx: i32, sy: i32, dx: i32, dy: i32, w: u32, h: u32) -> i32
+    @lib("libX11.so.6")
+    extern fn XSync(d: *u8, discard: i32) -> i32
+    @lib("libX11.so.6")
+    extern fn XFree(p: *u8) -> i32
 
     @lib("libEGL.so.1")
     extern fn eglGetDisplay(native: *u8) -> *u8
@@ -237,6 +254,8 @@ else:
     __egl_dpy: *u8 = null
     __egl_surf: *u8 = null
     __xev: *u8 = null
+    __xscr: i32 = 0
+    __xproto := false             # connected through x11.jot instead of libX11
 
     # a missing display or driver is an environment problem, not a program bug: say so and exit
     fn __need(ok: bool, what: str):
@@ -245,12 +264,24 @@ else:
             exit(1)
 
     fn __platform_open():
-        __need(lib_available("libX11.so.6"), "libX11 is not available")
-        __need(lib_available("libEGL.so.1") and lib_available("libGLESv2.so.2"), "no OpenGL ES driver (libEGL/libGLESv2) found")
+        __soft = (env("JOT_SOFTWARE") ?? "") == "1"
+        headless := __soft and env("JOT_SCREENSHOT") != none
+        if not lib_available("libX11.so.6") or (env("JOT_X11") ?? "") == "protocol":
+            # no Xlib: talk to the X server directly and render in software
+            __soft = true
+            why := __xp_open(__win_title, __win_w, __win_h)
+            if len(why) == 0: __xproto = true
+            # a screenshot run can render without any display
+            else if not headless: __need(false, "libX11 is not available and {why}")
+            __sw_init_window(__win_w, __win_h)
+            return
         __xdpy = XOpenDisplay(null)
+        if __xdpy == null and headless:
+            __sw_init_window(__win_w, __win_h)
+            return
         __need(__xdpy != null, "cannot connect to the X server (is DISPLAY set?)")
-        scr := XDefaultScreen(__xdpy)
-        root := XRootWindow(__xdpy, scr)
+        __xscr = XDefaultScreen(__xdpy)
+        root := XRootWindow(__xdpy, __xscr)
         __xwin = XCreateSimpleWindow(__xdpy, root, 0, 0, u32(__win_w), u32(__win_h), 0, 0, 0)
         XStoreName(__xdpy, __xwin, data(__zstr(__win_title)))
         # key, button, motion, structure and focus events
@@ -259,28 +290,64 @@ else:
         XSetWMProtocols(__xdpy, __xwin, &__wm_delete, 1)
         XMapWindow(__xdpy, __xwin)
         XFlush(__xdpy)
+        __xev = __alloc(256)
+        if not __soft:
+            why := __egl_open()
+            if len(why) > 0:
+                eprint("note: {why}; using the software renderer")
+                __soft = true
+        if __soft: __sw_init_window(__win_w, __win_h)
+
+    # set up OpenGL ES on the window; returns why that is impossible, or ""
+    fn __egl_open() -> str:
+        if not lib_available("libEGL.so.1") or not lib_available("libGLESv2.so.2"): return "no OpenGL ES driver (libEGL/libGLESv2) found"
         __egl_dpy = eglGetPlatformDisplay(0x31D5, __xdpy, null)      # EGL_PLATFORM_X11_KHR
         if __egl_dpy == null: __egl_dpy = eglGetDisplay(__xdpy)
-        __need(__egl_dpy != null, "eglGetDisplay failed")
+        if __egl_dpy == null: return "eglGetDisplay failed"
         maj: i32 = 0
         mn: i32 = 0
-        __need(eglInitialize(__egl_dpy, &maj, &mn) != 0, "eglInitialize failed")
+        if eglInitialize(__egl_dpy, &maj, &mn) == 0: return "eglInitialize failed"
         eglBindAPI(0x30A0)             # EGL_OPENGL_ES_API
         attrs: [i32] = [0x3024, 8, 0x3023, 8, 0x3022, 8, 0x3025, 24, 0x3040, 0x40, 0x3033, 4, 0x3038]
         cfg: *u8 = null
         n: i32 = 0
-        __need(eglChooseConfig(__egl_dpy, data(attrs), &cfg, 1, &n) != 0 and n > 0, "no suitable EGL config")
+        if eglChooseConfig(__egl_dpy, data(attrs), &cfg, 1, &n) == 0 or n == 0: return "no suitable EGL config"
         __egl_surf = eglCreateWindowSurface(__egl_dpy, cfg, __xwin, null)
         if __egl_surf == null:
             # try the platform-specific entry point, which takes a pointer to the window id
             __egl_surf = eglCreatePlatformWindowSurface(__egl_dpy, cfg, &__xwin, null)
-        __need(__egl_surf != null, "eglCreateWindowSurface failed (EGL error 0x{eglGetError():x})")
+        if __egl_surf == null: return "eglCreateWindowSurface failed (EGL error 0x{eglGetError():x})"
         cattrs: [i32] = [0x3098, 3, 0x30FB, 0, 0x3038]
         ctx := eglCreateContext(__egl_dpy, cfg, null, data(cattrs))
-        __need(ctx != null, "eglCreateContext failed (OpenGL ES 3 needed)")
-        __need(eglMakeCurrent(__egl_dpy, __egl_surf, __egl_surf, ctx) != 0, "eglMakeCurrent failed")
+        if ctx == null: return "eglCreateContext failed (OpenGL ES 3 needed)"
+        if eglMakeCurrent(__egl_dpy, __egl_surf, __egl_surf, ctx) == 0: return "eglMakeCurrent failed"
         eglSwapInterval(__egl_dpy, 1)
-        __xev = __alloc(256)
+        ""
+
+    __ximg: *u8 = null
+    __ximg_buf: [u8]
+    __ximg_w := 0
+    __ximg_h := 0
+
+    # show the software renderer's frame
+    fn __sw_present():
+        w := __win_w
+        h := __win_h
+        if __xproto:
+            if __ximg_buf.len() != w * h * 4: __ximg_buf = [u8(0); w * h * 4]
+            __sw_present_pixels(data(__ximg_buf), w, h)
+            __xp_put_image(__ximg_buf, w, h)
+            return
+        if __xdpy == null: return
+        if __ximg == null or __ximg_w != w or __ximg_h != h:
+            if __ximg != null: XFree(__ximg)       # frees the header only; the pixels are ours
+            __ximg_buf = [u8(0); w * h * 4]
+            __ximg = XCreateImage(__xdpy, XDefaultVisual(__xdpy, __xscr), u32(XDefaultDepth(__xdpy, __xscr)), 2, 0, data(__ximg_buf), u32(w), u32(h), 32, 0)
+            __ximg_w = w
+            __ximg_h = h
+        __sw_present_pixels(data(__ximg_buf), w, h)
+        XPutImage(__xdpy, __xwin, XDefaultGC(__xdpy, __xscr), __ximg, 0, 0, 0, 0, u32(w), u32(h))
+        XSync(__xdpy, 0)
 
     fn __xkey(sym: int) -> int:
         if sym >= 0x61 and sym <= 0x7a: return int(Key.a) + sym - 0x61
@@ -322,6 +389,10 @@ else:
             _: 0
 
     fn __platform_poll():
+        if __xproto:
+            __xp_poll()
+            return
+        if __xdpy == null: return
         while XPending(__xdpy) > 0:
             XNextEvent(__xdpy, __xev)
             ev := __xev as *i32
@@ -356,18 +427,27 @@ else:
             else if kind == 10:
                 for mut kd in __key_down: kd = false
 
-    fn __platform_present(): eglSwapBuffers(__egl_dpy, __egl_surf)
+    fn __platform_present():
+        if __soft: __sw_present()
+        else: eglSwapBuffers(__egl_dpy, __egl_surf)
 
     fn __game_run(update: fn(float), draw: fn()):
         window(__win_title, __win_w, __win_h)
+        __fixed_step = env("JOT_SCREENSHOT") != none
         last := time()
         while not __win_close:
             __platform_poll()
             now := time()
             dt := clamp(now - last, 0.0, 0.1)
             last = now
+            if __fixed_step: dt = 1.0 / 60.0
+            if __soft: __sw_init_window(__win_w, __win_h)
             __run_frame(dt, update, draw)
             __platform_present()
+            # without vsync, software frames are paced to 60 per second
+            if __soft and not __fixed_step:
+                left := 1.0 / 60.0 - (time() - now)
+                if left > 0.0: sleep(left)
         exit(0)
 
 fn __no_update(dt: float): pass
