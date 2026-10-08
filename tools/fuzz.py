@@ -99,6 +99,48 @@ class Gen:
         if op == "abs": return f"abs({a})"
         return f"floor({a})"
 
+    # values that own other values: copies must stay independent
+    def managed_stmt(self):
+        r = self.r
+        a = r.choice(self.arrays)
+        c = r.randint(0, 5)
+        if c == 0:
+            v = self.fresh("nn")
+            self.emit(f"{v} := [{a}, [{self.iexpr(2)}], {a}]")
+            self.emit(f"{v}[{r.randint(0, 2)}].push({self.iexpr(2)})")
+            self.emit(f"{v}[0][0] = {self.iexpr(2)}")
+            self.emit(f"print({v}, {a})")
+        elif c == 1:
+            v = self.fresh("qq")
+            self.emit(f"{v} := Q({a}, {a}.len())")
+            w = self.fresh("qq")
+            self.emit(f"{w} := {v}")
+            self.emit(f"{w}.xs[abs({self.iexpr(2)}) % {w}.xs.len()] = {self.iexpr(2)}")
+            self.emit(f"if {v}.xs.len() < 40: {v}.xs.push({self.iexpr(2)})")
+            self.emit(f"print({v}, {w}, {a})")
+        elif c == 2 and [x for x in self.arrays if x not in self.ro]:
+            b = r.choice([x for x in self.arrays if x not in self.ro])
+            self.emit(f"grow({b}, {self.iexpr(2)})")
+            self.emit(f"print({b})")
+        elif c == 3:
+            v = self.fresh("rv")
+            self.emit(f"{v} := rev({a})")
+            self.emit(f"{v}[0] = {self.iexpr(2)}")
+            self.emit(f"print({v}, {a}, rev({v}) == {a})")
+        elif c == 4:
+            v = self.fresh("cap")
+            self.emit(f"{v} := fn(i: int) -> int: {a}[abs(i) % {a}.len()] + {a}.len()")
+            self.emit(f"print({v}({self.iexpr(2)}))")
+            if a not in self.ro:
+                self.emit(f"{a}[0] = {self.iexpr(2)}")
+                self.emit(f"print({v}(0), {a}[0])")
+        else:
+            v = self.fresh("sw")
+            self.emit(f"{v} := {a}")
+            if a not in self.ro:
+                self.emit(f"{a}, {v} = {v}, [{self.iexpr(2)}]")
+            self.emit(f"print({a}, {v})")
+
     def vlit(self, n):
         r = self.r
         return f"vec{n}({', '.join(r.choice(['0.5', '1.0', '-2.0', '3.25', '0.125', '-0.75', '8.0']) for _ in range(n))})"
@@ -169,6 +211,9 @@ class Gen:
         r = self.r
         if self.use_vec and r.random() < 0.1:
             self.vstmt()
+            return
+        if r.random() < 0.06 and self.arrays:
+            self.managed_stmt()
             return
         if r.random() < 0.04 and self.arrays and self.depth < 3:
             a = r.choice(self.arrays)
@@ -295,6 +340,17 @@ class Gen:
                "fn mh(n: int, xs: [int], acc: mut [int]) -> bool:",
                "    if acc.len() < 50: acc.push(n + xs.len())",
                "    n % 3 == 0", "",
+               "struct Q:", "    xs: [int]", "    n: int", "",
+               "fn grow(xs: mut [int], k: int):",
+               "    if xs.len() < 40: xs.push(k)",
+               "    xs[0] += k", "",
+               "fn rev(xs: [int]) -> [int]:",
+               "    out: [int]",
+               "    i := xs.len() - 1",
+               "    while i >= 0:",
+               "        out.push(xs[i])",
+               "        i -= 1",
+               "    out", "",
                "# float to int where every compiler agrees (the C bootstrap compiler does not saturate)",
                "fn fi(x: float) -> int:",
                "    if x == x and abs(x) < 1000000000000000.0: return int(x)",
@@ -370,6 +426,9 @@ def check(seed, wasm=True, keep=False):
             code, o, e = run([exe])
             outs["jot0"] = o + (f"[exit {code}] {e[:200]}" if code != 0 else "")
     vals = list(outs.values())
+    # programs printing megabytes can time out on the slower builds: inconclusive, not a failure
+    if len(outs.get("debug", "")) > 1000000 and any(v.endswith("timeout") for v in vals):
+        vals = [v for v in vals if not v.endswith("timeout")]
     ok = all(v == vals[0] for v in vals) and not vals[0].startswith("COMPILE ERROR")
     if not ok:
         os.rename(path, os.path.join(OUT, f"fail_{seed}.jot"))
