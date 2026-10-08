@@ -20,8 +20,18 @@ __cstr = (p: *u8) -> str:
     mem_copy(q + 24, p, n)
     q as str
 
+# an environment variable (in a web page: the page's URL parameter of that name, where `JOT_X`
+# may also be written `x`, and a bare `?x` is "1")
 env = (name: str) -> str?:
-    when TARGET != "wasm":
+    when TARGET == "wasm":
+        buf = fill(u8(0), 256)
+        n = __wasm_env(data(name), len(name), data(buf), 256)
+        if n < 0: return none
+        if n > 256:
+            buf = fill(u8(0), n)
+            __wasm_env(data(name), len(name), data(buf), n)
+        return str_from_bytes(buf[..n))
+    else:
         sp = __argv() as *int
         argc = sp[0]
         envp = (sp + 2 + argc) as **u8

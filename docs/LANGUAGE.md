@@ -510,6 +510,13 @@ renderer, which runs your shader functions (see `make_shader`) on the CPU; `soft
 tells the program which is in use, e.g. to draw fewer particles. Frames are rendered at half
 resolution (`JOT_SOFT_SCALE=1` for full resolution) and paced to 60 per second.
 
+**Frame statistics.** `show_stats()` (or `JOT_STATS=1`, or `?stats` at the end of a web page's
+address) draws an overlay with the frame rate, a graph of recent frame times, the CPU time of
+`update` + `draw`, the time spent handing frames to the screen, and how many frames took much
+longer than usual (stutter). `JOT_STATS=log` (`?stats=log`) prints the same numbers every two
+seconds, and each long frame as it happens. In a web page, `env(name)` reads the page's URL
+parameters, so `?JOT_STATS=1` and `?stats` are the same.
+
 Environment variables for testing and tuning: `JOT_SCREENSHOT=out.png` (with `JOT_FRAMES=n`)
 saves frame n and exits — the clock then advances exactly 1/60 s per frame, so the image is
 reproducible, and with `JOT_SOFTWARE=1` no display is needed at all; `JOT_INPUT="5:space+,9:space-"`

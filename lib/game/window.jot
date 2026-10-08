@@ -530,7 +530,8 @@ else:
             __run_frame(dt, update, draw)
             t0 = time()
             __platform_present()
-            __frame_present += time() - t0
+            __last_present = time() - t0
+            __frame_present += __last_present
             # without vsync, software frames are paced to 60 per second
             if __soft and not __fixed_step:
                 left = 1.0 / 60.0 - (time() - now)
@@ -578,6 +579,8 @@ __run_frame = (dt: f64, update: (f64) -> void, draw: () -> void):
     __gfx_end_frame()
     __audio_update()
     __frame_cpu += time() - t0
+    __stats_record(time() - t0)
+    __stats_draw()
     __maybe_screenshot()
     __input_end_frame()
     __frame_count += 1

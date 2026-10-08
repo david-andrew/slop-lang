@@ -136,7 +136,7 @@ Operating system access: files, arguments, environment, time.
 ```
 exit = (code: int)
 args = () -> str[]    # command line arguments (args()[0] is the program path)
-env = (name: str) -> str?
+env = (name: str) -> str?    # an environment variable (in a web page: the page's URL parameter of that name, where `JOT_X` may also be written `x`, and a bare `?x` is "1")
 read_file = (path: str) -> str?    # read a whole file; none if it cannot be read
 read_bytes = (path: str) -> u8[]?
 write_file = (path: str, contents: str) -> bool
@@ -715,6 +715,17 @@ sgl_create_program = () -> int
 sgl_read_pixels = (x: int, y: int, w: int, h: int, out: *u8)    # read the window (or bound target) as RGBA bytes, bottom row first, scaled to w x h
 ```
 
+### stats.jot
+
+A frame statistics overlay: frame times as a graph, CPU time, time handing frames to the  
+screen, and frames that took much longer than usual (stutter). show_stats() turns it on, as do  
+JOT_STATS=1 and, in a web page, ?stats in the URL. JOT_STATS=log (?stats=log) prints the same  
+numbers every two seconds instead, and each long frame as it happens.  
+
+```
+show_stats = (on: bool = true)
+```
+
 ### vmath.jot
 
 Vector and matrix math for the built-in vec2/vec3/vec4/mat4 types (f32 components).  
@@ -804,9 +815,11 @@ slerp = (a: vec4, b0: vec4, t: f32) -> vec4
 ### wayland.jot
 
 A Wayland client speaking the wire protocol directly (no libwayland): a window from  
-xdg-shell, frames presented through shared memory (wl_shm), keyboard and pointer input from  
-wl_seat, and server-side decorations where the compositor offers them (a small title bar  
-drawn here otherwise).  
+xdg-shell, GPU frames handed over as dma-bufs (zwp_linux_dmabuf_v1, see dmabuf.jot) or else  
+presented through shared memory (wl_shm), keyboard and pointer input from wl_seat, and  
+server-side decorations where the compositor offers them (a small title bar drawn here  
+otherwise). Windows render at the display's real resolution: the window's size is in the  
+compositor's logical units, scaled by the output's (possibly fractional) scale.  
 
 ```
 const WLK_NONE = 0
@@ -829,6 +842,12 @@ const WLK_DECORATION = 16
 const WLK_FRAME = 17           # a frame callback
 const WLK_CURSOR_MGR = 18      # wp_cursor_shape_manager_v1
 const WLK_CURSOR_DEV = 19
+const WLK_DMABUF = 20          # zwp_linux_dmabuf_v1
+const WLK_DMABUF_PARAMS = 21
+const WLK_VIEWPORTER = 22
+const WLK_VIEWPORT = 23
+const WLK_FRAC_MGR = 24        # wp_fractional_scale_manager_v1
+const WLK_FRAC = 25
 const WL_BAR = 30
 const WL_EDGE = 8              # pixels along the window's border that resize it
 ```
