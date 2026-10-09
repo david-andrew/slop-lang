@@ -56,7 +56,7 @@ class Watch:
 def write(d, name, text):
     # (a new inode, the way editors save: the watcher must see renames too)
     tmp = os.path.join(d, "." + name + ".tmp")
-    with open(tmp, "w") as f:
+    with open(tmp, "w", newline="") as f:          # (byte for byte: no \r\n on Windows)
         f.write(text)
     os.replace(tmp, os.path.join(d, name))
 

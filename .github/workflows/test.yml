@@ -61,6 +61,7 @@ jobs:
           python tools/runtests.py --compiler sloppy --release
           python tools/lsptest.py
           python tools/watchtest.py
+          python tools/rendertest.py --no-gpu
       - name: The compiler compiles itself on Windows to the same program
         shell: bash
         run: |

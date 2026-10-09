@@ -5,18 +5,19 @@ tests/render/*.jo check shader semantics: their references were rendered by a GP
 With a display (or --gpu), each frame is also rendered on the GPU and compared with the same
 references, which catches shader code that only the GPU driver compiles.
 usage: rendertest.py [--update] [--gpu | --no-gpu]   (--update rewrites the references; scenes need a display)"""
-import os, subprocess, sys
+import os, subprocess, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pngutil import downsample, png_rows, write_png
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sloppy = os.path.join(root, "bin", "sloppy")
+sloppy = os.path.join(root, "bin", "sloppy.exe" if os.name == "nt" else "sloppy")
+out = os.path.join(tempfile.gettempdir(), "sloppy-render")
 refdir = os.path.join(root, "tests", "render")
 update = "--update" in sys.argv
 has_display = bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
 gpu_too = ("--gpu" in sys.argv or has_display) and "--no-gpu" not in sys.argv and not update
 GPU_FRAME_LIMIT = 4.0   # a whole game frame on a GPU (different rasterization and precision)
-os.makedirs("/tmp/sloppy-render", exist_ok=True)
+os.makedirs(out, exist_ok=True)
 games = {"cube": "examples/cube.jo", "lumen": "examples/lumen/lumen.jo", "dunes": "examples/dunes/dunes.jo"}
 scenes = sorted(f[:-3] for f in os.listdir(refdir) if f.endswith(".jo"))
 for sc in scenes:
@@ -24,19 +25,20 @@ for sc in scenes:
 env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
 # (games that save progress start with nothing saved, so their frames do not depend on it)
 import shutil
-shutil.rmtree("/tmp/sloppy-render/saved-data", ignore_errors=True)
-env.update(SLOPPY_LIB=os.path.join(root, "lib"), SLOPPY_SOFTWARE="1", SLOPPY_FRAMES="60", SLOPPY_SAVE_DIR="/tmp/sloppy-render/saved-data")
+shutil.rmtree(os.path.join(out, "saved-data"), ignore_errors=True)
+env.update(SLOPPY_LIB=os.path.join(root, "lib"), SLOPPY_SOFTWARE="1", SLOPPY_FRAMES="60", SLOPPY_SAVE_DIR=os.path.join(out, "saved-data"))
 LIMIT = 1.0           # mean absolute difference allowed (0..255), for other CPUs' rounding
 GPU_LIMIT = 2.0       # against a GPU's frame: the software renderer works at half resolution
 failed = 0
 for name, src in games.items():
-    exe = f"/tmp/sloppy-render/{name}"
+    exe = os.path.join(out, name)
     r = subprocess.run([sloppy, "build", "--release", os.path.join(root, src), "-o", exe], capture_output=True, text=True)
+    if os.name == "nt": exe += ".exe"
     if r.returncode != 0:
         print(f"FAIL {name}: build failed\n{r.stderr}")
         failed += 1
         continue
-    png = f"/tmp/sloppy-render/{name}.png"
+    png = os.path.join(out, f"{name}.png")
     r = subprocess.run([exe], env=dict(env, SLOPPY_SCREENSHOT=png), capture_output=True, text=True, timeout=300)
     if r.returncode != 0 or not os.path.exists(png):
         print(f"FAIL {name}: render failed\n{r.stderr}")
@@ -50,7 +52,7 @@ for name, src in games.items():
             if not os.environ.get("DISPLAY"):
                 print(f"skipped {name} (needs a display)")
                 continue
-            gpu = f"/tmp/sloppy-render/{name}_gpu.png"
+            gpu = os.path.join(out, f"{name}_gpu.png")
             genv = dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib"), SLOPPY_FRAMES="60", SLOPPY_SCREENSHOT=gpu, SLOPPY_SCALE="1")
             subprocess.run([exe], env=genv, capture_output=True, timeout=120)
             w, h, got = downsample(gpu, 4)
@@ -68,7 +70,7 @@ for name, src in games.items():
     print(f"{'ok  ' if d <= limit else 'FAIL'} {name}: mean abs difference {d:.3f}")
     failed += d > limit
     if gpu_too:
-        gpng = f"/tmp/sloppy-render/{name}_gpu.png"
+        gpng = os.path.join(out, f"{name}_gpu.png")
         if os.path.exists(gpng): os.remove(gpng)
         genv = dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib"), SLOPPY_FRAMES="60", SLOPPY_SCREENSHOT=gpng, SLOPPY_SCALE="1")
         genv.pop("SLOPPY_SOFTWARE", None)
