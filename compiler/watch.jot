@@ -60,6 +60,8 @@ wm_next = 0                 # next free address for code (and read-only data) in
 wm_data_next = 0            # next free address for new globals
 wm_data_end = 0
 wm_game = false             # the program has update/draw (it is patched; others run again)
+wm_loop = 0                 # (1: it has update, 2: draw)
+wm_top = 0                  # hash of its top-level statements
 wm_files: str[]             # the source files it was built from
 
 # what a build produced (for the driver)
@@ -240,12 +242,18 @@ wk_sig = (t0: int, depth: int) -> str:
 wk_decl_hash = (g: int) -> int:
     d = int(globals[g].decl)
     if d == 0: return 0
-    p = nodes[d].pos
+    h = wk_text_hash(nodes[d].pos, WH0)
+    # and what it is made from that is not its text: the GPU programs made from shader functions,
+    # and files named in it (an image loaded with embed or read_bytes...)
+    wk_extra(int(nodes[d].b), int(globals[g].mod), h)
+
+# the text of the statement or declaration at p (without comments)
+wk_text_hash = (p: int, h0: int) -> int:
     f = pos_file(p)
-    if f < 0 or f >= files.len(): return 0
+    if f < 0 or f >= files.len(): return h0
     src = files[f].src
     i = pos_off(p)
-    h = WH0
+    h = h0
     # its line, and the lines after it indented more (or blank)
     ls = i
     loop ls > 0 and src[ls - 1] != '\n': ls -= 1
@@ -262,9 +270,23 @@ wk_decl_hash = (g: int) -> int:
         first = false
         h = wh_str(h, trim(line[..repl_code_end(line))))
         i = e + 1
-    # and what it is made from that is not its text: the GPU programs made from shader functions,
-    # and files named in it (an image loaded with embed or read_bytes...)
-    wk_extra(int(nodes[d].b), int(globals[g].mod), h)
+    h
+
+# the program's top-level statements (not declarations), which run once, at start
+wk_top_hash = () -> int:
+    h = WH0
+    loop m in modules:
+        if m.is_prelude: continue
+        loop d in m.inits:
+            if has_flag(d, NF_GLOBAL) or nodes[d].pos == 0: continue
+            h = wk_text_hash(nodes[d].pos, h)
+    h
+
+wk_loop = () -> int:
+    out = 0
+    if update_fn != 0: out = 1
+    if draw_present(): out |= 2
+    out
 
 w_assets: str[]             # files named in declarations (watched, as the sources are)
 
@@ -317,6 +339,8 @@ watch_record_image = ():
     wm_data_next = align_up(img_data_addr + data_size + 8, 16)
     wm_data_end = img_data_addr + data_size + 8 + WATCH_DATA_RESERVE
     wm_game = update_fn != 0 or draw_present()
+    wm_loop = wk_loop()
+    wm_top = wk_top_hash()
     wm_files_collect()
 
 draw_present = () -> bool:
@@ -683,6 +707,8 @@ watch_make_patch = () -> bool:
         w_run_fn(wm_flatest[wm_fidx[keys[w_init_lf]]])
     wp_put(4, 0, [])
     wp_end()
+    wm_loop = wk_loop()
+    wm_top = wk_top_hash()
     wm_files_collect()
     true
 
@@ -748,7 +774,16 @@ watch_main = (path: str, args: str[]):
                 fresh = true
                 continue
             t0 = time()
-            if watch_compile(path, false): watch_send(t0)
+            loop0 = wm_loop
+            top0 = wm_top
+            if watch_compile(path, false):
+                if wm_loop != loop0:
+                    # (the game loop runs with the update and draw it started with)
+                    eprint("jot watch: update or draw was added or removed: starting the program again\n")
+                    fresh = true
+                    continue
+                watch_send(t0)
+                if wm_top != top0: eprint("jot watch: (top-level statements changed: they ran once, at start; r + enter starts the program again)\n")
             else:
                 eprint("jot watch: the program keeps running the last version that compiled\n")
                 # (and shows the errors)
@@ -878,7 +913,7 @@ watch_compile = (path: str, first: bool) -> bool:
 watch_write_result = (res: str):
     gm = 0
     if wm_game: gm = 1
-    t = "N\t{wm_next}\t{wm_data_next}\t{wm_data_end}\t{gm}\n"
+    t = "N\t{wm_next}\t{wm_data_next}\t{wm_data_end}\t{gm}\t{wm_loop}\t{wm_top}\n"
     t += "S"
     loop a in wm_stubs: t += "\t{a}"
     t += "\n"
@@ -915,11 +950,13 @@ watch_read_result = (res: str) -> bool:
         p = split(line, "\t")
         if p.len() == 0: continue
         k = p[0]
-        if k == "N" and p.len() >= 5:
+        if k == "N" and p.len() >= 7:
             wm_next = to_int(p[1]) ?? 0
             wm_data_next = to_int(p[2]) ?? 0
             wm_data_end = to_int(p[3]) ?? 0
             wm_game = p[4] == "1"
+            wm_loop = to_int(p[5]) ?? 0
+            wm_top = to_int(p[6]) ?? 0
         else if k == "S":
             loop i in [1..p.len()): wm_stubs.push(to_int(p[i]) ?? 0)
         else if k == "F" and p.len() >= 5: wm_add_fn(p[1], to_int(p[2]) ?? 0, to_int(p[3]) ?? 0, to_int(p[4]) ?? 0)

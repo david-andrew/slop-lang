@@ -228,6 +228,23 @@ def test_assets(d):
         w.quit()
 
 
+def test_restarts(d):
+    # what a running game cannot take: top-level statements (a hint), update/draw appearing
+    src = 'n = 0\nprint("start")\nupdate = (dt: f64):\n    n += 1\n    if n % 10 == 0: print("tick")\n    sleep(0.005)\n'
+    write(d, "g.jot", src)
+    w = Watch(d, "g.jot")
+    try:
+        w.expect(r"^start")
+        w.expect(r"tick")
+        write(d, "g.jot", src.replace('print("start")', 'print("start again")'))
+        w.expect(r"top-level statements changed")
+        write(d, "g.jot", src.replace('print("start")', 'print("start again")') + "draw = (): clear(BLACK)\n")
+        w.expect(r"update or draw was added or removed")
+        w.expect(r"^start again")
+    finally:
+        w.quit()
+
+
 def test_program(d):
     # without update/draw: run again from the start on each change
     write(d, "p.jot", 'print("run one")\n')
@@ -241,7 +258,7 @@ def test_program(d):
         w.quit()
 
 
-tests = [test_game, test_modules_release, test_migrate, test_assets, test_program]
+tests = [test_game, test_modules_release, test_migrate, test_assets, test_restarts, test_program]
 passed = failed = 0
 for t in tests:
     with tempfile.TemporaryDirectory() as d:

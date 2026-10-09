@@ -664,7 +664,9 @@ change to how something moves or looks shows at once.
 - A build with errors leaves the game running as it was, with the errors over it and in the
   terminal. A panic in `update` or `draw` pauses the game with the message on the screen; saving
   a fix goes on from there.
-- `r` (and enter) in the terminal starts the program again from the beginning; `q` quits.
+- `r` (and enter) in the terminal starts the program again from the beginning (`jot watch` says
+  when an edit needs it: top-level statements that changed); `q` quits. A game that gains or
+  loses `update` or `draw` is started again by itself.
 - A program without `update`/`draw` is run again from the start each time its files change.
 
 `jot watch` runs native builds (Linux), in debug or release mode as the build block says.
