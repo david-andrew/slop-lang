@@ -5,14 +5,23 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # by hand: publish an existing release's extension again, or print the Marketplace id of the
+  # Azure identity (a step of setting up publishing: docs/RELEASING.md)
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "the release whose extension to publish (vX.Y.Z)"
+        required: false
+      whoami:
+        description: "only print the Azure identity's Marketplace id"
+        type: boolean
+        default: false
 permissions:
   contents: write
 jobs:
   release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
-      OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,11 +53,45 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --title "Sloppy ${GITHUB_REF_NAME#v}" --generate-notes \
             --notes "Install or upgrade (or run \`sloppy update\`): on Linux \`curl -fsSL https://sloppy-lang.org/install | bash\`; on Windows, in PowerShell, \`irm https://sloppy-lang.org/install.ps1 | iex\`" \
             build/release/*
-      # The editor extension, to the VS Code Marketplace and Open VSX (each only once its token is
-      # a repository secret: VSCE_PAT, OVSX_PAT; a version already there is left alone)
-      - name: Publish the extension to the VS Code Marketplace
-        if: env.VSCE_PAT != ''
-        run: npx --yes @vscode/vsce publish --packagePath build/release/sloppy-*.vsix --skip-duplicate
-      - name: Publish the extension to Open VSX
-        if: env.OVSX_PAT != ''
-        run: npx --yes ovsx publish -i build/release/sloppy-*.vsix -p "$OVSX_PAT" --skip-duplicate
+
+  # The editor extension, to the VS Code Marketplace and Open VSX, with no stored tokens: GitHub's
+  # OIDC token is exchanged for short-lived ones (an Azure managed identity for the Marketplace,
+  # trusted publishing for Open VSX). Each store is skipped until its repository variable is set:
+  # AZURE_CLIENT_ID (+ AZURE_TENANT_ID) and OPENVSX_TRUSTED. Setup: docs/RELEASING.md.
+  extension:
+    needs: release
+    if: always() && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    environment: marketplace-publish
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: The release's extension
+        if: ${{ !inputs.whoami }}
+        run: |
+          mkdir -p ext
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "*.vsix" -D ext
+          ls ext
+      - name: Sign in to Azure (the Marketplace publisher's managed identity)
+        if: vars.AZURE_CLIENT_ID != ''
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: The identity's Marketplace id (to add it to the publisher's members)
+        if: inputs.whoami && vars.AZURE_CLIENT_ID != ''
+        run: az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me --resource 499b84ac-1321-427f-aa17-267ca6975798
+      - name: Publish to the VS Code Marketplace
+        if: ${{ !inputs.whoami && vars.AZURE_CLIENT_ID != '' }}
+        run: npx --yes @vscode/vsce@3 publish --packagePath ext/*.vsix --skip-duplicate --azure-credential
+      - name: Publish to Open VSX
+        if: ${{ !inputs.whoami && vars.OPENVSX_TRUSTED == 'true' }}
+        run: npx --yes ovsx publish -i ext/*.vsix --skip-duplicate --trusted-publishing
