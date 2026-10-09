@@ -167,10 +167,29 @@ def nav(here_page, prefix):
     return (f'<nav class="top"><a class="brand" href="{prefix}index.html"><img src="{prefix}icon-64.png" alt="">Sloppy</a>'
             f'<div class="links">{links}</div><div class="spacer"></div><a href="{REPO}">GitHub</a></nav>')
 
-def page(title, body, here_page, prefix, extra_head=""):
+SITE = "https://sloppy-lang.org"
+DESCRIPTION = ("A small, statically typed language for making games that feels like Python and runs like C. "
+               "It compiles in milliseconds, to a native Linux executable or a single web page.")
+
+# what chat apps and social sites show for a link (Open Graph, and Twitter's cards); the
+# image is assets/social.png (1200x630)
+def preview_meta(title, description, path):
+    t, d = html.escape(title, quote=True), html.escape(description, quote=True)
+    return (f'<meta name="description" content="{d}">'
+            f'<meta property="og:type" content="website"><meta property="og:site_name" content="Sloppy">'
+            f'<meta property="og:title" content="{t}"><meta property="og:description" content="{d}">'
+            f'<meta property="og:url" content="{SITE}/{path}">'
+            f'<meta property="og:image" content="{SITE}/social.png"><meta property="og:image:width" content="1200">'
+            f'<meta property="og:image:height" content="630">'
+            f'<meta property="og:image:alt" content="sloppy: a simple game dev language">'
+            f'<meta name="twitter:card" content="summary_large_image"><meta name="theme-color" content="#2f6a7a">')
+
+def page(title, body, here_page, prefix, extra_head="", description=DESCRIPTION):
+    path = "" if here_page == "index.html" else here_page
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{html.escape(title)}</title><link rel="icon" href="{prefix}icon-32.png"><link rel="stylesheet" href="{prefix}style.css">{extra_head}
+<title>{html.escape(title)}</title>{preview_meta(title, description, path)}
+<link rel="icon" href="{prefix}icon-32.png"><link rel="stylesheet" href="{prefix}style.css">{extra_head}
 </head><body>{nav(here_page, prefix)}
 {body}
 <footer>Sloppy &middot; <a href="{REPO}">source on GitHub</a> &middot; <a href="{REPO}/blob/master/LICENSE">MIT license</a></footer>
@@ -181,6 +200,11 @@ def page(title, body, here_page, prefix, extra_head=""):
 
 DOCS = [("start.html", "README.md", "Getting started"), ("language.html", "docs/LANGUAGE.md", "The language"),
         ("api.html", "docs/API.md", "Standard library"), ("report.html", "docs/REPORT.md", "Report")]
+DOC_DESCRIPTIONS = {
+    "start.html": "Install Sloppy, a simple game dev language, and write your first program and game.",
+    "language.html": "The Sloppy language: types, functions, structs and unions, numeric arrays, modules, parallelism, the game loop and calling C.",
+    "api.html": "Everything in Sloppy's standard library: strings, maps, math, files, threads, windows, input, 2D and 3D drawing, shaders and audio.",
+    "report.html": "Measured results for Sloppy's design goals: compile speed, program speed against C, and executable size."}
 
 def build_docs():
     os.makedirs(os.path.join(out, "docs"), exist_ok=True)
@@ -190,8 +214,8 @@ def build_docs():
         pages = "".join(f'<a class="{"on" if n == name else ""}" href="{n}">{t}</a>' for n, _, t in DOCS)
         tocs = "".join(f'<a class="h{n}" href="#{s}">{t}</a>' for n, s, t in toc)
         main = f'<div class="doc"><aside><div class="pages">{pages}</div><div class="toc">{tocs}</div></aside><main>{body}</main></div>'
-        here_page = "docs/start.html" if name == "start.html" else "docs/" + name
-        open(os.path.join(out, "docs", name), "w").write(page(f"{title} | Sloppy", main, here_page, "../"))
+        here_page = "docs/" + name
+        open(os.path.join(out, "docs", name), "w").write(page(f"{title} | Sloppy", main, here_page, "../", description=DOC_DESCRIPTIONS[name]))
 
 HOME = """
 <section class="hero">
@@ -241,17 +265,18 @@ def main():
     if os.path.exists(out): shutil.rmtree(out)
     os.makedirs(out)
     shutil.copy(os.path.join(here, "style.css"), out)
-    for f in ["icon-32.png", "icon-64.png", "logo-512.png"]: shutil.copy(os.path.join(root, "assets", f), out)
+    for f in ["icon-32.png", "icon-64.png", "logo-512.png", "social.png"]: shutil.copy(os.path.join(root, "assets", f), out)
     shutil.copytree(os.path.join(root, "assets"), os.path.join(out, "assets"))
     shutil.copy(os.path.join(root, "tools", "playground", "highlight.js"), out)
-    open(os.path.join(out, "index.html"), "w").write(page("Sloppy programming language", HOME, "index.html", ""))
+    open(os.path.join(out, "index.html"), "w").write(page("Sloppy: a simple game dev language", HOME, "index.html", ""))
     build_docs()
     os.makedirs(os.path.join(out, "playground"))
     subprocess.run([sys.executable, os.path.join(root, "tools", "playground.py"), os.path.join(out, "playground", "index.html")], check=True)
     # (the playground's title leads back to the site)
     pg = os.path.join(out, "playground", "index.html")
     t = open(pg).read().replace('<h1><span>Sloppy</span> playground</h1>', '<h1><a href="../" style="color:inherit"><span>Sloppy</span></a> playground</h1>', 1)
-    t = t.replace('<title>Sloppy playground</title>', '<title>Sloppy playground</title><link rel="icon" href="../icon-32.png">', 1)
+    t = t.replace('<title>Sloppy playground</title>', '<title>Sloppy playground</title><link rel="icon" href="../icon-32.png">'
+                  + preview_meta("Sloppy playground", "Write and run Sloppy programs and games in your browser: the compiler itself runs here, as WebAssembly.", "playground/"), 1)
     open(pg, "w").write(t)
     # curl -fsSL .../install | bash
     shutil.copy(os.path.join(root, "tools", "install.sh"), os.path.join(out, "install"))
