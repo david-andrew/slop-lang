@@ -49,8 +49,10 @@ const __BIG_KEEP = 64 << 20            # (native: at most this much is kept; a w
 __tstate: *int = null
 
 __ts = () -> *int:
-    if __tstate == null: __tstate = __os_pages((__MAX_THREADS + 1) * __TS_WORDS * 8) as *int
+    if __tstate == null: __ts_init()
     __tstate + __tid() * __TS_WORDS
+
+__ts_init = (): __tstate = __os_pages((__MAX_THREADS + 1) * __TS_WORDS * 8) as *int
 
 # number of live heap allocations (useful for leak tests)
 alloc_count = () -> int:
@@ -92,7 +94,24 @@ __alloc = (size: int) -> *u8: __alloc_z(size, true)
 # before it was freed is still there.
 __alloc_raw = (size: int) -> *u8: __alloc_z(size, false)
 
+# (the usual case first, small enough for release builds to inline: a block of the size class
+# freed before; the rest out of line)
 __alloc_z = (size: int, zero: bool) -> *u8:
+    n = size + 16
+    if n <= 262144:
+        t = __ts()
+        c = __size_class(n)
+        lists = (t + 3) as **u8
+        head = lists[c]
+        if head != null:
+            t[2] += 1
+            lists[c] = (head as **u8)[0]
+            if zero: mem_set(head + 16, 0, size)
+            (head as *int)[0] = c
+            return head + 16
+    __alloc_slow(size, zero)
+
+__alloc_slow = (size: int, zero: bool) -> *u8:
     t = __ts()
     t[2] += 1
     n = size + 16
@@ -108,14 +127,6 @@ __alloc_z = (size: int, zero: bool) -> *u8:
         return (h as *u8) + 16
     c = __size_class(n)
     csize = 32 << c
-    lists = (t + 3) as **u8
-    head = lists[c]
-    if head != null:
-        lists[c] = (head as **u8)[0]
-        if zero: mem_set(head + 16, 0, size)
-        h = head as *int
-        h[0] = c
-        return head + 16
     cur = t[0] as *u8
     if cur == null or cur + csize > t[1] as *u8:
         chunk = 4 << 20
@@ -127,21 +138,26 @@ __alloc_z = (size: int, zero: bool) -> *u8:
 
 __free = (p: *u8):
     if p == null: return
-    t = __ts()
-    t[2] -= 1
     h = (p - 16) as *int
     if h[1] == -1:
-        # (kept for the next large allocation: no fresh pages to fault in, and wasm memory is
-        # never given back anyway)
-        when TARGET == "wasm": __big_keep(t, h)
-        else:
-            if t[__TS_BIG + 1] + h[0] <= __BIG_KEEP: __big_keep(t, h)
-            else: __os_free_pages(h as *u8, h[0])
+        __free_big(h)
         return
+    t = __ts()
+    t[2] -= 1
     c = h[0]
     lists = (t + 3) as **u8
     (h as **u8)[0] = lists[c]
     lists[c] = h as *u8
+
+__free_big = (h: *int):
+    t = __ts()
+    t[2] -= 1
+    # (kept for the next large allocation: no fresh pages to fault in, and wasm memory is
+    # never given back anyway)
+    when TARGET == "wasm": __big_keep(t, h)
+    else:
+        if t[__TS_BIG + 1] + h[0] <= __BIG_KEEP: __big_keep(t, h)
+        else: __os_free_pages(h as *u8, h[0])
 
 __big_keep = (t: *int, h: *int):
     h[2] = t[__TS_BIG]
@@ -172,21 +188,28 @@ __big_take = (t: *int, total: int) -> *int:
 # remapped in place (no copy); small ones stay put if their size class has room.
 __grow_alloc = (p: *u8, used: int, size: int) -> *u8:
     h = (p - 16) as *int
-    n = size + 16
-    if h[1] == -1:
-        total = (n + 65535) & ~65535
-        if total <= h[0]: return p
-        when TARGET != "wasm":
-            q = syscall(25, h, h[0], total, 1, 0)
-            if q < 0 and q > -4096: __out_of_memory()
-            if total >= 2 << 20: syscall(28, q, total, 14)       # MADV_HUGEPAGE
-            (q as *int)[0] = total
-            return (q as *u8) + 16
-    else if n <= 32 << h[0]: return p
+    if h[1] == -1: return __grow_big(p, used, size)
+    if size + 16 <= 32 << h[0]: return p
     q = __alloc_raw(size)
     mem_copy(q, p, used)
     __free(p)
     q
+
+# (large blocks are remapped in place: no copy)
+__grow_big = (p: *u8, used: int, size: int) -> *u8:
+    h = (p - 16) as *int
+    total = (size + 16 + 65535) & ~65535
+    if total <= h[0]: return p
+    when TARGET != "wasm":
+        q = syscall(25, h, h[0], total, 1, 0)
+        if q < 0 and q > -4096: __out_of_memory()
+        if total >= 2 << 20: syscall(28, q, total, 14)       # MADV_HUGEPAGE
+        (q as *int)[0] = total
+        return (q as *u8) + 16
+    r = __alloc_raw(size)
+    mem_copy(r, p, used)
+    __free(p)
+    r
 
 # usable bytes of an allocation
 __alloc_size = (p: *u8) -> int:

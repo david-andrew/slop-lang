@@ -8,6 +8,8 @@ use 'opt.jot'
 
 const INLINE_MAX = 24       # callee size limit, in IR instructions
 const INLINE_LOOP_MAX = 96  # ... for a call in a loop to a leaf (a function that calls nothing)
+const INLINE_WRAPPER_MAX = 64   # ... for a leaf called once by a function at most this size
+inl_calls = 0               # calls (that return, not on rare paths) in the function being inlined into
 
 rel_fns: IrFn[]             # lowered functions, in lowering order
 rel_by_index: int[]         # lfunc index -> position in rel_fns (-1: not collected)
@@ -24,7 +26,9 @@ inlinable = (f: IrFn) -> int:
     loop ins in f.code:
         if ins.op == .call and ins.imm == f.fn_index: return 0         # recursive
         if ins.op == .intr and ins.imm >= 2: return 0                 # setjmp-like intrinsics
-        if (ins.op == .call and ins.c != 1) or ins.op == .calli or ins.op == .callc or ins.op == .syscall: leaf = false
+        # (calls on rarely taken paths, like the out-of-line refcounting during a parallel job,
+        # do not count)
+        if (ins.op == .call and ins.c == 0) or ins.op == .calli or ins.op == .callc or ins.op == .syscall: leaf = false
     if f.code.len() <= INLINE_MAX: return 1
     if leaf: return 2
     0
@@ -117,14 +121,30 @@ inline_call = (call: Ins, callee: IrFn, out: mut Ins[]):
 
 # the callee to inline for a call in a loop nest `depth` deep (-1: none)
 inline_target = (ins: Ins, depth: int, self_pos: int, snap: IrFn[], can: int[]) -> int:
+    j = inline_callee(ins, self_pos, snap)
+    if j < 0: return -1
+    if can[j] == 1 or (can[j] == 2 and depth > 0): return j
+    # a leaf into a caller that is little more than the call (a wrapper, like a map's get around
+    # its lookup): the caller becomes a leaf itself, which loops can then take in
+    if can[j] == 2 and ir.code.len() <= INLINE_WRAPPER_MAX and inl_calls == 1: return j
+    -1
+
+# the function a direct call (that returns) calls, if it was collected (-1: none)
+inline_callee = (ins: Ins, self_pos: int, snap: IrFn[]) -> int:
     if ins.op != .call or ins.c == 1 or ins.imm >= rel_by_index.len(): return -1
     j = rel_by_index[int(ins.imm)]
     if j < 0 or j == self_pos or int(ins.b) != snap[j].nparams: return -1
-    if can[j] == 1 or (can[j] == 2 and depth > 0): return j
-    -1
+    j
 
 # inline small callees into the current function (ir); returns true if anything changed
 inline_into = (self_pos: int, snap: IrFn[], can: int[]) -> bool:
+    # (the calls that stay: not inlined by size, not on a rarely taken path)
+    inl_calls = 0
+    loop ins in ir.code:
+        if ins.op == .calli or ins.op == .callc: inl_calls += 1
+        else if ins.op == .call and ins.c == 0:
+            j = inline_callee(ins, self_pos, snap)
+            if j < 0 or can[j] != 1: inl_calls += 1
     any = false
     depth = 0
     kinds: Op[]

@@ -24,16 +24,22 @@ hash = (x: bool) -> u64:
 
 hash = (x): __hash_value(x)
 
+# xs[i] where the library knows i is in bounds (the compiler leaves out the check; the C
+# bootstrap compiler calls this)
+__at[T] = (xs: T[], i: int) -> T: xs[i]
+
+# (slots has a power-of-two length when not empty, its entries are 0 or an entry index + 1,
+# and keys, vals and hashes have an element per entry: every index here is in bounds)
 __map_find[K, V] = (m: Map[K, V], k: K, h: u64) -> int:
     ns = m.slots.len()
     if ns == 0: return -1
     mask = ns - 1
     i = int(h) & mask
     loop true:
-        s = int(m.slots[i])
+        s = int(__at(m.slots, i))
         if s == 0: return -1
         e = s - 1
-        if m.hashes[e] == h and m.keys[e] == k: return e
+        if __at(m.hashes, e) == h and __at(m.keys, e) == k: return e
         i = (i + 1) & mask
 
 __map_rehash[K, V] = (m: mut Map[K, V], ns: int):
@@ -71,17 +77,17 @@ __map_rehash[K, V] = (m: mut Map[K, V], ns: int):
 ([])[K, V] = (m: Map[K, V], k: K) -> V:
     e = __map_find(m, k, hash(k))
     if e < 0: panic("key not found in map: {k}")
-    m.vals[e]
+    __at(m.vals, e)
 
 get[K, V] = (m: Map[K, V], k: K) -> V?:
     e = __map_find(m, k, hash(k))
     if e < 0: return none
-    m.vals[e]
+    __at(m.vals, e)
 
 get[K, V] = (m: Map[K, V], k: K, default: V) -> V:
     e = __map_find(m, k, hash(k))
     if e < 0: return default
-    m.vals[e]
+    __at(m.vals, e)
 
 contains[K, V] = (m: Map[K, V], k: K) -> bool: __map_find(m, k, hash(k)) >= 0
 has[K, V] = (m: Map[K, V], k: K) -> bool: __map_find(m, k, hash(k)) >= 0

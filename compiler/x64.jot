@@ -706,7 +706,8 @@ allocate = ():
             v = nxt[v]
 
 # release builds: two passes of linear scan. First the integer values living across calls
-# that are not on rarely taken paths get the callee-saved registers (where more want one than
+# in loops or several of them (not counting those on rarely taken paths) get the callee-saved
+# registers (where more want one than
 # there are, those used most); then the rest are allocated as by allocate, around them, with a
 # value living across calls given a caller-saved register (saved and reloaded around each call)
 # only when that costs less than spilling it. A bitmap per register marks the instructions pass
@@ -804,7 +805,10 @@ allocate_release = ():
                 active.pop()
             else: k += 1
         loop v >= 0:
-            if cross[v] > 0 and vtype(v) == VI:
+            # (a value crossing just one call outside loops: a caller-saved register saved
+            # around it costs the same when the call is made, and nothing on paths without it,
+            # where a callee-saved one is saved and restored on every path)
+            if cross[v] > 1 and vtype(v) == VI:
                 reg = -1
                 loop r in callee_pool:
                     used = false
@@ -884,9 +888,11 @@ allocate_release = ():
                                 reg = XMM + x
                                 break
                 else:
+                    # (across calls: a callee-saved register; across just one outside loops,
+                    # one the prologue saves already, else a caller-saved one first)
                     if c > 0:
                         loop r in callee_pool:
-                            if free[r] and ra_free(r, s, e):
+                            if free[r] and (c > 1 or callee_off[r] != 0) and ra_free(r, s, e):
                                 reg = r
                                 break
                     if reg < 0 and caller_ok:
@@ -894,7 +900,7 @@ allocate_release = ():
                             if free[r] and ra_free(r, s, e):
                                 reg = r
                                 break
-                    if reg < 0 and c == 0:
+                    if reg < 0 and c <= 1:
                         loop r in callee_pool:
                             if free[r] and ra_free(r, s, e):
                                 reg = r

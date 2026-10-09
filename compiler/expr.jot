@@ -1091,6 +1091,13 @@ check_expr_in_module = (n: int, m: int) -> int:
 
 id_len = 0
 
+id_at = 0
+is_unchecked_at = (n: int) -> bool:
+    callee = int(nodes[n].a)
+    if nodes[callee].kind != .ident or nkids(n) != 2: return false
+    if id_at == 0: id_at = intern("__at")
+    int(nodes[callee].name) == id_at and modules[cur_mod()].is_prelude
+
 check_call = (n: int, expected: int) -> int:
     callee = int(nodes[n].a)
     args = kids(n)
@@ -2239,6 +2246,14 @@ check_expr = (n: int, expected: int) -> int:
         t = et
     else if k == .call:
         if has_flag(n, NF_BROADCAST): return check_dotted(n, expected)
+        if is_unchecked_at(n):
+            # __at(xs, i) in the core library: xs[i] where the library knows i is in bounds
+            args = kids(n)
+            nodes[n].kind = .index
+            nodes[n].a = i32(args[0])
+            nodes[n].b = i32(args[1])
+            add_flag(n, NF_INBOUNDS)
+            return check_expr(n, expected)
         t = check_call(n, expected)
     else if k == .index:
         bt = prune(check_expr(int(nodes[n].a), 0))
