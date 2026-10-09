@@ -103,7 +103,7 @@ __backtrace_print = (rets: int[], exe: u8[]):
                 break
             s += 24
         # (runtime and library internals are left out)
-        if len(fname) == 0 or starts_with(fname, "f___"):
+        if len(fname) == 0 or starts_with(fname, "__") or fname == "_start":
             hidden += 1
             continue
         lo = 0
@@ -126,16 +126,8 @@ __backtrace_print = (rets: int[], exe: u8[]):
         __write_err("{how}{__fn_display(fname)}{where}\n")
         shown += 1
 
-# f_update_12 -> update; f_init_game_3 -> the top level of game; f_lambda_7 -> a function literal
-__fn_display = (sym: str) -> str:
-    s = sym
-    if starts_with(s, "f_"): s = s[2..]
-    u = rfind(s, "_")
-    if u > 0:
-        digits = true
-        loop c in s[u + 1..]:
-            if c < '0' or c > '9': digits = false
-        if digits: s = s[..u)
+# (the compiler's names: init_game is the top level of game; lambda a function literal)
+__fn_display = (s: str) -> str:
     if starts_with(s, "init_"): return "the top level of {s[5..]}"
     if s == "lambda": return "a function literal"
     s

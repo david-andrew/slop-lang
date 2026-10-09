@@ -76,6 +76,7 @@ struct IrFn:
     fn_index: int
     raw_mem: bool     # dereferences raw pointers (disables type-based alias reasoning)
     kval: int[]       # values of VK vregs (indexed by vreg; may be shorter than vtypes)
+    decl_pos: int     # the line of its declaration (an index into ir_positions; 0: none)
 
 # current function being built
 ir: IrFn
@@ -136,6 +137,32 @@ ir_cold = false
 # as an index into ir_positions
 ir_positions: int[] = [0]
 ir_pos = 0
+
+# the line of each position id, worked out at once (the ids mostly follow the source, so the
+# next one is usually on the same line or a little further: a step from the last, not a search)
+ir_lines: int[]
+ir_line = (i: int) -> int:
+    if ir_lines.len() != ir_positions.len():
+        ir_lines = fill(0, ir_positions.len())
+        lf = -1
+        li = 0
+        ls: int[]
+        loop k in [1..ir_positions.len()):
+            p = ir_positions[k]
+            f = pos_file(p)
+            if f < 0 or f >= files.len(): continue
+            off = pos_off(p)
+            if f != lf:
+                line_col(p)                    # (makes the file's line starts)
+                ls = line_starts[f]
+                lf = f
+                li = 0
+            if off < ls[li] or li + 4 < ls.len() and off >= ls[li + 4]: li = line_col(p).0 - 1
+            else:
+                loop li + 1 < ls.len() and ls[li + 1] <= off: li += 1
+            ir_lines[k] = li + 1
+    if i <= 0 or i >= ir_lines.len(): return 0
+    ir_lines[i]
 
 ir_set_pos = (p: int):
     if p == 0: return

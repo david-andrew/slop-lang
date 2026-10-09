@@ -3628,7 +3628,9 @@ begin_fn = (name: str, idx: int):
 
 lower_inst = (lf: int, f: int):
     begin_fn(fns[f].sym, lf)
-    if fns[f].decl != 0: ir_set_pos(nodes[int(fns[f].decl)].pos)
+    if fns[f].decl != 0:
+        ir_set_pos(nodes[int(fns[f].decl)].pos)
+        ir.decl_pos = ir_pos
     cur_fn = f
     cur_closed = -1
     cur_ret = int(fns[f].ret)

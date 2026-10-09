@@ -64,9 +64,17 @@ pos_off = (p: int) -> int: p & 0xFFFFFFFFFF
 
 line_starts: int[][]
 
+# (the line found last: positions often come one after another on a line)
+lc_file = -1
+lc_start = 0
+lc_end = 0
+lc_line = 0
+
 line_col = (p: int) -> (int, int):
     f = pos_file(p)
     if f < 0 or f >= files.len(): return (0, 0)
+    off0 = pos_off(p)
+    if f == lc_file and off0 >= lc_start and off0 < lc_end: return (lc_line, off0 - lc_start + 1)
     loop line_starts.len() <= f: line_starts.push([])
     if line_starts[f].len() == 0:
         ls = [0]
@@ -75,13 +83,19 @@ line_col = (p: int) -> (int, int):
             if c == '\n': ls.push(i + 1)
         line_starts[f] = ls
     off = pos_off(p)
-    ls = data(line_starts[f])
+    # (indexed directly: data() of an element would copy the whole array first)
+    ls = line_starts[f]
     lo = 0
-    hi = line_starts[f].len() - 1
+    hi = ls.len() - 1
     loop lo < hi:
         mid = (lo + hi + 1) / 2
         if ls[mid] <= off: lo = mid
         else: hi = mid - 1
+    lc_file = f
+    lc_start = ls[lo]
+    lc_end = 1 << 62
+    if lo + 1 < ls.len(): lc_end = ls[lo + 1]
+    lc_line = lo + 1
     (lo + 1, off - ls[lo] + 1)
 
 pos_str = (p: int) -> str:

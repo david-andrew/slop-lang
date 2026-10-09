@@ -317,6 +317,10 @@ panic: hit an enemy that was already defeated
 (Release builds inline small functions: their frames show as the line of the call. In a web
 page the browser's console has the JavaScript stack.)
 
+**Debuggers and profilers.** Executables written by `sloppy build` carry DWARF line tables and
+function names, so gdb works with the `.jo` source (`break game.jo:31`, `bt`, `next`, `list`)
+and perf and other profilers report functions and lines.
+
 **Combined loops.** Bindings and conditions join with `and` / `or` in one loop header:
 
 ```gdscript

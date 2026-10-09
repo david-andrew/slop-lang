@@ -1,0 +1,152 @@
+# DWARF 4 debugging information for native executables: one compile unit and a line table
+# (address -> file and line, from the source position of each instruction). With it gdb shows
+# the Sloppy source (`break game.jo:31`, `list`, `bt`, stepping by line) and perf and other
+# profilers attribute samples to lines. Function names are in .symtab (elf.jo).
+
+use 'util.jo'
+use 'ir.jo'
+use 'elf.jo'
+use 'x64.jo'
+
+uleb = (out: mut u8[], v0: int):
+    if v0 >= 0 and v0 < 128:
+        out.push(u8(v0))
+        return
+    v = v0
+    loop v >= 128:
+        out.push(u8((v & 127) | 128))
+        v = v >> 7
+    out.push(u8(v))
+
+sleb = (out: mut u8[], v0: int):
+    v = v0
+    loop true:
+        byte = v & 127
+        v = v >> 7
+        if (v == 0 and byte & 64 == 0) or (v == -1 and byte & 64 != 0):
+            out.push(u8(byte))
+            return
+        out.push(u8(byte | 128))
+
+cstr = (out: mut u8[], s: str):
+    loop c in s: out.push(c)
+    out.push(0)
+
+# the .debug_abbrev, .debug_info and .debug_line sections for code at text_addr
+dwarf_sections = (text_addr: int, text_len: int, main_path: str, version: str) -> (str, u8[])[]:
+    if line_rows.len() == 0: return []
+    cwdb = fill(u8(0), 4096)
+    n = syscall(79, data(cwdb), 4096)
+    cwd = "/"
+    if n > 0: cwd = str_from_bytes(cwdb[..n - 1))
+    abs = (p: str) -> str:
+        if starts_with(p, "/"): return p
+        "{cwd}/{p}"
+    # files, numbered from 1
+    fidx = fill(0, files.len())
+    fnames: str[]
+    k = 0
+    loop k < line_rows.len():
+        if line_rows[k + 1] == 0:
+            k += 2
+            continue
+        f = pos_file(ir_positions[line_rows[k + 1]])
+        if f >= 0 and f < files.len() and fidx[f] == 0:
+            fnames.push(abs(files[f].path))
+            fidx[f] = fnames.len()
+        k += 2
+    # .debug_line: header, then the program (one sequence over all of .text)
+    hdr: u8[]
+    hdr.push(1)                 # minimum_instruction_length
+    hdr.push(1)                 # maximum_operations_per_instruction
+    hdr.push(1)                 # default_is_stmt
+    hdr.push(u8(-5 & 255))      # line_base
+    hdr.push(14)                # line_range
+    hdr.push(13)                # opcode_base
+    loop x in [0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1]: hdr.push(u8(x))
+    hdr.push(0)                 # no include directories
+    loop nm in fnames:
+        cstr(hdr, nm)
+        hdr.push(0)             # directory, mtime, length
+        hdr.push(0)
+        hdr.push(0)
+    hdr.push(0)
+    prog: u8[]
+    prog.reserve(line_rows.len() * 3 + 64)
+    prog.push(0)                # DW_LNE_set_address
+    uleb(prog, 9)
+    prog.push(2)
+    put64(prog, text_addr)
+    addr = 0
+    line = 1
+    file = 1
+    k = 0
+    loop k < line_rows.len():
+        p = ir_positions[line_rows[k + 1]]
+        f = file
+        l = 0                       # (0: code with no source line)
+        if line_rows[k + 1] != 0:
+            pf = pos_file(p)
+            f = 0
+            if pf >= 0 and pf < files.len(): f = fidx[pf]
+            if f == 0:
+                k += 2
+                continue
+            l = ir_line(line_rows[k + 1])
+        if f == file and l == line and line_rows[k + 1] != 0 and k > 0:
+            k += 2
+            continue
+        if f != file:
+            prog.push(4)            # DW_LNS_set_file
+            uleb(prog, f)
+            file = f
+        if l != line:
+            prog.push(3)            # DW_LNS_advance_line
+            sleb(prog, l - line)
+            line = l
+        if line_rows[k] != addr:
+            prog.push(2)            # DW_LNS_advance_pc
+            uleb(prog, line_rows[k] - addr)
+            addr = line_rows[k]
+        prog.push(1)                # DW_LNS_copy
+        k += 2
+    if text_len > addr:
+        prog.push(2)
+        uleb(prog, text_len - addr)
+    prog.push(0)                    # DW_LNE_end_sequence
+    uleb(prog, 1)
+    prog.push(1)
+    line_sec: u8[]
+    put32(line_sec, 2 + 4 + hdr.len() + prog.len())
+    put16(line_sec, 4)
+    put32(line_sec, hdr.len())
+    append_bytes(line_sec, hdr)
+    append_bytes(line_sec, prog)
+    # .debug_abbrev: a compile unit without children
+    ab: u8[]
+    uleb(ab, 1)
+    uleb(ab, 0x11)                  # DW_TAG_compile_unit
+    ab.push(0)                      # DW_CHILDREN_no
+    loop pr in [(0x25, 0x08), (0x13, 0x05), (0x03, 0x08), (0x1b, 0x08), (0x11, 0x01), (0x12, 0x07), (0x10, 0x17)]:
+        uleb(ab, pr.0)
+        uleb(ab, pr.1)
+    ab.push(0)
+    ab.push(0)
+    ab.push(0)
+    # .debug_info: that unit
+    die: u8[]
+    uleb(die, 1)
+    cstr(die, "sloppy {version}")   # DW_AT_producer
+    put16(die, 0x0002)              # DW_AT_language: DW_LANG_C (the closest a debugger knows)
+    cstr(die, abs(main_path))       # DW_AT_name
+    cstr(die, cwd)                  # DW_AT_comp_dir
+    put64(die, text_addr)           # DW_AT_low_pc
+    put64(die, text_len)            # DW_AT_high_pc (a length)
+    put32(die, 0)                   # DW_AT_stmt_list
+    info: u8[]
+    put32(info, 2 + 4 + 1 + die.len())
+    put16(info, 4)
+    put32(info, 0)                  # abbreviations at 0
+    info.push(8)                    # address size
+    append_bytes(info, die)
+    [(".debug_abbrev", ab), (".debug_info", info), (".debug_line", line_sec)]

@@ -2133,12 +2133,23 @@ x64_function = ():
     fused_cc = -1
     fuse_skip = -1
     fold_load = -1
+    # (the prologue is the declaration's line, the body's first line comes after it: where
+    # debuggers put a breakpoint on the function)
+    row_pos = -1
+    row_line = -1
+    if ir.decl_pos != 0: line_row(ir.decl_pos)
+    else:
+        loop ins in ir.code:
+            if ins.pos != 0:
+                line_row(int(ins.pos))
+                break
     emit_prologue()
     ci = 0
     save_list.sort_by((v: int): live_start(v))
     save_next = 0
     save_active.clear()
     loop pos in 0.. and ins in ir.code:
+        line_row(int(ins.pos))
         if ci < call_pos.len() and call_pos[ci] == pos and save_list.len() > 0:
             # values in caller-saved registers live across this call (a sweep: calls come in order)
             loop save_next < save_list.len() and live_start(save_list[save_next]) < pos:
@@ -2161,7 +2172,7 @@ x64_function = ():
                     else: ra_save_cost += 2 * call_w[ci]
         else: emit_ins(pos, ins)
         if ci < call_pos.len() and call_pos[ci] == pos: ci += 1
-    elf_syms.push((ir.name, fn_start, code.len() - fn_start))
+    elf_syms.push((sym_name(ir.name), fn_start, code.len() - fn_start))
     fn_len[ir.fn_index] = code.len() - fn_start
     if ra_stat:
         if ra_verbose:
@@ -2193,9 +2204,26 @@ save_around_call = (pos: int, before: bool, dst: int):
             else: mov_rm(r, RBP, vspill[v])
 
 # entry point: runs module initializers and main
+# a function's name for debuggers and profilers: f_update_12 -> update (instances and
+# overloads share names; the runtime's names start with __)
+sym_name = (n: str) -> str:
+    if not starts_with(n, "f_"): return n
+    s = n[2..]
+    u = rfind(s, "_")
+    if u > 0:
+        loop c in s[u + 1..]:
+            if c < '0' or c > '9': return s
+        return s[..u)
+    s
+
 x64_entry = (inits: int[], main_lf: int) -> int:
     loop code.len() % 16 != 0: b(0xCC)
     start = code.len()
+    # (no source line: line 0)
+    line_rows.push(code.len())
+    line_rows.push(0)
+    row_pos = 0
+    row_line = 0
     rel_fixup_lea(RAX, 1, 0)
     mov_mr(RAX, 0, RSP)                       # save initial stack pointer (argc/argv)
     rex(true, 0, 0, RSP, false)
@@ -2231,11 +2259,27 @@ x64_entry = (inits: int[], main_lf: int) -> int:
     b(0x31); b(0xFF)                          # xor edi, edi
     mov_imm(RAX, 231)
     b(0x0F); b(0x05)                          # exit_group
+    # (the entry point: debuggers stop unwinding here)
+    elf_syms.push(("_start", start, code.len() - start))
     start
 
 # where each call returns to, and the source position of the call (an index into
-# ir_positions): the line table of backtraces (lib/core/rt.jo, __backtrace)
+# ir_positions): the line table of backtraces (lib/std/backtrace.jo)
 call_sites: int[]
+# (code offset, position) where the source position changes: the line table of debuggers
+# (dwarf.jo)
+line_rows: int[]
+row_pos = -1
+
+row_line = -1
+row_file = -1
+
+# (a row where the position changes; dwarf.jo leaves out those on the same line)
+line_row = (pos: int):
+    if pos == 0 or pos == row_pos: return
+    row_pos = pos
+    line_rows.push(code.len())
+    line_rows.push(pos)
 
 call_site = (ins: Ins):
     if ins.pos == 0: return
@@ -2248,30 +2292,32 @@ call_site = (ins: Ins):
 x64_line_table = () -> u8[]:
     if call_sites.len() == 0: return []
     out: u8[] = ['S', 'L', 'N', '1']
-    fidx: {int: int} = {}
+    fidx = fill(-1, files.len())
     fnames: str[]
     ents: int[]
+    ents.reserve(call_sites.len() * 3 / 2)
     k = 0
     loop k < call_sites.len():
-        p = ir_positions[call_sites[k + 1]]
-        f = pos_file(p)
-        if fidx.get(f) == none:
+        f = pos_file(ir_positions[call_sites[k + 1]])
+        if f < 0 or f >= files.len():
+            k += 2
+            continue
+        if fidx[f] < 0:
             fidx[f] = fnames.len()
-            path = "?"
-            if f >= 0 and f < files.len(): path = files[f].path
+            path = files[f].path
             s = rfind(path, "/")
             if s >= 0: path = path[s + 1..]
             fnames.push(path)
-        l, c = line_col(p)
         ents.push(call_sites[k])
         ents.push(fidx[f])
-        ents.push(l)
+        ents.push(ir_line(call_sites[k + 1]))
         k += 2
     put32(out, fnames.len())
     loop nm in fnames:
         put32(out, len(nm))
         loop ch in nm: out.push(ch)
     put32(out, ents.len() / 3)
+    out.reserve(out.len() + ents.len() * 2)
     last = 0
     k = 0
     loop k < ents.len():
@@ -2283,6 +2329,9 @@ x64_line_table = () -> u8[]:
     out
 
 put_varint = (out: mut u8[], v0: int):
+    if v0 >= 0 and v0 < 128:
+        out.push(u8(v0))
+        return
     v = v0
     loop v >= 128:
         out.push(u8((v & 127) | 128))
@@ -2295,6 +2344,10 @@ stub_addr: int[] = [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
 # machine code stubs for non-local control transfer
 x64_stubs = ():
     loop code.len() % 16 != 0: b(0xCC)
+    line_rows.push(code.len())
+    line_rows.push(0)
+    row_pos = 0
+    row_line = 0
     # setjmp(rdi = buf): save callee-saved registers, stack pointer and return address
     stub_addr[2] = code.len()
     loop i in 0.. and r in [RBX, RBP, 12, 13, 14, 15]: mov_mr(RDI, 8 * i, r)
