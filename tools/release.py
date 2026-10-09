@@ -16,6 +16,11 @@ if "--tag" in sys.argv:
     tag = sys.argv[sys.argv.index("--tag") + 1]
     if tag != "v" + version:
         sys.exit(f"the tag {tag} is not the compiler's version {version} (SLOPPY_VERSION in compiler/main.jo)")
+# (the extension is published with each release: its version must be new too)
+import json
+ext_version = json.load(open(os.path.join(root, "editors", "vscode", "package.json")))["version"]
+if "--tag" in sys.argv and ext_version != version:
+    sys.exit(f"the editor extension's version {ext_version} (editors/vscode/package.json) is not the compiler's {version}")
 if os.path.exists(out): shutil.rmtree(out)
 os.makedirs(out)
 vsix = os.path.join(out, f"sloppy-{version}.vsix")

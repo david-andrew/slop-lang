@@ -10,6 +10,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -41,3 +44,11 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --title "Sloppy ${GITHUB_REF_NAME#v}" --generate-notes \
             --notes "Install or upgrade (or run \`sloppy update\`): on Linux \`curl -fsSL https://sloppy-lang.org/install | bash\`; on Windows, in PowerShell, \`irm https://sloppy-lang.org/install.ps1 | iex\`" \
             build/release/*
+      # The editor extension, to the VS Code Marketplace and Open VSX (each only once its token is
+      # a repository secret: VSCE_PAT, OVSX_PAT; a version already there is left alone)
+      - name: Publish the extension to the VS Code Marketplace
+        if: env.VSCE_PAT != ''
+        run: npx --yes @vscode/vsce publish --packagePath build/release/sloppy-*.vsix --skip-duplicate
+      - name: Publish the extension to Open VSX
+        if: env.OVSX_PAT != ''
+        run: npx --yes ovsx publish -i build/release/sloppy-*.vsix -p "$OVSX_PAT" --skip-duplicate
