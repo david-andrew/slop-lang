@@ -1,0 +1,23 @@
+# requires: sloppy
+# a one-line if expression as an argument ends at the comma; `none` as an enum variant
+f = (x: int, y: int) -> int: x * 10 + y
+c = true
+print(f(if c: 1 else: 2, 3), f(4, if not c: 5 else: 6))
+a = 1
+b = 2
+if c: a, b = b, a
+t = if c: (1, 2) else: (3, 4)
+print(a, b, t)
+enum Filter: none, blur, sharpen
+g = Filter.none
+print(g, g == .none)
+h: Filter = .blur
+loop x in [g, h]:
+    match x:
+        none: print("none")
+        blur: print("blur")
+        sharpen: print("sharpen")
+o: int? = none
+match o:
+    none: print("no value")
+    _: print("value")

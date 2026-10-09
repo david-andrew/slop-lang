@@ -2025,6 +2025,11 @@ check_match = (m: int, expected: int) -> int:
                 nodes[id].name = nodes[p].name
                 nodes[p] = Node(kind = .plit, pos = nodes[p].pos, a = i32(id))
                 pk = .plit
+            if pk == .plit and nodes[int(nodes[p].a)].kind == .none_lit and types[st].kind == .enum_ and find_variant(int(types[st].st), intern("none")) >= 0:
+                # `none:` matching an enum with a variant named none is that variant
+                d = mk(.dotname, nodes[p].pos)
+                nodes[d].name = i32(intern("none"))
+                nodes[p].a = i32(d)
             if pk == .plit:
                 e = int(nodes[p].a)
                 check_expr(e, st)

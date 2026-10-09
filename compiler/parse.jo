@@ -79,8 +79,9 @@ partner = (i: int) -> int:
 
 # keywords that are also fine as names after '.', in enum variants and in match patterns
 is_soft_kw = (k: Tok) -> bool: k == .kw_loop or k == .kw_xor or k == .kw_is or k == .kw_let
+# (also `none`, after a dot or as an enum variant: E.none, .none)
 expect_name = (what: str) -> int:
-    if is_soft_kw(pk()): return intern(tok_src(advance()))
+    if is_soft_kw(pk()) or pk() == .kw_none: return intern(tok_src(advance()))
     expect_ident(what)
 
 # old syntax gets a pointer to the new
@@ -501,7 +502,7 @@ parse_primary = () -> int:
         expect(.rbrace, "")
         set_list(n, pairs)
         return n
-    if k == .kw_if: return parse_if()
+    if k == .kw_if: return parse_if_expr()
     if k == .kw_match: return parse_match()
     if k == .ident or k == .int_lit: fatal(pos, "unexpected '{tok_src(t)}'")
     if k == .indent: fatal(pos, "unexpected indentation (this line is indented deeper than the lines around it)")
@@ -1072,6 +1073,15 @@ comp_ident = (name: int, pos: int) -> int:
     nodes[n].name = i32(name)
     n
 
+# an if inside an expression: f(if c: a else: b, x), where a branch on the same line ends at
+# a comma (a tuple there needs parentheses, as in a one-line function literal)
+parse_if_expr = () -> int:
+    saved = p_no_tuple
+    p_no_tuple = true
+    n = parse_if()
+    p_no_tuple = saved
+    n
+
 parse_if = () -> int:
     pos = cur_pos()
     expect(.kw_if, "")
@@ -1085,7 +1095,11 @@ parse_if = () -> int:
     nodes[n].a = i32(parse_expr())
     p_header = saved_h
     expect(.colon, "")
+    # (an indented branch is statements again, where commas make tuples)
+    saved_nt = p_no_tuple
+    if pk() == .newline: p_no_tuple = false
     nodes[n].b = i32(parse_block())
+    p_no_tuple = saved_nt
     save = ti
     if pk() == .newline and pkn(1) == .kw_else and not has_flag(int(nodes[n].b), NF_TERMINATED): advance()
     if pk() == .kw_else:
@@ -1098,7 +1112,10 @@ parse_if = () -> int:
             nodes[n].c = i32(b)
         else:
             expect(.colon, "")
+            saved_nt = p_no_tuple
+            if pk() == .newline: p_no_tuple = false
             nodes[n].c = i32(parse_block())
+            p_no_tuple = saved_nt
         if has_flag(int(nodes[n].c), NF_TERMINATED): add_flag(n, NF_TERMINATED)
     else:
         ti = save
