@@ -308,7 +308,337 @@ load_image = (file: u8[]) -> Image:
     if let img = load_png(file): return img
     panic("unsupported or corrupt image (only PNG is supported)")
 
-# ---------------- PNG writing (uncompressed deflate blocks) ----------------
+# ---------------- deflate (RFC 1951) ----------------
+# LZ77 over a 32 KB window (hash chains), written as blocks with their own Huffman codes
+
+struct __Bits:
+    out: u8[]
+    buf: int
+    cnt: int
+
+__put = (w: mut __Bits, v: int, n: int):
+    w.buf |= v << w.cnt
+    w.cnt += n
+    loop w.cnt >= 8:
+        w.out.push(u8(w.buf & 255))
+        w.buf = w.buf >> 8
+        w.cnt -= 8
+
+# code lengths (at most `limit` bits) for symbol frequencies: Huffman's, with the frequencies
+# flattened until the longest code fits
+__huff_lengths = (freq0: int[], limit: int) -> int[]:
+    n = freq0.len()
+    freq = freq0
+    lens = fill(0, n)
+    loop true:
+        keys: int[]
+        loop s in [0..n):
+            if freq[s] > 0: keys.push(freq[s] * 1024 + s)
+        if keys.len() == 0: return lens
+        if keys.len() == 1:
+            lens[keys[0] % 1024] = 1
+            return lens
+        keys.sort()
+        m = keys.len()
+        # leaves 0..m-1 (by weight), then the joined nodes in the order they are made
+        weight = fill(0, 2 * m)
+        parent = fill(0, 2 * m)
+        loop i in [0..m): weight[i] = keys[i] / 1024
+        li = 0
+        ni = m
+        nx = m
+        loop nx < 2 * m - 1:
+            a = 0
+            if li < m and (ni >= nx or weight[li] <= weight[ni]):
+                a = li
+                li += 1
+            else:
+                a = ni
+                ni += 1
+            b = 0
+            if li < m and (ni >= nx or weight[li] <= weight[ni]):
+                b = li
+                li += 1
+            else:
+                b = ni
+                ni += 1
+            weight[nx] = weight[a] + weight[b]
+            parent[a] = nx
+            parent[b] = nx
+            nx += 1
+        depth = fill(0, 2 * m)
+        k = 2 * m - 3
+        loop k >= 0:
+            depth[k] = depth[parent[k]] + 1
+            k -= 1
+        longest = 0
+        loop i in [0..m):
+            lens[keys[i] % 1024] = depth[i]
+            longest = max(longest, depth[i])
+        if longest <= limit: return lens
+        loop s in [0..n):
+            if freq[s] > 0: freq[s] = (freq[s] >> 1) + 1
+
+# canonical codes for code lengths, bit-reversed (deflate sends codes from the top bit)
+__huff_codes = (lens: int[]) -> int[]:
+    count = fill(0, 16)
+    loop l in lens: count[l] += 1
+    count[0] = 0
+    next = fill(0, 16)
+    code = 0
+    loop b in [1..16):
+        code = (code + count[b - 1]) << 1
+        next[b] = code
+    codes = fill(0, lens.len())
+    loop s in 0.. and l in lens:
+        if l == 0: continue
+        c = next[l]
+        next[l] += 1
+        r = 0
+        loop i in [0..l):
+            r = (r << 1) | ((c >> i) & 1)
+        codes[s] = r
+    codes
+
+__len_code: int[]               # length 3..258 -> its symbol - 257
+__dist_lo: int[]                # distance 1..256 -> its code
+__dist_hi: int[]                # (distance - 1) >> 7 -> its code, for longer ones
+
+__deflate_tables = ():
+    if __len_code.len() > 0: return
+    __len_code = fill(0, 259)
+    loop c in [0..29):
+        loop l in [__len_base[c]..min(__len_base[c] + (1 << __len_extra[c]), 259)): __len_code[l] = c
+    __len_code[258] = 28
+    __dist_lo = fill(0, 256)
+    __dist_hi = fill(0, 256)
+    loop c in [0..30):
+        loop d in [__dist_base[c]..__dist_base[c] + (1 << __dist_extra[c])):
+            if d <= 256: __dist_lo[d - 1] = c
+            else: __dist_hi[(d - 1) >> 7] = c
+
+__dist_code = (d: int) -> int:
+    if d <= 256: return __dist_lo[d - 1]
+    __dist_hi[(d - 1) >> 7]
+
+# one block of src[from..to): lits holds literals (0..255) and lengths (256 + length), dists
+# the distance of each length (0 for a literal). Written the shortest way: with codes made for
+# it, with the fixed codes, or stored as it is.
+__deflate_block = (w: mut __Bits, lits: int[], dists: int[], last: bool, src: u8[], from: int, to: int):
+    lf = fill(0, 286)
+    df = fill(0, 30)
+    loop i in 0.. and v in lits:
+        if v < 256: lf[v] += 1
+        else:
+            lf[257 + __len_code[v - 256]] += 1
+            df[__dist_code(dists[i])] += 1
+    lf[256] = 1
+    # (two distance codes at least, as some inflaters expect)
+    if df[0] == 0: df[0] = 1
+    if df[1] == 0: df[1] = 1
+    ll = __huff_lengths(lf, 15)
+    dl = __huff_lengths(df, 15)
+    nlit = 286
+    loop nlit > 257 and ll[nlit - 1] == 0: nlit -= 1
+    ndist = 30
+    loop ndist > 1 and dl[ndist - 1] == 0: ndist -= 1
+    # the code lengths, run-length coded: 16 repeats the last 3-6 times, 17 and 18 are runs of
+    # zeros (3-10, 11-138)
+    all = ll[..nlit) + dl[..ndist)
+    cl: int[]
+    cx: int[]
+    i = 0
+    loop i < all.len():
+        v = all[i]
+        r = 1
+        loop i + r < all.len() and all[i + r] == v: r += 1
+        if v == 0 and r >= 3:
+            r = min(r, 138)
+            if r <= 10:
+                cl.push(17)
+                cx.push(r - 3)
+            else:
+                cl.push(18)
+                cx.push(r - 11)
+            i += r
+        else if v != 0 and r >= 4:
+            cl.push(v)
+            cx.push(0)
+            rest = min(r - 1, 6)
+            cl.push(16)
+            cx.push(rest - 3)
+            i += 1 + rest
+        else:
+            cl.push(v)
+            cx.push(0)
+            i += 1
+    cf = fill(0, 19)
+    loop c in cl: cf[c] += 1
+    clens = __huff_lengths(cf, 7)
+    ccodes = __huff_codes(clens)
+    order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+    ncl = 19
+    loop ncl > 4 and clens[order[ncl - 1]] == 0: ncl -= 1
+    # the size each way, in bits
+    fl = __fixed_lit_lengths()
+    extra = 0
+    dyn = 3 + 14 + 3 * ncl
+    fix = 3 + 7
+    loop c in [0..286):
+        dyn += lf[c] * ll[c]
+        fix += lf[c] * fl[c]
+        if c >= 257: extra += lf[c] * __len_extra[c - 257]
+    loop c in [0..30):
+        dyn += df[c] * dl[c]
+        fix += df[c] * 5
+        extra += df[c] * __dist_extra[c]
+    # (the two distance codes counted above may be unused)
+    loop c in [0..2):
+        if df[c] == 1 and dl[c] > 0:
+            used = false
+            loop d in dists:
+                if d > 0 and __dist_code(d) == c: used = true
+            if not used:
+                dyn -= dl[c]
+                fix -= 5
+    loop k in 0.. and c in cl:
+        dyn += clens[c]
+        if c == 16: dyn += 2
+        else if c == 17: dyn += 3
+        else if c == 18: dyn += 7
+    dyn += extra
+    fix += extra
+    stored = 3 + 7 + 32 + 8 * (to - from) + 40 * ((to - from) / 65535)
+    if stored < dyn and stored < fix:
+        __deflate_stored(w, src, from, to, last)
+        return
+    if fix <= dyn:
+        __deflate_codes(w, lits, dists, last, 1, fl, fill(5, 30))
+        return
+    __put(w, int(last), 1)
+    __put(w, 2, 2)
+    __put(w, nlit - 257, 5)
+    __put(w, ndist - 1, 5)
+    __put(w, ncl - 4, 4)
+    loop k in [0..ncl): __put(w, clens[order[k]], 3)
+    loop k in 0.. and c in cl:
+        __put(w, ccodes[c], clens[c])
+        if c == 16: __put(w, cx[k], 2)
+        else if c == 17: __put(w, cx[k], 3)
+        else if c == 18: __put(w, cx[k], 7)
+    __deflate_codes(w, lits, dists, last, 2, ll, dl)
+
+__fixed_lit_lengths = () -> int[]:
+    l = fill(8, 288)
+    loop i in [144..256): l[i] = 9
+    loop i in [256..280): l[i] = 7
+    l
+
+# the symbols of a block with these code lengths (kind 1: the fixed codes, which need a header;
+# kind 2: the header with the codes is written already)
+__deflate_codes = (w: mut __Bits, lits: int[], dists: int[], last: bool, kind: int, ll: int[], dl: int[]):
+    if kind == 1:
+        __put(w, int(last), 1)
+        __put(w, 1, 2)
+    lc = __huff_codes(ll)
+    dc = __huff_codes(dl)
+    loop k in 0.. and v in lits:
+        if v < 256: __put(w, lc[v], ll[v])
+        else:
+            n = v - 256
+            c = __len_code[n]
+            __put(w, lc[257 + c], ll[257 + c])
+            if __len_extra[c] > 0: __put(w, n - __len_base[c], __len_extra[c])
+            d = dists[k]
+            e = __dist_code(d)
+            __put(w, dc[e], dl[e])
+            if __dist_extra[e] > 0: __put(w, d - __dist_base[e], __dist_extra[e])
+    __put(w, lc[256], ll[256])
+
+# stored blocks: the bytes as they are
+__deflate_stored = (w: mut __Bits, src: u8[], from: int, to: int, last: bool):
+    p = from
+    loop true:
+        n = min(65535, to - p)
+        fin = last and p + n >= to
+        __put(w, int(fin), 1)
+        __put(w, 0, 2)
+        if w.cnt > 0: __put(w, 0, 8 - w.cnt)
+        __put(w, n, 16)
+        __put(w, (~n) & 65535, 16)
+        loop i in [p..p + n): w.out.push(src[i])
+        p += n
+        if p >= to: break
+
+# the longest earlier match for the bytes at i (length, distance): through the chain of earlier
+# positions with the same hash of 3 bytes
+__lz_match = (src: u8[], i: int, head: int[], prev: int[]) -> (int, int):
+    n = src.len()
+    if i + 2 >= n: return (0, 0)
+    best = 0
+    bdist = 0
+    h = ((int(src[i]) << 10) xor (int(src[i + 1]) << 5) xor int(src[i + 2])) & 32767
+    c = head[h]
+    chain = 48
+    most = min(258, n - i)
+    loop c >= 0 and i - c <= 32768 and chain > 0:
+        if src[c + best] == src[i + best]:
+            l = 0
+            loop l < most and src[c + l] == src[i + l]: l += 1
+            if l > best:
+                best = l
+                bdist = i - c
+                if l == most: break
+        c = prev[c & 32767]
+        chain -= 1
+    (best, bdist)
+
+# compress bytes into a raw deflate stream (inflate reads it back)
+deflate = (src: u8[]) -> u8[]:
+    __deflate_tables()
+    w = __Bits([], 0, 0)
+    w.out.reserve(src.len() / 2 + 64)
+    n = src.len()
+    hsize = 1 << 15
+    head = fill(-1, hsize)
+    prev = fill(-1, 32768)
+    lits: int[]
+    dists: int[]
+    bstart = 0
+    i = 0
+    loop i < n:
+        best, bdist = __lz_match(src, i, head, prev)
+        if i + 2 < n:
+            h = ((int(src[i]) << 10) xor (int(src[i + 1]) << 5) xor int(src[i + 2])) & (hsize - 1)
+            prev[i & 32767] = head[h]
+            head[h] = i
+        # (lazily: a longer match one byte on is better than this one)
+        if best >= 3 and best < 32 and i + 1 < n:
+            nb, nd = __lz_match(src, i + 1, head, prev)
+            if nb > best: best = 0
+        if best >= 3:
+            lits.push(256 + best)
+            dists.push(bdist)
+            # (the positions inside the match are in the chains too)
+            loop j in [i + 1..min(i + best, n - 2)):
+                h = ((int(src[j]) << 10) xor (int(src[j + 1]) << 5) xor int(src[j + 2])) & (hsize - 1)
+                prev[j & 32767] = head[h]
+                head[h] = j
+            i += best
+        else:
+            lits.push(int(src[i]))
+            dists.push(0)
+            i += 1
+        if lits.len() >= 32768:
+            __deflate_block(w, lits, dists, false, src, bstart, i)
+            lits.clear()
+            dists.clear()
+            bstart = i
+    __deflate_block(w, lits, dists, true, src, bstart, n)
+    if w.cnt > 0: w.out.push(u8(w.buf & 255))
+    w.out
+
+# ---------------- PNG writing ----------------
 __crc_table: u32[]
 __crc32 = (b: u8[], start: int, end: int) -> u32:
     if __crc_table.len() == 0:
@@ -335,6 +665,70 @@ __png_chunk = (out: mut u8[], kind: str, body: u8[]):
     loop c in body: out.push(c)
     __put_be32(out, int(__crc32(out, start, out.len())))
 
+# the rows with a filter byte each: the filter (none, sub, up, average or Paeth) whose output
+# has the smallest sum of magnitudes, which tends to compress best
+__png_filter = (img: Image) -> u8[]:
+    row = img.width * 4
+    raw = fill(u8(0), (row + 1) * img.height)
+    cands = fill(u8(0), row * 5)
+    px = data(img.pixels)
+    cp = data(cands)
+    rp = data(raw)
+    loop y in [0..img.height):
+        cur = px + y * row
+        up = cur - row
+        # each filter's bytes for this row, in its own run of cands
+        loop f in [0..5):
+            q = cp + f * row
+            if f == 0 or f == 2 and y == 0:
+                loop i in [0..row): q[i] = cur[i]
+            else if f == 1 or f == 4 and y == 0:
+                # (Paeth in the first row is sub)
+                loop i in [0..min(4, row)): q[i] = cur[i]
+                loop i in [4..row): q[i] = u8((int(cur[i]) - int(cur[i - 4])) & 255)
+            else if f == 2:
+                loop i in [0..row): q[i] = u8((int(cur[i]) - int(up[i])) & 255)
+            else if f == 3:
+                if y == 0:
+                    loop i in [0..min(4, row)): q[i] = cur[i]
+                    loop i in [4..row): q[i] = u8((int(cur[i]) - int(cur[i - 4]) / 2) & 255)
+                else:
+                    loop i in [0..min(4, row)): q[i] = u8((int(cur[i]) - int(up[i]) / 2) & 255)
+                    loop i in [4..row): q[i] = u8((int(cur[i]) - (int(cur[i - 4]) + int(up[i])) / 2) & 255)
+            else:
+                loop i in [0..min(4, row)): q[i] = u8((int(cur[i]) - int(up[i])) & 255)
+                loop i in [4..row):
+                    a = int(cur[i - 4])
+                    b = int(up[i])
+                    c = int(up[i - 4])
+                    pa = b - c
+                    pb = a - c
+                    pc = pa + pb
+                    if pa < 0: pa = -pa
+                    if pb < 0: pb = -pb
+                    if pc < 0: pc = -pc
+                    pr = c
+                    if pa <= pb and pa <= pc: pr = a
+                    else if pb <= pc: pr = b
+                    q[i] = u8((int(cur[i]) - pr) & 255)
+        # the one with the smallest sum of magnitudes (as signed bytes)
+        bf = 0
+        bsum = -1
+        loop f in [0..5):
+            q = cp + f * row
+            sum = 0
+            loop i in [0..row):
+                v = int(q[i])
+                if v >= 128: v = 256 - v
+                sum += v
+            if bsum < 0 or sum < bsum:
+                bsum = sum
+                bf = f
+        o = rp + y * (row + 1)
+        o[0] = u8(bf)
+        mem_copy(o + 1, cp + bf * row, row)
+    raw
+
 encode_png = (img: Image) -> u8[]:
     out: u8[] = [0x89, 'P', 'N', 'G', 13, 10, 26, 10]
     hdr: u8[]
@@ -342,25 +736,9 @@ encode_png = (img: Image) -> u8[]:
     __put_be32(hdr, img.height)
     loop c in [8, 6, 0, 0, 0]: hdr.push(u8(c))
     __png_chunk(out, "IHDR", hdr)
-    raw: u8[]
-    row = img.width * 4
-    loop y in [0..img.height):
-        raw.push(0)
-        loop i in [0..row): raw.push(img.pixels[y * row + i])
-    z: u8[] = [0x78, 0x01]
-    pos = 0
-    loop pos < raw.len() or raw.len() == 0:
-        n = min(65535, raw.len() - pos)
-        last = 0
-        if pos + n >= raw.len(): last = 1
-        z.push(u8(last))
-        z.push(u8(n & 255))
-        z.push(u8(n >> 8))
-        z.push(u8(~n & 255))
-        z.push(u8((~n >> 8) & 255))
-        loop i in [0..n): z.push(raw[pos + i])
-        pos += n
-        if raw.len() == 0: break
+    raw = __png_filter(img)
+    z: u8[] = [0x78, 0x9C]
+    z.extend(deflate(raw))
     a: u32 = 1
     bb: u32 = 0
     loop c in raw:

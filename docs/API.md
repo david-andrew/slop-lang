@@ -712,6 +712,7 @@ struct Huff
 inflate = (src: u8[], start: int = 0) -> u8[]?
 load_png = (file: u8[]) -> Image?    # decode a PNG file; none if the data is not a supported PNG
 load_image = (file: u8[]) -> Image    # load an image from an embedded file: load_image(embed("hero.png"))
+deflate = (src: u8[]) -> u8[]    # compress bytes into a raw deflate stream (inflate reads it back)
 encode_png = (img: Image) -> u8[]
 save_png = (img: Image, path: str) -> bool
 screenshot = () -> Image    # read the current framebuffer into an image
