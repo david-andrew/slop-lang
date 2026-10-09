@@ -30,7 +30,7 @@ use 'repl.jo'
 use 'watch.jo'
 
 # (a release is tagged v<SLOPPY_VERSION>: .github/workflows/release.yml checks)
-const SLOPPY_VERSION = "0.3.0"
+const SLOPPY_VERSION = "0.3.1"
 const SLOPPY_INSTALL_URL = "https://sloppy-lang.org/install"
 
 usage = ():

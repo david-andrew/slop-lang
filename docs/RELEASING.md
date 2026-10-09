@@ -1,7 +1,7 @@
 # Releasing
 
-1. Bump `SLOPPY_VERSION` in `compiler/main.jo` and `version` in `editors/vscode/package.json`
-   (they must match), commit, push.
+1. Bump `SLOPPY_VERSION` in `compiler/main.jo` (and `version` in `editors/vscode/package.json`
+   when the extension changed: the stores skip a version they already have), commit, push.
 2. `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
 `.github/workflows/release.yml` then builds and tests everything, makes the GitHub release
