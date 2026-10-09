@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install Sloppy:
 #   curl -fsSL https://sloppy-lang.org/install | bash
-#   curl -fsSL https://sloppy-lang.org/install | bash -s v0.1.0     (a version)
+#   curl -fsSL https://sloppy-lang.org/install | bash -s v0.2.0     (a version)
 # Installs to ~/.sloppy (or $SLOPPY_INSTALL): bin/sloppy and the standard library beside it, and puts
 # ~/.sloppy/bin on your PATH (in your shell's startup file). Running it again updates.
 # (`sloppy update` runs it with SLOPPY_CURRENT, the version installed: nothing to do if it is the latest)

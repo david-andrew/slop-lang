@@ -128,7 +128,7 @@ itself answering, so it agrees with the compiler by construction.
 
 VS Code: `tools/vsix.py` packages the extension in `editors/vscode` (highlighting, the language
 server, and commands to run a file in a terminal or the browser, or its tests);
-`code --install-extension build/sloppy-0.1.0.vsix` installs it.
+`code --install-extension build/sloppy-0.2.0.vsix` installs it.
 
 Other editors: run `sloppy lsp` for `*.jo` files. For example, Neovim (0.11):
 
