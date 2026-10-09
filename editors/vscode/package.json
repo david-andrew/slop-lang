@@ -8,7 +8,7 @@
     "language server",
     "gamedev"
   ],
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "RedFoxLabs",
   "engines": {
     "vscode": "^1.75.0"
