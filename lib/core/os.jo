@@ -10,7 +10,7 @@ args = () -> str[]:
         if b.len() > 0:
             loop a in split(str_from_bytes(b), "\0"): out.push(a)
     else when TARGET == "windows":
-        return __win_args()
+        return __w32_args()
     else:
         sp = __argv() as *int
         argc = sp[0]
@@ -38,7 +38,7 @@ env = (name: str) -> str?:
             __wasm_env(data(name), len(name), data(buf), n)
         return str_from_bytes(buf[..n))
     else when TARGET == "windows":
-        return __win_env(name)
+        return __w32_env(name)
     else:
         sp = __argv() as *int
         argc = sp[0]
@@ -79,7 +79,7 @@ read_file = (path: str) -> str?:
         if not __wasm_has(path): return none
         return str_from_bytes(__wasm_bytes((p: *u8, cap: int): __wasm_read_file(data(path), len(path), p, cap)))
     else when TARGET == "windows":
-        return __win_read_file(path)
+        return __w32_read_file(path)
     else:
         fd = syscall(2, data(__zstr(path)), 0, 0)
         if fd < 0: return none
@@ -104,7 +104,7 @@ write_file = (path: str, contents: str) -> bool:
     when TARGET == "wasm":
         return __wasm_write_file(data(path), len(path), data(contents), len(contents)) == 1
     else when TARGET == "windows":
-        return __win_write_file(path, contents)
+        return __w32_write_file(path, contents)
     else:
         fd = syscall(2, data(__zstr(path)), 0x241, 0x1A4)
         if fd < 0: return false
@@ -123,7 +123,7 @@ file_exists = (path: str) -> bool:
     when TARGET == "wasm":
         return __wasm_has(path)
     else when TARGET == "windows":
-        return __win_exists(path)
+        return __w32_exists(path)
     else:
         syscall(21, data(__zstr(path)), 0) == 0
 
@@ -139,7 +139,7 @@ delete_file = (path: str) -> bool:
     when TARGET == "wasm":
         return false
     else when TARGET == "windows":
-        return __win_delete(path)
+        return __w32_delete(path)
     else:
         syscall(87, data(__zstr(path))) == 0
 
@@ -148,7 +148,7 @@ time = () -> f64:
     when TARGET == "wasm":
         return __wasm_now() / 1000.0
     else when TARGET == "windows":
-        return f64(__win_time_ns()) * 1e-9
+        return f64(__w32_time_ns()) * 1e-9
     else:
         ts: (int, int)
         syscall(228, 1, &ts)
@@ -159,7 +159,7 @@ time_ns = () -> int:
     when TARGET == "wasm":
         return int(__wasm_now() * 1000000.0)
     else when TARGET == "windows":
-        return __win_time_ns()
+        return __w32_time_ns()
     else:
         ts: (int, int)
         syscall(228, 1, &ts)
@@ -167,7 +167,7 @@ time_ns = () -> int:
 
 sleep = (seconds: f64):
     when TARGET == "windows":
-        __win_sleep(seconds)
+        __w32_sleep(seconds)
     else when TARGET == "linux":
         ts = (int(seconds), int((seconds - floor(seconds)) * 1e9))
         syscall(35, &ts, 0)
@@ -195,7 +195,7 @@ list_dir = (path: str) -> str[]:
         if b.len() > 0:
             loop n in split(str_from_bytes(b), "\n"): out.push(n)
     else when TARGET == "windows":
-        return __win_list_dir(path)
+        return __w32_list_dir(path)
     else:
         fd = syscall(2, data(__zstr(path)), 0x10000, 0)
         if fd < 0: return out
@@ -220,7 +220,7 @@ exe_path = () -> str:
         if a.len() > 0: return a[0]
         return ""
     else when TARGET == "windows":
-        return __win_exe_path()
+        return __w32_exe_path()
     else:
         buf = __alloc(4096)
         n = syscall(89, data("/proc/self/exe"), buf, 4095)
@@ -238,9 +238,9 @@ exec = (path: str, argv: str[]) -> bool:
         return false
     else when TARGET == "windows":
         # (Windows cannot replace a process: run the program, then end with its exit code)
-        code = __win_run(path, argv, true)
+        code = __w32_run(path, argv, true)
         if code < 0: return false
-        __win_exit(code)
+        __w32_exit(code)
         return true
     else:
         ptrs = __alloc(8 * (argv.len() + 1))
@@ -259,7 +259,7 @@ spawn_detached = (path: str, argv: str[]) -> bool:
     when TARGET == "wasm":
         return false
     else when TARGET == "windows":
-        return __win_run(path, argv, false) == 0
+        return __w32_run(path, argv, false) == 0
     else:
         pid = syscall(57)                            # fork
         if pid < 0: return false
@@ -286,7 +286,7 @@ mkdir = (path: str) -> bool:
     when TARGET == "wasm":
         return true
     else when TARGET == "windows":
-        return __win_mkdir(path)
+        return __w32_mkdir(path)
     else:
         r = syscall(83, data(__zstr(path)), 0x1ED)
         r == 0 or r == -17

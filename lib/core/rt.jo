@@ -68,7 +68,7 @@ __os_pages = (size: int) -> *u8:
         if p < 0: __out_of_memory()
         return (p * 65536) as *u8
     else when TARGET == "windows":
-        return __win_pages(size)
+        return __w32_pages(size)
     else:
         p = syscall(9, 0, size, 3, 0x22, -1, 0)
         if p < 0 and p > -4096: __out_of_memory()
@@ -78,7 +78,7 @@ __os_pages = (size: int) -> *u8:
 
 __os_free_pages = (p: *u8, size: int):
     when TARGET == "windows":
-        __win_free_pages(p)
+        __w32_free_pages(p)
     else when TARGET == "linux":
         syscall(11, p, size)
 
@@ -269,7 +269,7 @@ __write_fd = (fd: int, p: *u8, n: int):
     when TARGET == "wasm":
         __wasm_write(fd, p, n)
     else when TARGET == "windows":
-        __win_write(fd, p, n)
+        __w32_write(fd, p, n)
     else:
         off = 0
         loop off < n:
@@ -283,7 +283,7 @@ __exit = (code: int):
     when TARGET == "wasm":
         __wasm_exit(code)
     else when TARGET == "windows":
-        __win_exit(code)
+        __w32_exit(code)
     else:
         syscall(231, code)
 

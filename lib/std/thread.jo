@@ -52,23 +52,24 @@ when TARGET == "windows":
     @lib("kernel32.dll")
     extern CreateThread = (sec: *u8, stack: int, start: *u8, param: *u8, flags: u32, id: *u32) -> *u8
 
+    # (no allocation: a worker sleeps in here)
     __futex_wait = (p: *int, v: int):
-        cmp = [v]
-        WaitOnAddress(p as *u8, data(cmp) as *u8, 8, u32(0xFFFFFFFF))
+        cmp = v
+        WaitOnAddress(p as *u8, (&cmp) as *u8, 8, u32(0xFFFFFFFF))
     __futex_wake = (p: *int): WakeByAddressAll(p as *u8)
 
     # a worker starts on a small stack of Windows' and moves to its own in __tstack_base (where
-    # __tid finds which worker it is), entering __win_worker as if called
+    # __tid finds which worker it is), entering __w32_worker as if called
     @cabi
-    __win_thread_start = (id: int) -> int:
+    __w32_thread_start = (id: int) -> int:
         top = __tstack_base + (id << __TSTACK_SHIFT) - 16
         (top as *int)[1] = 0
-        entry: cfn() = __win_worker
+        entry: cfn() = __w32_worker
         __jump(entry as *u8, top + 8)
         0
 
     @cabi
-    __win_worker = (): __worker_main(__tid())
+    __w32_worker = (): __worker_main(__tid())
 else:
     __futex_wait = (p: *int, v: int): syscall(202, p, 128, v, 0)      # FUTEX_WAIT_PRIVATE
     __futex_wake = (p: *int): syscall(202, p, 129, 0x7FFFFFFF)        # FUTEX_WAKE_PRIVATE (all)
@@ -117,7 +118,7 @@ __pool_start = ():
             base = VirtualAlloc(null, size, u32(0x2000), 4)               # MEM_RESERVE
             if base == null: return
             __tstack_base = base
-            start: cfn(int) -> int = __win_thread_start
+            start: cfn(int) -> int = __w32_thread_start
             loop i in [0..n):
                 # (a worker's stack is committed whole: no guard pages to grow it)
                 if VirtualAlloc(base + (i << __TSTACK_SHIFT), 1 << __TSTACK_SHIFT, u32(0x1000), 4) == null: break

@@ -5,17 +5,17 @@
 
 when TARGET == "windows":
     # ---------------- C functions of DLLs ----------------
-    __win_libs: str[]
-    __win_handles: *u8[]
+    __w32_libs: str[]
+    __w32_handles: *u8[]
 
     # (threads may look functions up at once: one at a time; a plain global, zero before any
     # initializer runs, as functions may be looked up that early)
-    __win_lock = 0
+    __w32_lock = 0
 
     __ffi_resolve = (lib: str, name: str) -> *u8:
-        lk = &__win_lock
+        lk = &__w32_lock
         loop __atomic_cas(lk, 0, 1) != 0: pass
-        h = __win_lib(lib)
+        h = __w32_lib(lib)
         p: *u8 = null
         if h != null: p = GetProcAddress(h, data(__zstr(name)))
         __atomic_cas(lk, 1, 0)
@@ -23,16 +23,16 @@ when TARGET == "windows":
         if p == null: panic("function {name} not found in {lib}")
         p
 
-    __win_lib = (lib: str) -> *u8:
-        loop i in 0.. and n in __win_libs:
-            if n == lib: return __win_handles[i]
+    __w32_lib = (lib: str) -> *u8:
+        loop i in 0.. and n in __w32_libs:
+            if n == lib: return __w32_handles[i]
         h = LoadLibraryA(data(__zstr(lib)))
-        __win_libs.push(lib)
-        __win_handles.push(h)
+        __w32_libs.push(lib)
+        __w32_handles.push(h)
         h
 
     # true if the library can be loaded on this system
-    lib_available = (lib: str) -> bool: __win_lib(lib) != null
+    lib_available = (lib: str) -> bool: __w32_lib(lib) != null
 
     # (these are imported by the program: compiler/pe.jo, pe_imports)
     @lib("kernel32.dll")
@@ -152,23 +152,23 @@ when TARGET == "windows":
         str_from_bytes(b)
 
     # ---------------- output, files ----------------
-    __win_out: *u8 = null
-    __win_err: *u8 = null
+    __w32_out: *u8 = null
+    __w32_err: *u8 = null
 
-    __win_write = (fd: int, p: *u8, n: int):
-        if __win_out == null:
+    __w32_write = (fd: int, p: *u8, n: int):
+        if __w32_out == null:
             SetConsoleOutputCP(65001)                         # (UTF-8)
-            __win_out = GetStdHandle(u32(0xFFFFFFF5))
-            __win_err = GetStdHandle(u32(0xFFFFFFF4))
-        h = __win_out
-        if fd == 2: h = __win_err
+            __w32_out = GetStdHandle(u32(0xFFFFFFF5))
+            __w32_err = GetStdHandle(u32(0xFFFFFFF4))
+        h = __w32_out
+        if fd == 2: h = __w32_err
         w: u32[] = [0]
         off = 0
         loop off < n:
             if WriteFile(h, p + off, u32(min(n - off, 1 << 30)), data(w), null) == 0 or w[0] == 0: return
             off += int(w[0])
 
-    __win_open_file = (path: str, write: bool) -> *u8:
+    __w32_open_file = (path: str, write: bool) -> *u8:
         wp = __wide(path)
         h: *u8 = null
         if write: h = CreateFileW(data(wp), u32(0x40000000), 1, null, 2, 0x80, null)      # GENERIC_WRITE, CREATE_ALWAYS
@@ -176,8 +176,8 @@ when TARGET == "windows":
         if (h as int) == -1: return null
         h
 
-    __win_read_file = (path: str) -> str?:
-        h = __win_open_file(path, false)
+    __w32_read_file = (path: str) -> str?:
+        h = __w32_open_file(path, false)
         if h == null: return none
         defer CloseHandle(h)
         size = [0]
@@ -191,8 +191,8 @@ when TARGET == "windows":
         (p as *int)[1] = got
         p as str
 
-    __win_write_file = (path: str, contents: str) -> bool:
-        h = __win_open_file(path, true)
+    __w32_write_file = (path: str, contents: str) -> bool:
+        h = __w32_open_file(path, true)
         if h == null: return false
         defer CloseHandle(h)
         off = 0
@@ -203,20 +203,20 @@ when TARGET == "windows":
             off += int(w[0])
         true
 
-    __win_exists = (path: str) -> bool:
+    __w32_exists = (path: str) -> bool:
         wp = __wide(path)
         GetFileAttributesW(data(wp)) != u32(0xFFFFFFFF)
 
-    __win_delete = (path: str) -> bool:
+    __w32_delete = (path: str) -> bool:
         wp = __wide(path)
         DeleteFileW(data(wp)) != 0
 
-    __win_mkdir = (path: str) -> bool:
+    __w32_mkdir = (path: str) -> bool:
         wp = __wide(path)
-        CreateDirectoryW(data(wp), null) != 0 or __win_exists(path)
+        CreateDirectoryW(data(wp), null) != 0 or __w32_exists(path)
 
     # (WIN32_FIND_DATAW: the name, 260 UTF-16 units, is at 44)
-    __win_list_dir = (path: str) -> str[]:
+    __w32_list_dir = (path: str) -> str[]:
         out: str[]
         wp = __wide(path + "\\*")
         found = fill(u8(0), 600)
@@ -230,7 +230,7 @@ when TARGET == "windows":
         out
 
     # ---------------- the process ----------------
-    __win_args = () -> str[]:
+    __w32_args = () -> str[]:
         out: str[]
         n: i32[] = [0]
         argv = CommandLineToArgvW(GetCommandLineW(), data(n))
@@ -238,7 +238,7 @@ when TARGET == "windows":
         loop i in [0..int(n[0])): out.push(__narrow(argv[i], -1))
         out
 
-    __win_env = (name: str) -> str?:
+    __w32_env = (name: str) -> str?:
         wn = __wide(name)
         buf = fill(u16(0), 512)
         n = int(GetEnvironmentVariableW(data(wn), data(buf), 512))
@@ -248,37 +248,37 @@ when TARGET == "windows":
             n = int(GetEnvironmentVariableW(data(wn), data(buf), u32(n)))
         __narrow(data(buf), n)
 
-    __win_exe_path = () -> str:
+    __w32_exe_path = () -> str:
         buf = fill(u16(0), 4096)
         n = int(GetModuleFileNameW(null, data(buf), 4096))
         __narrow(data(buf), n)
 
-    __win_qpf = 0
+    __w32_qpf = 0
 
-    __win_time_ns = () -> int:
-        if __win_qpf == 0:
+    __w32_time_ns = () -> int:
+        if __w32_qpf == 0:
             f = [0]
             QueryPerformanceFrequency(data(f))
-            __win_qpf = f[0]
+            __w32_qpf = f[0]
         c = [0]
         QueryPerformanceCounter(data(c))
         # (in two parts: count * 1e9 overflows after some hours of uptime)
-        (c[0] / __win_qpf) * 1000000000 + (c[0] % __win_qpf) * 1000000000 / __win_qpf
+        (c[0] / __w32_qpf) * 1000000000 + (c[0] % __w32_qpf) * 1000000000 / __w32_qpf
 
-    __win_sleep = (seconds: f64):
+    __w32_sleep = (seconds: f64):
         if seconds > 0.0: Sleep(u32(seconds * 1000.0))
 
-    __win_exit = (code: int): ExitProcess(u32(code))
+    __w32_exit = (code: int): ExitProcess(u32(code))
 
-    __win_pages = (size: int) -> *u8:
+    __w32_pages = (size: int) -> *u8:
         p = VirtualAlloc(null, size, u32(0x3000), 4)           # MEM_COMMIT | MEM_RESERVE, read/write
         if p == null: __out_of_memory()
         p
 
-    __win_free_pages = (p: *u8): VirtualFree(p, 0, u32(0x8000))   # MEM_RELEASE
+    __w32_free_pages = (p: *u8): VirtualFree(p, 0, u32(0x8000))   # MEM_RELEASE
 
     # run a program and wait for it: its exit code (-1: it could not be started)
-    __win_run = (path: str, argv: str[], wait: bool) -> int:
+    __w32_run = (path: str, argv: str[], wait: bool) -> int:
         cmd = ""
         loop i in 0.. and a in argv:
             if i > 0: cmd += " "
