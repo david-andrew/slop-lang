@@ -67,3 +67,5 @@ footer { border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; 
 .hero .logo { width: 300px; max-width: 70%; display: block; margin: 0 auto; filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.25)); }
 .hero .art { display: flex; flex-direction: column; gap: 22px; }
 .hero pre.install { margin: 0 0 24px; padding: 10px 16px; font-size: 13.5px; white-space: pre; overflow-x: auto; }
+p.play { margin: -6px 0 18px; font-size: 14px; }
+p.play a::before { content: "▶ "; }

@@ -2,7 +2,7 @@
 """Build Sloppy's website into build/site: a home page, the docs (from the Markdown files) and the
 playground. Static files only: serve the directory anywhere (GitHub Pages: .github/workflows).
 usage: tools/site.py [output-dir]          (needs bin/sloppy, for the playground)"""
-import html, os, re, shutil, subprocess, sys
+import base64, zlib, html, os, re, shutil, subprocess, sys
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "build", "site")
@@ -16,7 +16,7 @@ def slug(text):
     s = re.sub(r"[^a-z0-9 _-]", "", s).strip().replace(" ", "-")
     return re.sub(r"-+", "-", s) or "section"
 
-LINKS = {"docs/LANGUAGE.md": "language.html", "LANGUAGE.md": "language.html", "docs/API.md": "api.html",
+LINKS = {"docs/TUTORIAL.md": "tutorial.html", "TUTORIAL.md": "tutorial.html", "docs/LANGUAGE.md": "language.html", "LANGUAGE.md": "language.html", "docs/API.md": "api.html",
          "API.md": "api.html", "docs/REPORT.md": "report.html", "REPORT.md": "report.html", "README.md": "start.html",
          "../README.md": "start.html"}
 
@@ -98,6 +98,12 @@ def markdown(src):
             # (Godot's language) is the closest it has; here it gets Sloppy's own highlighting
             cls = "sloppy" if lang in ("sloppy", "gdscript") else lang or "plain"
             out.append(f'<pre><code class="{cls}">' + html.escape("\n".join(body)) + "</code></pre>")
+            # a whole program (the tutorial's steps start with "# step"): a link that opens it in
+            # the playground (its share-link form: #code=<deflated, base64url>)
+            if cls == "sloppy" and body and body[0].startswith("# step"):
+                z = zlib.compressobj(9, zlib.DEFLATED, -15)
+                code = base64.urlsafe_b64encode(z.compress("\n".join(body).encode()) + z.flush()).decode().rstrip("=")
+                out.append(f'<p class="play"><a href="../playground/#code={code}">Run it in the playground</a></p>')
             continue
         m = re.match(r"^(#{1,4})\s+(.*)$", l)
         if m:
@@ -161,7 +167,7 @@ def markdown(src):
 # ---- pages ----
 
 def nav(here_page, prefix):
-    items = [("Docs", "docs/start.html"), ("Language", "docs/language.html"), ("Library", "docs/api.html"),
+    items = [("Docs", "docs/start.html"), ("Tutorial", "docs/tutorial.html"), ("Language", "docs/language.html"), ("Library", "docs/api.html"),
              ("Playground", "playground/"), ("Report", "docs/report.html")]
     links = "".join(f'<a class="{"on" if p == here_page else ""}" href="{prefix}{p}">{n}</a>' for n, p in items)
     return (f'<nav class="top"><a class="brand" href="{prefix}index.html"><img src="{prefix}icon-64.png" alt="">Sloppy</a>'
@@ -198,10 +204,12 @@ def page(title, body, here_page, prefix, extra_head="", description=DESCRIPTION)
 </body></html>
 """
 
-DOCS = [("start.html", "README.md", "Getting started"), ("language.html", "docs/LANGUAGE.md", "The language"),
+DOCS = [("start.html", "README.md", "Getting started"), ("tutorial.html", "docs/TUTORIAL.md", "Make a game"),
+        ("language.html", "docs/LANGUAGE.md", "The language"),
         ("api.html", "docs/API.md", "Standard library"), ("report.html", "docs/REPORT.md", "Report")]
 DOC_DESCRIPTIONS = {
     "start.html": "Install Sloppy, a simple game dev language, and write your first program and game.",
+    "tutorial.html": "Make a small platformer in Sloppy, step by step: moving, jumping, platforms, a camera, menus, saving, glow and music.",
     "language.html": "The Sloppy language: types, functions, structs and unions, numeric arrays, modules, parallelism, the game loop and calling C.",
     "api.html": "Everything in Sloppy's standard library: strings, maps, math, files, threads, windows, input, 2D and 3D drawing, shaders and audio.",
     "report.html": "Measured results for Sloppy's design goals: compile speed, program speed against C, and executable size."}
@@ -228,7 +236,7 @@ curl -fsSL https://sloppy-lang.org/install | bash
 <span class="c"># Windows (PowerShell)</span>
 irm https://sloppy-lang.org/install.ps1 | iex</code></pre>
     <div class="buttons"><a class="btn primary" href="playground/">Try it in your browser</a>
-    <a class="btn" href="docs/start.html">Get started</a><a class="btn" href="docs/language.html">The language</a></div>
+    <a class="btn" href="docs/start.html">Get started</a><a class="btn" href="docs/tutorial.html">Make a game</a><a class="btn" href="docs/language.html">The language</a></div>
   </div>
   <div class="art"><img class="logo" src="logo-512.png" alt="a white clover blossom">
   <pre><code class="sloppy">pos = vec2(400, 300)

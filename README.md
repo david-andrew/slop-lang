@@ -101,7 +101,8 @@ irm https://sloppy-lang.org/install.ps1 | iex
 
 (On Windows, the interactive prompt and `sloppy watch` are not there yet; everything else is.)
 
-Or try it in the browser: [the playground](https://sloppy-lang.org/playground/).
+Or try it in the browser: [the playground](https://sloppy-lang.org/playground/). Then
+[make a game](docs/TUTORIAL.md): a small platformer, built step by step.
 
 From source:
 
