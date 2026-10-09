@@ -1,4 +1,5 @@
 # fixed-size arrays T[N]: stored in place, copied like any value
+# requires: sloppy
 const N = 4
 struct Bones:
     m: vec4[3]

@@ -21,4 +21,4 @@ one-two
 6
 [3, 4]
 0
-[exit 101] panic: fixed.jo:95: index 7 out of bounds (length 4)
+[exit 101] panic: fixed.jo:96: index 7 out of bounds (length 4)

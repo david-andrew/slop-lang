@@ -1,4 +1,5 @@
 # changing a map's values in place: m[k] += 1, m[k].push(x), m[k].x = v (a missing key is added)
+# requires: sloppy
 struct P:
     x: int
     hp = 100
