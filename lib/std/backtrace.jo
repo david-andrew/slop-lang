@@ -48,12 +48,14 @@ __backtrace_from = (fp0: int, pc: int):
 # its own, since a stack overflow leaves none.
 # (the compiler puts a call of __crash_install first in a native program)
 when TARGET == "windows":
-    # (an exception nothing handled: on the stack it happened on, so for a stack overflow a guard
-    # page 64 KB above the end of the main thread's stack leaves room to tell it)
+    # (a vectored handler: it comes before Windows looks for handlers through the stack, which
+    # it cannot do in code without unwind tables. It runs on the stack the exception happened on,
+    # so for a stack overflow a guard page 64 KB above the end of the main thread's stack (all of
+    # it committed: compiler/pe.jo) leaves room to tell it.)
     __crash_install = () -> bool:
         if env("SLOPPY_NO_CRASH_HANDLER") != none: return false
         f: cfn(*u8) -> i32 = __w32_crash
-        SetUnhandledExceptionFilter(f as *u8)
+        AddVectoredExceptionHandler(1, f as *u8)
         lo = [0]
         hi = [0]
         GetCurrentThreadStackLimits(data(lo), data(hi))
@@ -62,7 +64,8 @@ when TARGET == "windows":
         true
 
     # (EXCEPTION_POINTERS: the record (code at 0, address at 32 + 8) and the registers (CONTEXT:
-    # rsp at 0x98, rbp at 0xA0, rip at 0xF8))
+    # rsp at 0x98, rbp at 0xA0, rip at 0xF8). Only faults in the program's own code: libraries
+    # may handle their exceptions themselves.)
     @cabi
     __w32_crash = (ep: *u8) -> i32:
         rec = (ep as **u8)[0]
@@ -71,6 +74,10 @@ when TARGET == "windows":
         rsp = ((ctx + 0x98) as *int)[0]
         rbp = ((ctx + 0xA0) as *int)[0]
         rip = ((ctx + 0xF8) as *int)[0]
+        base = 0x400000 as *u8
+        image_size = int(((base + int(((base + 0x3C) as *u32)[0]) + 24 + 56) as *u32)[0])
+        if rip < 0x400000 or rip >= 0x400000 + image_size: return 0          # EXCEPTION_CONTINUE_SEARCH
+        if code != 0x80000001 and code != 0xC00000FD and code != 0xC0000005 and code != 0xC0000094 and code != 0xC0000095 and code != 0xC000001D and code != 0xC0000096: return 0
         what = "crashed (exception 0x{code:x})"
         if code == 0x80000001 or code == 0xC00000FD: what = "stack overflow (a function calls itself without end, or too deeply?)"
         else if code == 0xC0000005:

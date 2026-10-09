@@ -107,7 +107,7 @@ when TARGET == "windows":
     @lib("kernel32.dll")
     extern GetLastError = () -> u32
     @lib("kernel32.dll")
-    extern SetUnhandledExceptionFilter = (f: *u8) -> *u8
+    extern AddVectoredExceptionHandler = (first: u32, h: *u8) -> *u8
     @lib("kernel32.dll")
     extern GetCurrentThreadStackLimits = (low: *int, high: *int)
     @lib("kernel32.dll")
