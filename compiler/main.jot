@@ -260,7 +260,9 @@ compile = (path: str, out0: str) -> str:
         else: emit_function()
         break
     if lower_only: return ""
-    if watch_build and not watch_first: watch_lower_inits()
+    if watch_build and not watch_first:
+        watch_lower_inits()
+        watch_lower_migrate()
     if opt_release: release_pipeline()
     t2 = time()
     ok = false

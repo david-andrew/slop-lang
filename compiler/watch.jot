@@ -51,6 +51,7 @@ wm_gaddr: int[]
 wm_gsize: int[]
 wm_gsig: str[]
 wm_ginit: int[]
+wm_gdesc: str[]             # (and a description of its type's layout: wd_desc)
 wm_gidx: {str: int} = {}
 # read-only data: hash of an item's bytes -> address
 wm_ro: {int: int} = {}
@@ -66,6 +67,7 @@ w_patch: u8[]
 w_changed: str[]            # names of the functions replaced
 w_reset: str[]              # names of the globals initialized again (their declarations changed)
 w_added: str[]              # ... and of new ones
+w_kept: str[]               # ... and of those converted to a new layout
 w_init_lf = -1              # the function initializing new and changed globals
 
 wm_clear = ():
@@ -79,6 +81,7 @@ wm_clear = ():
     wm_gsize = []
     wm_gsig = []
     wm_ginit = []
+    wm_gdesc = []
     wm_gidx = {}
     wm_ro = {}
     wm_stubs = []
@@ -91,12 +94,13 @@ wm_add_fn = (k: str, canon: int, latest: int, h: int):
     wm_flatest.push(latest)
     wm_fhash.push(h)
 
-wm_add_glob = (k: str, addr: int, size: int, sig: str, ih: int):
+wm_add_glob = (k: str, addr: int, size: int, sig: str, ih: int, desc: str):
     if let i = wm_gidx.get(k):
         wm_gaddr[i] = addr
         wm_gsize[i] = size
         wm_gsig[i] = sig
         wm_ginit[i] = ih
+        wm_gdesc[i] = desc
         return
     wm_gidx[k] = wm_gkeys.len()
     wm_gkeys.push(k)
@@ -104,6 +108,7 @@ wm_add_glob = (k: str, addr: int, size: int, sig: str, ih: int):
     wm_gsize.push(size)
     wm_gsig.push(sig)
     wm_ginit.push(ih)
+    wm_gdesc.push(desc)
 
 # ---- hashing ----
 wh_byte = (h: int, b: int) -> int: (h xor (b & 255)) * 1099511628211
@@ -183,7 +188,8 @@ wk_fn_keys = () -> str[]:
             out.push("")
             continue
         k = ""
-        if lfuncs[i].kind == LK_HELPER:
+        if w_mig_lfs.get(i) != none: k = "watch-mig|{lfuncs[i].name}"
+        else if lfuncs[i].kind == LK_HELPER:
             k = "h|{lfuncs[i].hkind}|{type_str(lfuncs[i].htype)}"
             if lfuncs[i].inst >= 0 and lfuncs[i].inst < fns.len() and (lfuncs[i].hkind == .thunk or lfuncs[i].hkind == .partial or lfuncs[i].hkind == .envdrop): k = "{k}|{wk_inst(lfuncs[i].inst)}"
         else if lfuncs[i].inst == w_init_inst: k = "watch-init"
@@ -268,9 +274,10 @@ watch_record_image = ():
         a = img_text_addr + fn_addr[i]
         wm_add_fn(keys[i], a, a, fn_hash(i, keys))
     loop k, off in global_off:
-        wm_add_glob(wk_glob(k), img_data_addr + off, gsize(k), wk_sig(int(globals[k].type), 0), wk_decl_hash(k))
-    wm_add_glob("__sp0", img_data_addr, 8, "", 0)
-    loop i in [0..ffi_offs.len()): wm_add_glob(ffi_keys[i], img_data_addr + ffi_offs[i], 8, "", 0)
+        wd_path = []
+        wm_add_glob(wk_glob(k), img_data_addr + off, gsize(k), wk_sig(int(globals[k].type), 0), wk_decl_hash(k), wd_desc(int(globals[k].type)))
+    wm_add_glob("__sp0", img_data_addr, 8, "", 0, "")
+    loop i in [0..ffi_offs.len()): wm_add_glob(ffi_keys[i], img_data_addr + ffi_offs[i], 8, "", 0, "")
     loop k in [0..ro_starts.len()):
         h = ro_item_hash(k)
         if wm_ro.get(h) == none: wm_ro[h] = img_ro_addr + ro_starts[k]
@@ -444,7 +451,9 @@ watch_globals_to_init = () -> int[]:
     loop k, off in global_off:
         key = wk_glob(k)
         if let i = wm_gidx.get(key):
-            if wm_gsig[i] == wk_sig(int(globals[k].type), 0) and wm_ginit[i] == wk_decl_hash(k): continue
+            if wm_ginit[i] == wk_decl_hash(k):
+                # (unchanged, or a layout to convert: watch_globals_to_migrate)
+                if wm_gsig[i] == wk_sig(int(globals[k].type), 0) or len(wm_gdesc[i]) > 0: continue
         if globals[k].decl == 0: continue
         out.push(k)
     out.sort()
@@ -511,6 +520,10 @@ watch_make_patch = () -> bool:
     keys = wk_fn_keys()
     relocs_collect()
     inits = watch_globals_to_init()
+    w_kept = []
+    loop g in w_migrate:
+        nm = name_of(int(globals[g].name))
+        if not starts_with(nm, "__"): w_kept.push(nm)
     loop g in inits:
         nm = name_of(int(globals[g].name))
         if starts_with(nm, "__"): continue
@@ -536,7 +549,8 @@ watch_make_patch = () -> bool:
             if wm_data_next > wm_data_end: fatal(0, "jot watch: no room left for new globals (restart the program: r)")
             moved[k] = true
         gaddr[k] = a
-        wm_add_glob(key, a, sz, sig, ih)
+        wd_path = []
+        wm_add_glob(key, a, sz, sig, ih, wd_desc(int(globals[k].type)))
     ffi_addr: {int: int} = {}
     loop fi in [0..ffi_offs.len()):
         off = ffi_offs[fi]
@@ -546,7 +560,7 @@ watch_make_patch = () -> bool:
             a = align_up(wm_data_next, 8)
             wm_data_next = a + 8
             ffi_addr[off] = a
-            wm_add_glob(k, a, 8, "", 0)
+            wm_add_glob(k, a, 8, "", 0, "")
     # read-only data: what the program does not have yet goes into the code region
     ro_addr = fill(0, ro_starts.len())
     loop k in [0..ro_starts.len()):
@@ -574,7 +588,9 @@ watch_make_patch = () -> bool:
             wm_flatest[j] = a
             wm_fhash[j] = h
             p = wk_pretty(k)
-            if len(p) > 0 and not w_changed.contains(p): w_changed.push(p)
+            # (the program's own functions: not the library's, nor what is made for types)
+            user = lfuncs[i].kind == LK_INST and lfuncs[i].inst >= 0 and not modules[int(fns[lfuncs[i].inst].mod)].is_prelude
+            if user and len(p) > 0 and not w_changed.contains(p): w_changed.push(p)
         else: wm_add_fn(k, a, a, h)
     # their code, with what it refers to where it is in the program
     loop i in [0..keys.len()):
@@ -606,20 +622,23 @@ watch_make_patch = () -> bool:
         if place[i] == 0: continue
         j = wm_fidx[keys[i]]
         if wm_fcanon[j] != place[i]: wp_jump(wm_fcanon[j], place[i])
-    # then the new and changed globals are initialized (through an entry that keeps the stack
-    # aligned as calls expect)
+    # then globals whose layout changed are converted, and new and changed ones initialized
+    if w_mig_lf >= 0: w_run_fn(wm_flatest[wm_fidx[keys[w_mig_lf]]])
     if w_init_lf >= 0 and fn_addr.len() > w_init_lf and fn_addr[w_init_lf] >= 0 and inits.len() > 0:
-        j = wm_fidx[keys[w_init_lf]]
-        e = w_place(16)
-        stub: u8[] = [0x48, 0x83, 0xEC, 0x08, 0xE8, 0, 0, 0, 0, 0x48, 0x83, 0xC4, 0x08, 0xC3]
-        d = wm_flatest[j] - (e + 9)
-        loop q in [0..4): stub[5 + q] = u8((d >> (8 * q)) & 255)
-        wp_put(1, e, stub)
-        wp_run(e)
+        w_run_fn(wm_flatest[wm_fidx[keys[w_init_lf]]])
     wp_put(4, 0, [])
     wp_end()
     wm_files_collect()
     true
+
+# run a function in the program (through an entry that keeps the stack aligned as calls expect)
+w_run_fn = (a: int):
+    e = w_place(16)
+    stub: u8[] = [0x48, 0x83, 0xEC, 0x08, 0xE8, 0, 0, 0, 0, 0x48, 0x83, 0xC4, 0x08, 0xC3]
+    d = a - (e + 9)
+    loop q in [0..4): stub[5 + q] = u8((d >> (8 * q)) & 255)
+    wp_put(1, e, stub)
+    wp_run(e)
 
 refers_moved = (lf: int, moved: {int: bool}) -> bool:
     if moved.len() == 0: return false
@@ -797,12 +816,13 @@ watch_write_result = (res: str):
     t += "\n"
     lines: str[]
     loop i in [0..wm_fkeys.len()): lines.push("F\t{wm_fkeys[i]}\t{wm_fcanon[i]}\t{wm_flatest[i]}\t{wm_fhash[i]}")
-    loop i in [0..wm_gkeys.len()): lines.push("G\t{wm_gkeys[i]}\t{wm_gaddr[i]}\t{wm_gsize[i]}\t{wm_ginit[i]}\t{wm_gsig[i]}")
+    loop i in [0..wm_gkeys.len()): lines.push("G\t{wm_gkeys[i]}\t{wm_gaddr[i]}\t{wm_gsize[i]}\t{wm_ginit[i]}\t{wm_gsig[i]}\t{wm_gdesc[i]}")
     loop h, a in wm_ro: lines.push("R\t{h}\t{a}")
     loop f in wm_files: lines.push("W\t{f}")
     loop c in w_changed: lines.push("C\t{c}")
     loop c in w_reset: lines.push("Z\t{c}")
     loop c in w_added: lines.push("A\t{c}")
+    loop c in w_kept: lines.push("K\t{c}")
     t += lines.join("\n")
     out: u8[]
     __push_i64(out, len(t))
@@ -822,6 +842,7 @@ watch_read_result = (res: str) -> bool:
     w_changed = []
     w_reset = []
     w_added = []
+    w_kept = []
     loop line in split(t, "\n"):
         p = split(line, "\t")
         if p.len() == 0: continue
@@ -834,12 +855,13 @@ watch_read_result = (res: str) -> bool:
         else if k == "S":
             loop i in [1..p.len()): wm_stubs.push(to_int(p[i]) ?? 0)
         else if k == "F" and p.len() >= 5: wm_add_fn(p[1], to_int(p[2]) ?? 0, to_int(p[3]) ?? 0, to_int(p[4]) ?? 0)
-        else if k == "G" and p.len() >= 6: wm_add_glob(p[1], to_int(p[2]) ?? 0, to_int(p[3]) ?? 0, p[5], to_int(p[4]) ?? 0)
+        else if k == "G" and p.len() >= 7: wm_add_glob(p[1], to_int(p[2]) ?? 0, to_int(p[3]) ?? 0, p[5], to_int(p[4]) ?? 0, p[6])
         else if k == "R" and p.len() >= 3: wm_ro[to_int(p[1]) ?? 0] = to_int(p[2]) ?? 0
         else if k == "W" and p.len() >= 2: wm_files.push(p[1])
         else if k == "C" and p.len() >= 2: w_changed.push(p[1])
         else if k == "Z" and p.len() >= 2: w_reset.push(p[1])
         else if k == "A" and p.len() >= 2: w_added.push(p[1])
+        else if k == "K" and p.len() >= 2: w_kept.push(p[1])
     true
 
 w_i64 = (b: u8[], at: int) -> int:
@@ -905,6 +927,7 @@ watch_send = (t0: f64):
     msg = "jot watch: reloaded in {ms} ms: {what}"
     if w_added.len() > 0: msg += "; new: {w_added.join(", ")}"
     if w_reset.len() > 0: msg += "; set again: {w_reset.join(", ")}"
+    if w_kept.len() > 0: msg += "; kept, in their new layout: {w_kept.join(", ")}"
     eprint("{msg}\n")
 
 watch_send_note = ():
@@ -921,3 +944,306 @@ __write_all = (fd: int, b: u8[]) -> bool:
         if r <= 0: return false
         got += r
     true
+
+# ---- keeping the values of globals whose type's layout changed ----
+# The link map keeps a description of each global's type (wd_desc); when a later build lays the
+# type out differently, a function made here converts the old value into the new layout, field
+# by field (by name): fields the old type had keep their values (numbers converted), arrays and
+# optionals of changed types are converted element by element, new fields take their default
+# (when it is a literal; else zero).
+#
+# descriptions: i<size>; u<size>; f<size>; b; s; A<size of element>(<element>)
+# O<size of value>(<value>) S<size><name>{field@offset:<description>,...} R<name>; (the struct
+# of that name enclosing it: recursion) T<size>{@offset:<description>,...} X<size><layout>;
+wd_path: str[]
+
+wd_desc = (t0: int) -> str:
+    t = prune(t0)
+    k = types[t].kind
+    sz = tsize(t)
+    if k == .int_:
+        if types[t].sign: return "i{sz};"
+        return "u{sz};"
+    if k == .float_: return "f{sz};"
+    if k == .bool_: return "b;"
+    if k == .str_: return "s;"
+    if k == .array: return "A{tsize(int(types[t].elem))}({wd_desc(int(types[t].elem))})"
+    if k == .opt: return "O{tsize(int(types[t].elem))}({wd_desc(int(types[t].elem))})"
+    if k == .struct_:
+        nm = type_str(t)
+        if wd_path.contains(nm): return "R<{nm}>;"
+        wd_path.push(nm)
+        si = int(types[t].st)
+        out = "S{sz}<{nm}>\{"
+        loop i in [0..int(structs[si].nfields)):
+            f = int(structs[si].fields) + i
+            out += "{name_of(int(fields[f].name))}@{fields[f].offset}:{wd_desc(int(fields[f].type))},"
+        wd_path.pop()
+        return out + "}"
+    if k == .tuple:
+        out = "T{sz}\{"
+        loop fo in field_list(t): out += "@{fo.1}:{wd_desc(fo.0)},"
+        return out + "}"
+    "X{sz}<{wk_sig(t, 0)}>;"
+
+# where the description starting at i ends
+wd_end = (s: str, i: int) -> int:
+    c = s[i]
+    if c == 'A' or c == 'O':
+        j = find_byte(s, '(', i)
+        e = wd_end(s, j + 1)
+        return e + 1
+    if c == 'S' or c == 'T':
+        j = find_byte(s, '\{', i)
+        if c == 'S':
+            # (past the name: <...> may hold any character but '>')
+            j = find_byte(s, '\{', find_byte(s, '>', i))
+        j += 1
+        loop s[j] != '}':
+            j = find_byte(s, ':', j) + 1
+            j = wd_end(s, j) + 1                # (and the comma)
+        return j + 1
+    if c == 'X' or c == 'R': return find_byte(s, ';', find_byte(s, '>', i)) + 1
+    find_byte(s, ';', i) + 1
+
+wd_num = (s: str, i: int) -> int:
+    v = 0
+    j = i
+    loop j < len(s) and s[j] >= '0' and s[j] <= '9':
+        v = v * 10 + int(s[j] - '0')
+        j += 1
+    v
+
+# the fields of a struct description: (name, offset, description)
+wd_fields = (s: str) -> (str, int, str)[]:
+    out: (str, int, str)[]
+    j = 0
+    if s[0] == 'S': j = find_byte(s, '\{', find_byte(s, '>', 0)) + 1
+    else: j = find_byte(s, '\{', 0) + 1
+    loop s[j] != '}':
+        at = find_byte(s, '@', j)
+        nm = s[j..at)
+        off = wd_num(s, at + 1)
+        d0 = find_byte(s, ':', at) + 1
+        d1 = wd_end(s, d0)
+        out.push((nm, off, s[d0..d1)))
+        j = d1 + 1
+    out
+
+wd_name = (s: str) -> str:
+    a = find_byte(s, '<', 0)
+    s[a + 1..find_byte(s, '>', a))
+
+# the struct descriptions inside a description, by name (for R<name>;)
+wd_structs: {str: str} = {}
+
+wd_collect = (s: str):
+    i = 0
+    loop i < len(s):
+        if s[i] == 'S' and i + 1 < len(s) and s[i + 1] >= '0' and s[i + 1] <= '9':
+            e = wd_end(s, i)
+            nm = wd_name(s[i..e))
+            if wd_structs.get(nm) == none: wd_structs[nm] = s[i..e)
+        i += 1
+
+# globals to convert (instead of setting again): the type's layout changed, the declaration did
+# not, and the old layout is known
+w_migrate: int[]
+w_mig_lfs: {int: bool} = {}
+w_mig_lf = -1
+w_mig_fns: {str: int} = {}      # (old struct description, new type) -> conversion function
+w_mig_todo: int[]               # conversion functions to make: lfunc
+w_mig_od: str[]
+w_mig_nt: int[]
+
+watch_globals_to_migrate = () -> int[]:
+    out: int[]
+    loop k, off in global_off:
+        if globals[k].decl == 0: continue
+        if let i = wm_gidx.get(wk_glob(k)):
+            if len(wm_gdesc[i]) == 0 or wm_gsig[i] == wk_sig(int(globals[k].type), 0): continue
+            if wm_ginit[i] != wk_decl_hash(k): continue
+            out.push(k)
+    out.sort()
+    out
+
+w_new_lf = (name: str) -> int:
+    lfuncs.push(LFunc(LK_HELPER, -1, .drop, 0, name))
+    lf = lfuncs.len() - 1
+    w_mig_lfs[lf] = true
+    lf
+
+watch_lower_migrate = ():
+    w_migrate = watch_globals_to_migrate()
+    if w_migrate.len() == 0: return
+    wd_structs = {}
+    loop g in w_migrate: wd_collect(wm_gdesc[wm_gidx[wk_glob(g)]])
+    w_mig_lf = w_new_lf("watch_migrate")
+    begin_fn("watch_migrate", w_mig_lf)
+    loop g in w_migrate:
+        i = wm_gidx[wk_glob(g)]
+        op = e_iconst(wm_gaddr[i])
+        np = e_gaddr(global_off[g])
+        wc_conv(wm_gdesc[i], op, np, int(globals[g].type))
+    e_ret(-1)
+    w_emit()
+    # the conversion functions for structs (which may need more)
+    k = 0
+    loop k < w_mig_todo.len():
+        lf = w_mig_todo[k]
+        begin_fn("watch_convert_{k}", lf)
+        ps = helper_params(2)
+        t = w_mig_nt[k]
+        si = int(types[prune(t)].st)
+        olds = wd_fields(w_mig_od[k])
+        loop i in [0..int(structs[si].nfields)):
+            f = int(structs[si].fields) + i
+            fnm = name_of(int(fields[f].name))
+            found = false
+            loop of in olds:
+                if of.0 == fnm:
+                    found = true
+                    wc_conv(of.2, e_addi(ps[0], of.1), e_addi(ps[1], int(fields[f].offset)), int(fields[f].type))
+            if not found: wc_default(f, ps[1])
+        e_ret(-1)
+        w_emit()
+        k += 1
+
+w_emit = ():
+    k = 0
+    loop ins in ir.code:
+        if ins.op != .nop:
+            ir.code[k] = ins
+            k += 1
+    ir.code.truncate(k)
+    if opt_release: rel_collect()
+    else: emit_function()
+
+# a new field: its default when that is a literal (memory is zero already)
+wc_default = (f: int, np: int):
+    d = int(fields[f].defval)
+    if d == 0: return
+    t = prune(int(fields[f].type))
+    k = nodes[d].kind
+    neg = false
+    if k == .unary and nodes[int(nodes[d].a)].kind != .nil:
+        neg = true
+        d = int(nodes[d].a)
+        k = nodes[d].kind
+    off = int(fields[f].offset)
+    tk = types[t].kind
+    v = 0.0
+    if k == .int_lit: v = f64(nodes[d].ival)
+    else if k == .float_lit: v = nodes[d].fval
+    else if k == .bool_lit and tk == .bool_:
+        e_store(np, off, e_iconst(nodes[d].ival), 1)
+        return
+    else if k == .str_lit and tk == .str_:
+        e_store(np, off, e_daddr(str_data(name_of(int(nodes[d].sval)))), 8)
+        return
+    else: return
+    if neg: v = -v
+    if tk == .float_: e_store(np, off, e_fconst(v, vt_of(t)), mem_mode(t))
+    else if tk == .int_: e_store(np, off, e_iconst(int(v)), mem_mode(t))
+
+# convert the value at op (laid out as od) into the zeroed place np of type nt
+wc_conv = (od: str, op: int, np: int, nt0: int):
+    nt = prune(nt0)
+    wd_path = []
+    nd = wd_desc(nt)
+    tk = types[nt].kind
+    sz = tsize(nt)
+    c = od[0]
+    if od == nd:
+        # the same layout: a copy (and the references in it are now held twice)
+        if vc(nt) == VC_AGG: e_copy(np, op, sz)
+        else: store_val(nt, np, 0, load_val(nt, op, 0))
+        copy_at(np, nt)
+        return
+    if c == 'i' or c == 'u' or c == 'f' or c == 'b':
+        # a number of another type
+        osz = wd_num(od, 1)
+        if c == 'b': osz = 1
+        mode = osz
+        if c == 'i': mode = osz | M_SIGNED
+        if c == 'f': mode = osz | M_FLOAT
+        ovt = VI
+        if c == 'f':
+            ovt = VF
+            if osz == 4: ovt = VS
+        v = e_load(ovt, op, 0, mode)
+        if tk == .float_:
+            if ovt == VI:
+                d = vreg(vt_of(nt))
+                emit(.i2f, vt_of(nt), d, v, 0, 0, 0)
+                v = d
+            else if ovt != vt_of(nt):
+                d = vreg(vt_of(nt))
+                emit(.f2f, vt_of(nt), d, v, 0, 0, 0)
+                v = d
+            e_store(np, 0, v, mem_mode(nt))
+        else if tk == .int_ or tk == .bool_:
+            if ovt != VI:
+                d = vreg(VI)
+                emit(.f2i, ovt, d, v, 0, 0, 0)
+                v = d
+            e_store(np, 0, v, mem_mode(nt))
+        return
+    if (c == 'S' or c == 'R') and tk == .struct_:
+        sd = od
+        if c == 'R': sd = wd_structs.get(wd_name(od)) ?? ""
+        if len(sd) == 0: return
+        e_call(wc_struct_fn(sd, nt), [op, np], -1)
+        return
+    if c == 'A' and tk == .array:
+        oes = wd_num(od, 1)
+        ed = od[find_byte(od, '(', 0) + 1..len(od) - 1)
+        et = int(types[nt].elem)
+        nes = tsize(et)
+        oa = e_load(VI, op, 0, 8)
+        n = vreg(VI)
+        e_mov(n, e_iconst(0))
+        iff(e_bin(.ne, VI, oa, e_iconst(0)))
+        e_mov(n, hdr_load(oa, 8))
+        endc()
+        na = e_call(rt("__arr_repeat"), [n, e_iconst(nes)], VI)
+        e_store(np, 0, na, 8)
+        i = vreg(VI)
+        e_mov(i, e_iconst(0))
+        blk()
+        lop()
+        brif_to(e_bin(.ges, VI, i, n), ctl - 1)
+        oe = e_bin(.add, VI, e_addi(oa, 24), e_bin(.mul, VI, i, e_iconst(oes)))
+        ne = e_bin(.add, VI, e_addi(na, 24), e_bin(.mul, VI, i, e_iconst(nes)))
+        wc_conv(ed, oe, ne, et)
+        e_mov(i, e_addi(i, 1))
+        br_to(ctl)
+        endc()
+        endc()
+        return
+    if c == 'O' and tk == .opt:
+        ops = wd_num(od, 1)
+        ed = od[find_byte(od, '(', 0) + 1..len(od) - 1)
+        et = int(types[nt].elem)
+        iff(e_bin(.ne, VI, e_load(VI, op, ops, 1), e_iconst(0)))
+        e_store(np, tsize(et), e_iconst(1), 1)
+        wc_conv(ed, op, np, et)
+        endc()
+        return
+    if c == 'T' and tk == .tuple:
+        olds = wd_fields(od)
+        news = field_list(nt)
+        if olds.len() != news.len(): return
+        loop i in 0.. and fo in news: wc_conv(olds[i].2, e_addi(op, olds[i].1), e_addi(np, fo.1), fo.0)
+        return
+    # (anything else: no value kept)
+
+wc_struct_fn = (sd: str, nt: int) -> int:
+    key = "{sd}|{type_str(nt)}"
+    if let lf = w_mig_fns.get(key): return lf
+    lf = w_new_lf("watch_convert")
+    w_mig_fns[key] = lf
+    w_mig_todo.push(lf)
+    w_mig_od.push(sd)
+    w_mig_nt.push(nt)
+    lf

@@ -149,6 +149,64 @@ draw = (): clear(BLACK)
         w.quit()
 
 
+MIGRATE = """\
+struct Agent:
+    id: int
+    hp: int
+    pos: vec2
+    tags: str[]
+struct Node:
+    v: int
+    kids: Node[]
+agents: Agent[]
+boss = Agent(id = 99, hp = 500, pos = vec2(1, 2), tags = ["big"])
+by_id: {int: Agent} = {}
+tree = Node(1, [Node(2, []), Node(3, [Node(4, [])])])
+loop i in [0..3):
+    agents.push(Agent(id = i, hp = 100 - i, pos = vec2(f32(i), 0), tags = ["t{i}"]))
+    by_id[i] = agents[i]
+sumtree = (n: Node) -> int:
+    s = n.v
+    loop k in n.kids: s += sumtree(k)
+    s
+update = (dt: f64):
+    loop mut a in agents: a.pos.x += 1.0
+    if frame_number() % 10 == 0: print("tick {show()}")
+    sleep(0.005)
+show = () -> str: "n={agents.len()} id={agents[2].id} hp={agents[2].hp} moved={agents[2].pos.x > 5.0} tag={agents[1].tags[0]} boss={boss.hp} map={by_id[1].hp} tree={sumtree(tree)}"
+draw = (): clear(BLACK)
+"""
+
+
+def test_migrate(d):
+    # the layout of a struct the game holds changes: the values are kept, field by field
+    write(d, "g.jot", MIGRATE)
+    w = Watch(d, "g.jot")
+    try:
+        w.expect(r"tick n=3 id=2 hp=98 moved=\w+ tag=t1 boss=500 map=99 tree=10")
+        g2 = MIGRATE.replace("""struct Agent:
+    id: int
+    hp: int
+    pos: vec2
+    tags: str[]""", """struct Agent:
+    pos: vec2
+    name: str = "anon"
+    hp: f64
+    id: int
+    tags: str[]
+    level = 7""").replace("""struct Node:
+    v: int
+    kids: Node[]""", """struct Node:
+    w: int = 5
+    kids: Node[]
+    v: int""").replace('show = () -> str: "', 'show = () -> str: "{agents[2].name} {agents[2].level} {tree.kids[1].kids[0].w} ')
+        write(d, "g.jot", g2)
+        w.expect(r"kept, in their new layout: agents, boss, by_id, tree")
+        w.expect(r"tick anon 7 5 n=3 id=2 hp=98.0 moved=true tag=t1 boss=500.0 map=99.0 tree=10")
+    finally:
+        w.quit()
+
+
 def test_program(d):
     # without update/draw: run again from the start on each change
     write(d, "p.jot", 'print("run one")\n')
@@ -162,7 +220,7 @@ def test_program(d):
         w.quit()
 
 
-tests = [test_game, test_modules_release, test_program]
+tests = [test_game, test_modules_release, test_migrate, test_program]
 passed = failed = 0
 for t in tests:
     with tempfile.TemporaryDirectory() as d:

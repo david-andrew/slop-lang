@@ -653,8 +653,12 @@ change to how something moves or looks shows at once.
   the game keeps (a lambda that captures other variables than before is a new one: closures made
   earlier keep running the old code).
 - A global is set again from its declaration when that declaration changes (`speed = 300.0`
-  after `speed = 200.0`), or when its type's layout does (a field added to a struct it holds);
-  new globals are set when they appear. Top-level statements and `main` do not run again.
+  after `speed = 200.0`); new globals are set when they appear. Top-level statements and `main`
+  do not run again.
+- When a struct the game holds changes (a field added, removed, reordered, or of another numeric
+  type), the values are kept: each is converted to the new layout field by field (by name),
+  through arrays, optionals, maps and nested structs; a new field starts at its default (a
+  literal default; otherwise zero).
 - A build with errors leaves the game running as it was, with the errors over it and in the
   terminal. A panic in `update` or `draw` pauses the game with the message on the screen; saving
   a fix goes on from there.
