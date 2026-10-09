@@ -10,10 +10,15 @@ when TARGET == "windows":
 
     # (threads may look functions up at once: one at a time; a plain global, zero before any
     # initializer runs, as functions may be looked up that early)
-    __w32_lock = 0
+    __w32_resolve_lock = 0
 
     __ffi_resolve = (lib: str, name: str) -> *u8:
-        lk = &__w32_lock
+        if lib == "libGLESv2.so.2":
+            # (the library's OpenGL ES functions: OpenGL's, through the WGL context)
+            g = __w32_gl_proc(name)
+            if g == null: panic("OpenGL function {name} not found")
+            return g
+        lk = &__w32_resolve_lock
         loop __atomic_cas(lk, 0, 1) != 0: pass
         h = __w32_lib(lib)
         p: *u8 = null

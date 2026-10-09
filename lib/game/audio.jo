@@ -271,6 +271,56 @@ when TARGET == "wasm":
         data(__mix_buf)
 
     __audio_update = (): pass
+else when TARGET == "windows":
+    # waveOut (winmm): a few buffers of float samples, refilled as each one finishes playing
+    @lib("winmm.dll")
+    extern waveOutOpen = (h: **u8, dev: u32, fmt: *u8, cb: int, inst: int, flags: u32) -> u32
+    @lib("winmm.dll")
+    extern waveOutPrepareHeader = (h: *u8, hdr: *u8, size: u32) -> u32
+    @lib("winmm.dll")
+    extern waveOutWrite = (h: *u8, hdr: *u8, size: u32) -> u32
+
+    const __WO_BUFS = 4
+    const __WO_FRAMES = 1024          # (21 ms each)
+    __wo: *u8 = null
+    __wo_hdrs: u8[]
+    __wo_data: f32[]
+
+    __audio_start = ():
+        if __audio_state != 0: return
+        __audio_state = 2
+        if env("SLOPPY_NO_AUDIO") != none: return
+        if not lib_available("winmm.dll"): return
+        fmt = fill(u8(0), 20)
+        p = data(fmt)
+        (p as *u16)[0] = 3                                  # IEEE float
+        (p as *u16)[1] = 2                                  # stereo
+        ((p + 4) as *u32)[0] = u32(MIX_RATE)
+        ((p + 8) as *u32)[0] = u32(MIX_RATE * 8)
+        ((p + 12) as *u16)[0] = 8                           # bytes per frame
+        ((p + 14) as *u16)[0] = 32
+        h: *u8 = null
+        if waveOutOpen(&h, u32(0xFFFFFFFF), p, 0, 0, 0) != 0: return      # (WAVE_MAPPER)
+        __wo = h
+        __wo_hdrs = fill(u8(0), 48 * __WO_BUFS)
+        __wo_data = fill(f32(0), __WO_BUFS * __WO_FRAMES * 2)
+        loop i in [0..__WO_BUFS):
+            hd = data(__wo_hdrs) + 48 * i
+            (hd as **u8)[0] = (data(__wo_data) + i * __WO_FRAMES * 2) as *u8
+            ((hd + 8) as *u32)[0] = u32(__WO_FRAMES * 8)
+            waveOutPrepareHeader(__wo, hd, 48)
+            ((hd + 24) as *u32)[0] = ((hd + 24) as *u32)[0] | 1      # (done: to be filled)
+        __audio_state = 1
+
+    __audio_update = ():
+        if __audio_state != 1: return
+        loop i in [0..__WO_BUFS):
+            hd = data(__wo_hdrs) + 48 * i
+            if ((hd + 24) as *u32)[0] & 1 == 0: continue            # still playing
+            __mix(__WO_FRAMES)
+            mem_copy((data(__wo_data) + i * __WO_FRAMES * 2) as *u8, data(__mix_buf) as *u8, __WO_FRAMES * 8)
+            ((hd + 24) as *u32)[0] = ((hd + 24) as *u32)[0] & ~1
+            waveOutWrite(__wo, hd, 48)
 else:
     @lib("libasound.so.2")
     extern snd_pcm_open = (pcm: **u8, name: *u8, stream: i32, mode: i32) -> i32

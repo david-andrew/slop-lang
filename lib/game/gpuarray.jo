@@ -67,6 +67,10 @@ when TARGET == "wasm":
 # a GL context that can render to float textures
 __gpu_context = () -> bool:
     when TARGET == "wasm": return __web_gpu_init() != 0
+    else when TARGET == "windows":
+        # (on Windows only with a window's context, for now)
+        if (env("SLOPPY_SOFTWARE") ?? "") == "1" or (env("SLOPPY_NO_GPU") ?? "") == "1": return false
+        return __win_open and not __soft
     else:
         if (env("SLOPPY_SOFTWARE") ?? "") == "1" or (env("SLOPPY_NO_GPU") ?? "") == "1": return false
         if __win_open: return not __soft

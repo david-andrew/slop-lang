@@ -4,8 +4,8 @@
 #   move = left_stick()                # vec2 in -1..1, y down, with a dead zone
 #
 # input_axis() also follows the left stick and the d-pad, so keyboard games work with a pad.
-# Native builds read the Linux joystick device (/dev/input/js0); web builds use the browser's
-# Gamepad API.
+# Linux builds read the joystick device (/dev/input/js0), Windows builds XInput, web builds the
+# browser's Gamepad API.
 
 enum PadButton: a, b, x, y, lb, rb, back, start, home, lstick, rstick, up, down, left, right
 
@@ -54,6 +54,46 @@ when TARGET == "wasm":
         if not __pad_on:
             loop i in [0..__PAD_BUTTONS): __pad_down[i] = false
             loop i in [0..6): __pad_axes[i] = 0.0
+else when TARGET == "windows":
+    # XInput: the first of four controller slots that is connected
+    @lib("xinput1_4.dll")
+    extern XInputGetState = (user: u32, state: *u8) -> u32
+
+    __xi_state: u8[] = fill(u8(0), 16)
+    __xi_retry = 0.0
+    __xi_user = -1
+
+    __pad_poll = ():
+        if __fixed_step: return
+        if __xi_user < 0:
+            if elapsed() < __xi_retry: return
+            __xi_retry = elapsed() + 2.0          # look for a controller every two seconds
+            if not lib_available("xinput1_4.dll"): return
+            loop u in [0..4):
+                if XInputGetState(u32(u), data(__xi_state)) == 0:
+                    __xi_user = u
+                    break
+            if __xi_user < 0: return
+        if XInputGetState(u32(__xi_user), data(__xi_state)) != 0:
+            # unplugged
+            __xi_user = -1
+            __pad_on = false
+            loop i in [0..6): __pad_axes[i] = 0.0
+            loop i in [0..__PAD_BUTTONS): __pad_down[i] = false
+            return
+        __pad_on = true
+        p = data(__xi_state) + 4
+        bt = int((p as *u16)[0])
+        stick = (o: int) -> f64: f64(((p + o) as *i16)[0]) / 32767.0
+        __pad_axes[0] = clamp(stick(4), -1.0, 1.0)
+        __pad_axes[1] = clamp(-stick(6), -1.0, 1.0)               # (y down, as on Linux)
+        __pad_axes[2] = clamp(stick(8), -1.0, 1.0)
+        __pad_axes[3] = clamp(-stick(10), -1.0, 1.0)
+        __pad_axes[4] = f64(p[2]) / 255.0
+        __pad_axes[5] = f64(p[3]) / 255.0
+        # XINPUT_GAMEPAD buttons -> a b x y lb rb back start home ls rs up down left right
+        bits = [0x1000, 0x2000, 0x4000, 0x8000, 0x0100, 0x0200, 0x0020, 0x0010, 0x0400, 0x0040, 0x0080, 0x0001, 0x0002, 0x0004, 0x0008]
+        loop i in 0.. and m in bits: __pad_down[i] = bt & m != 0
 else:
     __js_fd = -1
     __js_retry = 0.0

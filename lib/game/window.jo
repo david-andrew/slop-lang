@@ -302,6 +302,436 @@ when TARGET == "wasm":
         window(__win_title, __win_w, __win_h)
         __web_update = update
         __web_draw = draw
+else when TARGET == "windows":
+    # ---------------- Windows: a Win32 window (lib/core/windows.jo has the rest) ----------------
+    # Frames are drawn by the software renderer and shown with StretchDIBits.
+    @lib("kernel32.dll")
+    extern GetModuleHandleW = (name: *u16) -> *u8
+    @lib("user32.dll")
+    extern RegisterClassExW = (wc: *u8) -> u16
+    @lib("user32.dll")
+    extern CreateWindowExW = (exstyle: u32, cls: *u16, title: *u16, style: u32, x: i32, y: i32, w: i32, h: i32, parent: *u8, menu: *u8, inst: *u8, param: *u8) -> *u8
+    @lib("user32.dll")
+    extern DefWindowProcW = (hwnd: *u8, msg: u32, wp: int, lp: int) -> int
+    @lib("user32.dll")
+    extern PeekMessageW = (msg: *u8, hwnd: *u8, lo: u32, hi: u32, remove: u32) -> i32
+    @lib("user32.dll")
+    extern TranslateMessage = (msg: *u8) -> i32
+    @lib("user32.dll")
+    extern DispatchMessageW = (msg: *u8) -> int
+    @lib("user32.dll")
+    extern ShowWindow = (hwnd: *u8, cmd: i32) -> i32
+    @lib("user32.dll")
+    extern SetWindowTextW = (hwnd: *u8, text: *u16) -> i32
+    @lib("user32.dll")
+    extern AdjustWindowRect = (rect: *i32, style: u32, menu: i32) -> i32
+    @lib("user32.dll")
+    extern GetClientRect = (hwnd: *u8, rect: *i32) -> i32
+    @lib("user32.dll")
+    extern GetWindowRect = (hwnd: *u8, rect: *i32) -> i32
+    @lib("user32.dll")
+    extern LoadCursorW = (inst: *u8, name: int) -> *u8
+    @lib("user32.dll")
+    extern GetDC = (hwnd: *u8) -> *u8
+    @lib("user32.dll")
+    extern SetProcessDPIAware = () -> i32
+    @lib("user32.dll")
+    extern GetWindowLongPtrW = (hwnd: *u8, index: i32) -> int
+    @lib("user32.dll")
+    extern SetWindowLongPtrW = (hwnd: *u8, index: i32, v: int) -> int
+    @lib("user32.dll")
+    extern SetWindowPos = (hwnd: *u8, after: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32) -> i32
+    @lib("user32.dll")
+    extern MonitorFromWindow = (hwnd: *u8, flags: u32) -> *u8
+    @lib("user32.dll")
+    extern GetMonitorInfoW = (mon: *u8, info: *u8) -> i32
+    @lib("user32.dll")
+    extern ClientToScreen = (hwnd: *u8, pt: *i32) -> i32
+    @lib("user32.dll")
+    extern ClipCursor = (rect: *i32) -> i32
+    @lib("user32.dll")
+    extern ShowCursor = (show: i32) -> i32
+    @lib("user32.dll")
+    extern RegisterRawInputDevices = (devs: *u8, n: u32, size: u32) -> i32
+    @lib("user32.dll")
+    extern GetRawInputData = (h: *u8, cmd: u32, data: *u8, size: *u32, header: u32) -> u32
+    @lib("user32.dll")
+    extern OpenClipboard = (hwnd: *u8) -> i32
+    @lib("user32.dll")
+    extern CloseClipboard = () -> i32
+    @lib("user32.dll")
+    extern EmptyClipboard = () -> i32
+    @lib("user32.dll")
+    extern GetClipboardData = (format: u32) -> *u8
+    @lib("user32.dll")
+    extern SetClipboardData = (format: u32, h: *u8) -> *u8
+    @lib("kernel32.dll")
+    extern GlobalAlloc = (flags: u32, size: int) -> *u8
+    @lib("kernel32.dll")
+    extern GlobalLock = (h: *u8) -> *u8
+    @lib("kernel32.dll")
+    extern GlobalUnlock = (h: *u8) -> i32
+    @lib("gdi32.dll")
+    extern StretchDIBits = (hdc: *u8, x: i32, y: i32, w: i32, h: i32, sx: i32, sy: i32, sw: i32, sh: i32, bits: *u8, info: *u8, usage: u32, rop: u32) -> i32
+
+    @lib("opengl32.dll")
+    extern wglCreateContext = (dc: *u8) -> *u8
+    @lib("opengl32.dll")
+    extern wglMakeCurrent = (dc: *u8, ctx: *u8) -> i32
+    @lib("opengl32.dll")
+    extern wglDeleteContext = (ctx: *u8) -> i32
+    @lib("opengl32.dll")
+    extern wglGetProcAddress = (name: *u8) -> *u8
+    @lib("gdi32.dll")
+    extern ChoosePixelFormat = (dc: *u8, pfd: *u8) -> i32
+    @lib("gdi32.dll")
+    extern SetPixelFormat = (dc: *u8, fmt: i32, pfd: *u8) -> i32
+    @lib("gdi32.dll")
+    extern SwapBuffers = (dc: *u8) -> i32
+
+    __w32_hwnd: *u8 = null
+    __w32_dc: *u8 = null
+    __w32_gl: *u8 = null
+    __w32_msg: u8[]
+    __w32_pixels: u8[]
+    __w32_bmi: u8[]
+    __w32_locked = false
+    __w32_saved_style = 0
+    __w32_saved_rect: i32[] = [0, 0, 0, 0]
+    __w32_surrogate = 0
+
+    const __WS_OVERLAPPEDWINDOW = 0x00CF0000
+    const __WS_POPUP = 0x80000000
+    const __WS_VISIBLE = 0x10000000
+
+    __platform_open = ():
+        __soft = (env("SLOPPY_SOFTWARE") ?? "") == "1"
+        SetProcessDPIAware()
+        inst = GetModuleHandleW(null)
+        cls = __wide("SloppyWindow")
+        wc = fill(u8(0), 80)
+        p = data(wc)
+        (p as *u32)[0] = 80                                     # cbSize
+        (p as *u32)[1] = 0x23                                   # CS_OWNDC | CS_HREDRAW | CS_VREDRAW
+        wp: cfn(*u8, u32, int, int) -> int = __w32_wndproc
+        ((p + 8) as **u8)[0] = wp as *u8
+        ((p + 24) as **u8)[0] = inst
+        ((p + 40) as **u8)[0] = LoadCursorW(null, 32512)        # IDC_ARROW
+        ((p + 64) as **u16)[0] = data(cls)
+        RegisterClassExW(p)
+        # the window's outer size for a client area of the size asked for
+        r: i32[] = [0, 0, i32(__win_w), i32(__win_h)]
+        AdjustWindowRect(data(r), u32(__WS_OVERLAPPEDWINDOW), 0)
+        title = __wide(__win_title)
+        cw = i32(0x80000000 as int)                             # CW_USEDEFAULT
+        __w32_hwnd = CreateWindowExW(0, data(cls), data(title), u32(__WS_OVERLAPPEDWINDOW | __WS_VISIBLE), cw, cw, r[2] - r[0], r[3] - r[1], null, null, inst, null)
+        __need(__w32_hwnd != null, "CreateWindowExW failed")
+        ShowWindow(__w32_hwnd, 1)
+        __w32_dc = GetDC(__w32_hwnd)
+        __w32_msg = fill(u8(0), 48)
+        cr: i32[] = [0, 0, 0, 0]
+        GetClientRect(__w32_hwnd, data(cr))
+        if cr[2] > 0 and cr[3] > 0:
+            __win_w = int(cr[2])
+            __win_h = int(cr[3])
+        if not __soft:
+            why = __w32_gl_open()
+            if len(why) > 0:
+                eprint("note: {why}; using the software renderer")
+                __soft = true
+        if __soft: __sw_init_window(__win_w, __win_h)
+
+    # an OpenGL 4.3 core context (it takes the library's GLSL ES 3.00 shaders), with vsync
+    __w32_gl_open = () -> str:
+        pfd = fill(u8(0), 40)
+        p = data(pfd)
+        (p as *u16)[0] = 40
+        (p as *u16)[1] = 1
+        ((p + 4) as *u32)[0] = 0x25                             # draw to window, OpenGL, double buffered
+        p[9] = 32                                               # color bits
+        p[16] = 8                                               # alpha
+        p[23] = 24                                              # depth
+        p[24] = 8                                               # stencil
+        fmt = ChoosePixelFormat(__w32_dc, p)
+        if fmt == 0 or SetPixelFormat(__w32_dc, fmt, p) == 0: return "no OpenGL pixel format"
+        tmp = wglCreateContext(__w32_dc)
+        if tmp == null or wglMakeCurrent(__w32_dc, tmp) == 0: return "no OpenGL driver"
+        create = wglGetProcAddress(data("wglCreateContextAttribsARB"))
+        ctx: *u8 = null
+        if create != null:
+            f = create as cfn(*u8, *u8, *i32) -> *u8
+            attribs: i32[] = [0x2091, 4, 0x2092, 3, 0x9126, 1, 0]           # 4.3, core profile
+            ctx = f(__w32_dc, null, data(attribs))
+        if ctx == null:
+            wglDeleteContext(tmp)
+            return "OpenGL 4.3 is not available"
+        wglMakeCurrent(__w32_dc, ctx)
+        wglDeleteContext(tmp)
+        __w32_gl = ctx
+        swap = wglGetProcAddress(data("wglSwapIntervalEXT"))
+        if swap != null:
+            sf = swap as cfn(i32) -> i32
+            sf(1)
+        ""
+
+    # (lib/core/windows.jo: the GL functions gl.jo declares as libGLESv2's come from here)
+    __w32_gl_proc = (name: str) -> *u8:
+        p = wglGetProcAddress(data(__zstr(name)))
+        v = p as int
+        if v >= -1 and v <= 3: p = GetProcAddress(__w32_lib("opengl32.dll"), data(__zstr(name)))
+        p
+
+    __need = (ok: bool, what: str):
+        if not ok:
+            eprint("error: cannot open a window: {what}")
+            exit(1)
+
+    __platform_title = ():
+        if __w32_hwnd != null:
+            t = __wide(__win_title)
+            SetWindowTextW(__w32_hwnd, data(t))
+
+    __platform_poll = ():
+        if __w32_hwnd == null: return
+        m = data(__w32_msg)
+        loop PeekMessageW(m, null, 0, 0, 1) != 0:          # PM_REMOVE
+            TranslateMessage(m)
+            DispatchMessageW(m)
+
+    # (signed 16-bit parts of a message's parameter)
+    __w32_lo = (v: int) -> int: int(i16(v & 0xFFFF))
+    __w32_hi = (v: int) -> int: int(i16((v >> 16) & 0xFFFF))
+
+    @cabi
+    __w32_wndproc = (hwnd: *u8, msg: u32, wp: int, lp: int) -> int:
+        m = int(msg)
+        if m == 0x10:                                           # WM_CLOSE
+            __win_close = true
+            return 0
+        if m == 0x5:                                            # WM_SIZE
+            w = lp & 0xFFFF
+            h = (lp >> 16) & 0xFFFF
+            if w > 0 and h > 0:
+                __win_w = w
+                __win_h = h
+            return 0
+        if m == 0x100 or m == 0x104 or m == 0x101 or m == 0x105:     # WM_(SYS)KEYDOWN / UP
+            down = m == 0x100 or m == 0x104
+            k = __w32_key(int(wp))
+            if k > 0: __key_event(k, down, down and (lp >> 30) & 1 == 1)
+            # (alt+F4 still closes; other system keys are the game's)
+            if m == 0x104 and int(wp) == 0x73: return DefWindowProcW(hwnd, msg, wp, lp)
+            return 0
+        if m == 0x102:                                          # WM_CHAR (UTF-16)
+            c = int(wp)
+            if c >= 0xD800 and c < 0xDC00:
+                __w32_surrogate = c
+                return 0
+            if c >= 0xDC00 and c < 0xE000 and __w32_surrogate != 0:
+                c = 0x10000 + ((__w32_surrogate - 0xD800) << 10) + (c - 0xDC00)
+                __w32_surrogate = 0
+            if c >= 32 and c != 127: __text_input += __w32_utf8(c)
+            return 0
+        if m == 0x200:                                          # WM_MOUSEMOVE
+            x = f64(__w32_lo(lp))
+            y = f64(__w32_hi(lp))
+            if not __w32_locked:
+                __mouse_dx += x - __mouse_x
+                __mouse_dy += y - __mouse_y
+            __mouse_x = x
+            __mouse_y = y
+            return 0
+        if m == 0x201 or m == 0x202:
+            __mouse_event(0, m == 0x201)
+            return 0
+        if m == 0x207 or m == 0x208:
+            __mouse_event(1, m == 0x207)
+            return 0
+        if m == 0x204 or m == 0x205:
+            __mouse_event(2, m == 0x204)
+            return 0
+        if m == 0x20A:                                          # WM_MOUSEWHEEL
+            __mouse_wheel += f64(__w32_hi(wp)) / 120.0
+            return 0
+        if m == 0xFF:                                           # WM_INPUT: raw mouse motion
+            if __w32_locked:
+                buf = fill(u8(0), 64)
+                size: u32[] = [64]
+                if int(GetRawInputData(lp as *u8, u32(0x10000003), data(buf), data(size), 24)) > 0:
+                    if (data(buf) as *u32)[0] == 0 and (data(buf) + 24)[0] & 1 == 0:    # a mouse, relative
+                        __mouse_dx += f64(((data(buf) + 36) as *i32)[0])
+                        __mouse_dy += f64(((data(buf) + 40) as *i32)[0])
+            return DefWindowProcW(hwnd, msg, wp, lp)
+        if m == 0x8:                                            # WM_KILLFOCUS
+            loop mut kd in __key_down: kd = false
+            if __w32_locked: __w32_lock(false)
+            return 0
+        if m == 0x7:                                            # WM_SETFOCUS
+            if __mouse_lock_want: __w32_lock(true)
+            return 0
+        if m == 0x14: return 1                                  # WM_ERASEBKGND: drawn whole anyway
+        DefWindowProcW(hwnd, msg, wp, lp)
+
+    __w32_utf8 = (c: int) -> str:
+        b: u8[]
+        if c < 0x80: b.push(u8(c))
+        else if c < 0x800:
+            b.push(u8(0xC0 | (c >> 6)))
+            b.push(u8(0x80 | (c & 63)))
+        else if c < 0x10000:
+            b.push(u8(0xE0 | (c >> 12)))
+            b.push(u8(0x80 | ((c >> 6) & 63)))
+            b.push(u8(0x80 | (c & 63)))
+        else:
+            b.push(u8(0xF0 | (c >> 18)))
+            b.push(u8(0x80 | ((c >> 12) & 63)))
+            b.push(u8(0x80 | ((c >> 6) & 63)))
+            b.push(u8(0x80 | (c & 63)))
+        str_from_bytes(b)
+
+    # virtual-key code -> Key
+    __w32_key = (vk: int) -> int:
+        if vk >= 0x41 and vk <= 0x5A: return int(Key.a) + vk - 0x41
+        if vk >= 0x30 and vk <= 0x39: return int(Key.n0) + vk - 0x30
+        if vk >= 0x70 and vk <= 0x7B: return int(Key.f1) + vk - 0x70
+        match vk:
+            0x20: int(Key.space)
+            0x0D: int(Key.enter)
+            0x1B: int(Key.escape)
+            0x09: int(Key.tab)
+            0x08: int(Key.backspace)
+            0x2E: int(Key.delete)
+            0x2D: int(Key.insert)
+            0x24: int(Key.home)
+            0x23: int(Key.end)
+            0x21: int(Key.page_up)
+            0x22: int(Key.page_down)
+            0x25: int(Key.left)
+            0x26: int(Key.up)
+            0x27: int(Key.right)
+            0x28: int(Key.down)
+            0x10: int(Key.shift)
+            0x11: int(Key.ctrl)
+            0x12: int(Key.alt)
+            0x5B, 0x5C: int(Key.super)
+            0xBD: int(Key.minus)
+            0xBB: int(Key.equals)
+            0xBC: int(Key.comma)
+            0xBE: int(Key.period)
+            0xBF: int(Key.slash)
+            0xBA: int(Key.semicolon)
+            0xDE: int(Key.quote)
+            0xDB: int(Key.lbracket)
+            0xDD: int(Key.rbracket)
+            0xDC: int(Key.backslash)
+            0xC0: int(Key.grave)
+            _: 0
+
+    __platform_present = ():
+        if __w32_dc == null: return
+        if not __soft:
+            SwapBuffers(__w32_dc)
+            return
+        w = __win_w
+        h = __win_h
+        if __w32_pixels.len() != w * h * 4: __w32_pixels = fill(u8(0), w * h * 4)
+        __sw_present_pixels(data(__w32_pixels), w, h)
+        if __w32_bmi.len() == 0: __w32_bmi = fill(u8(0), 44)
+        b = data(__w32_bmi)
+        (b as *u32)[0] = 40                                     # BITMAPINFOHEADER
+        (b as *i32)[1] = i32(w)
+        (b as *i32)[2] = i32(-h)                                # (top row first)
+        ((b + 12) as *u16)[0] = 1
+        ((b + 14) as *u16)[0] = 32
+        StretchDIBits(__w32_dc, 0, 0, i32(w), i32(h), 0, 0, i32(w), i32(h), data(__w32_pixels), b, 0, u32(0x00CC0020))     # SRCCOPY
+
+    # borderless, over the whole monitor (and back)
+    __platform_fullscreen = (on: bool):
+        if __w32_hwnd == null: return
+        if on:
+            __w32_saved_style = GetWindowLongPtrW(__w32_hwnd, -16)
+            GetWindowRect(__w32_hwnd, data(__w32_saved_rect))
+            info = fill(u8(0), 40)
+            (data(info) as *u32)[0] = 40
+            GetMonitorInfoW(MonitorFromWindow(__w32_hwnd, 2), data(info))
+            r = (data(info) + 4) as *i32
+            SetWindowLongPtrW(__w32_hwnd, -16, __WS_POPUP | __WS_VISIBLE)
+            SetWindowPos(__w32_hwnd, null, r[0], r[1], r[2] - r[0], r[3] - r[1], u32(0x220))     # FRAMECHANGED, NOOWNERZORDER
+        else if __w32_saved_style != 0:
+            r = __w32_saved_rect
+            SetWindowLongPtrW(__w32_hwnd, -16, __w32_saved_style)
+            SetWindowPos(__w32_hwnd, null, r[0], r[1], r[2] - r[0], r[3] - r[1], u32(0x220))
+
+    # mouse look: the pointer hidden and kept in the window, motion from raw input
+    __w32_lock = (on: bool) -> bool:
+        if __w32_hwnd == null: return false
+        if on == __w32_locked: return true
+        if on:
+            dev = fill(u8(0), 16)
+            ((data(dev)) as *u16)[0] = 1                        # generic desktop controls
+            ((data(dev) + 2) as *u16)[0] = 2                    # mouse
+            ((data(dev) + 8) as **u8)[0] = __w32_hwnd
+            RegisterRawInputDevices(data(dev), 1, 16)
+            cr: i32[] = [0, 0, 0, 0]
+            GetClientRect(__w32_hwnd, data(cr))
+            ClientToScreen(__w32_hwnd, data(cr))
+            ClientToScreen(__w32_hwnd, data(cr) + 2)
+            ClipCursor(data(cr))
+            ShowCursor(0)
+        else:
+            ClipCursor(null)
+            ShowCursor(1)
+        __w32_locked = on
+        true
+
+    __platform_mouse_lock = (on: bool) -> bool: __w32_lock(on)
+    __platform_mouse_locked = () -> bool: __w32_locked
+
+    __platform_clipboard = () -> str:
+        if OpenClipboard(__w32_hwnd) == 0: return ""
+        s = ""
+        h = GetClipboardData(13)                                # CF_UNICODETEXT
+        if h != null:
+            p = GlobalLock(h)
+            if p != null:
+                s = __narrow(p as *u16, -1)
+                GlobalUnlock(h)
+        CloseClipboard()
+        s
+
+    __platform_set_clipboard = (s: str):
+        if OpenClipboard(__w32_hwnd) == 0: return
+        EmptyClipboard()
+        w = __wide(s)
+        h = GlobalAlloc(2, w.len() * 2)                         # GMEM_MOVEABLE
+        if h != null:
+            p = GlobalLock(h)
+            mem_copy(p, data(w) as *u8, w.len() * 2)
+            GlobalUnlock(h)
+            SetClipboardData(13, h)
+        CloseClipboard()
+
+    __game_run = (update: (f64) -> void, draw: () -> void):
+        window(__win_title, __win_w, __win_h)
+        __fixed_step = env("SLOPPY_SCREENSHOT") != none
+        last = time()
+        loop not __win_close:
+            __platform_poll()
+            now = time()
+            dt = clamp(now - last, 0.0, 0.1)
+            last = now
+            if __fixed_step: dt = 1.0 / 60.0
+            if __soft: __sw_init_window(__win_w, __win_h)
+            __run_frame(dt, update, draw)
+            t0 = time()
+            __platform_present()
+            __last_present = time() - t0
+            __frame_present += __last_present
+            # (without vsync, software frames are paced to 60 per second)
+            if __soft and not __fixed_step:
+                left = 1.0 / 60.0 - (time() - now)
+                if left > 0.0: sleep(left)
+        exit(0)
 else:
     @lib("libX11.so.6")
     extern XOpenDisplay = (name: *u8) -> *u8
@@ -873,6 +1303,9 @@ __frame_present = 0.0         # time spent handing frames to the screen (and wai
 # how frames reach the screen (for diagnostics)
 __present_how = () -> str:
     when TARGET == "wasm": return "webgl"
+    else when TARGET == "windows":
+        if __soft: return "software renderer (StretchDIBits)"
+        return "wgl"
     else:
         if __soft: return "software renderer"
         if __wayland:
