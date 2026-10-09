@@ -1,0 +1,12 @@
+# a module for tests/t/modules.jo (and tests/errors/import_*)
+struct Body:
+    pos: vec2
+    vel: vec2
+gravity = 9.8
+step = (b: mut Body, dt: f64):
+    b.vel.y += f32(gravity * dt)
+    b.pos += b.vel * f32(dt)
+step = (bs: mut Body[], dt: f64):
+    loop mut b in bs: step(b, dt)
+_helper = () -> str: "private"
+describe = (b: Body) -> str: "{b.pos} {_helper()}"

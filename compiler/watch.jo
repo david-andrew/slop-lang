@@ -541,25 +541,25 @@ watch_lower_inits = ():
 #   1 write the bytes at address a    2 run the function at a    3 jump from a to b
 #   4 show text over the game (a: 1 for errors; empty: nothing)   5 the end: apply
 wp_put = (op: int, a: int, bytes: u8[]):
-    __push_i64(w_patch, op)
-    __push_i64(w_patch, a)
-    __push_i64(w_patch, bytes.len())
+    push_i64(w_patch, op)
+    push_i64(w_patch, a)
+    push_i64(w_patch, bytes.len())
     loop x in bytes: w_patch.push(x)
 
 wp_jump = (from: int, to: int):
-    __push_i64(w_patch, 3)
-    __push_i64(w_patch, from)
-    __push_i64(w_patch, to)
+    push_i64(w_patch, 3)
+    push_i64(w_patch, from)
+    push_i64(w_patch, to)
 
 wp_run = (a: int):
-    __push_i64(w_patch, 2)
-    __push_i64(w_patch, a)
-    __push_i64(w_patch, 0)
+    push_i64(w_patch, 2)
+    push_i64(w_patch, a)
+    push_i64(w_patch, 0)
 
 wp_end = ():
-    __push_i64(w_patch, 5)
-    __push_i64(w_patch, 0)
-    __push_i64(w_patch, 0)
+    push_i64(w_patch, 5)
+    push_i64(w_patch, 0)
+    push_i64(w_patch, 0)
 
 w_place = (n: int) -> int:
     a = align_up(wm_next, 16)
@@ -932,9 +932,9 @@ watch_write_result = (res: str):
     loop c in w_kept: lines.push("K\t{c}")
     t += lines.join("\n")
     out: u8[]
-    __push_i64(out, len(t))
+    push_i64(out, len(t))
     loop c in t: out.push(c)
-    __push_i64(out, w_patch.len())
+    push_i64(out, w_patch.len())
     loop x in w_patch: out.push(x)
     write_bytes(res, out)
 

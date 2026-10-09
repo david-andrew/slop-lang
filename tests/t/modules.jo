@@ -1,0 +1,18 @@
+# requires: sloppy
+# from m import names (renamed with as), import m (m.name, m._private), use m (no _ names)
+from 'mods/physics.jo' import Body, step, gravity as g, _helper
+from 'mods/physics.jo' import (
+    describe as desc,
+)
+import 'mods/physics.jo' as ph
+b = Body(vec2(0, 0), vec2(1, 0))
+step(b, 0.5)
+bs = [b, ph.Body(vec2(5, 5), vec2(0, 0))]
+step(bs, 0.5)
+print(g, b.pos, bs[1].pos, _helper(), desc(b), ph._helper(), ph.gravity)
+# a function of this module with an imported function's name: overloads
+step = (n: int) -> int: n + 1
+print(step(41))
+# `from` is still a name
+from = 3
+print(from + 1)

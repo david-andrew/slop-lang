@@ -1,0 +1,2 @@
+# error: has no 'stepp' (did you mean 'step'?)
+from '../t/mods/physics.jo' import stepp

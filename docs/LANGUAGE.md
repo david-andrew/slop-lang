@@ -531,9 +531,24 @@ everywhere; `gpu_available()` tells which.
 
 ## 9. Modules
 
-`use 'util.jo'` loads a file relative to the importing file and makes its names available
-directly; standard-library modules are named without quotes (`use thread`).
-`import util` makes them available as `util.name` (`import util as u` renames).
+A module is a file: `'physics.jo'` (relative to the importing file) or a standard-library
+module by name (`thread`). There are three ways to bring one in:
+
+```gdscript
+import 'physics.jo'                         # physics.step(b), physics.Body: the names under the module's
+import 'physics.jo' as ph                   # ph.step(b)
+from 'physics.jo' import step, Body, gravity as g     # just these names, as they are (or renamed)
+use 'physics.jo'                            # all its names, as they are
+```
+
+`import` keeps a module's names apart and is the one to reach for in a program of several
+files; `from ... import` picks names (a long list can go in parentheses over several lines);
+`use` suits a small program split into files that share one set of names. Names starting with
+`_` are private to their file: `use` leaves them out, while `physics._helper` and
+`from 'physics.jo' import _helper` reach them deliberately. A module's own functions with an
+imported function's name are overloads of it; any other clash is an error (rename with `as`).
+`use` and imports are not transitive: a file sees the names of the modules it brings in itself.
+
 The core standard library (strings, arrays, maps, math, vectors, files, numeric arrays, and
 the game/graphics/audio API) is always available without importing.
 

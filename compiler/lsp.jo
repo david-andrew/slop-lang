@@ -935,7 +935,11 @@ use_target = (d: int, off: int) -> str:
     b = off
     loop b < len(text) and text[b] != '\n': b += 1
     line = trim(text[a..b))
-    if not starts_with(line, "use ") and not starts_with(line, "import "): return ""
+    if not starts_with(line, "use ") and not starts_with(line, "import ") and not starts_with(line, "from "): return ""
+    # (from m import a, b: on a name, that name's definition)
+    if starts_with(line, "from "):
+        im = find(text[a..b), " import ")
+        if im >= 0 and off > a + im: return ""
     dir = docs[d].path
     s = rfind(dir, "/")
     if s >= 0: dir = dir[..s)
@@ -1140,6 +1144,8 @@ on_completion = (id: int, params: int) -> int:
         else if c == '{{': closers = "\}" + closers
         else if (c == ')' or c == ']' or c == '}}') and len(closers) > 0: closers = closers[1..]
     line0 = trim(text[ls0..a))
+    # (the names after `from m import` are the module's, not statements)
+    if starts_with(line0, "from ") and find(line0, " import") >= 0: member = true
     tail = closers
     if (starts_with(line0, "if ") or starts_with(line0, "else if ") or starts_with(line0, "loop ") or starts_with(line0, "match ") or starts_with(line0, "while ")) and find_byte(text[a..le), ':') < 0: tail += ": pass"
     tries.push(text[..a) + sent + tail + text[le..])

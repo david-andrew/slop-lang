@@ -198,6 +198,7 @@ scope_reset = (mark: int):
     sc_prev.truncate(mark)
 
 module_lookup = (m: int, name: int) -> int:
+    user = m >= 0 and not modules[m].is_prelude
     if m >= 0:
         if modules[m].is_prelude:
             if let s = prelude.get(name): return s
@@ -205,12 +206,67 @@ module_lookup = (m: int, name: int) -> int:
             if let s = modules[m].names.get(name): return s
             loop u in modules[m].uses:
                 if modules[u].is_prelude:
-                    if let s = prelude.get(name): return s
+                    if let s = prelude.get(name):
+                        if not lib_private(name): return s
                 else:
-                    if let s = modules[u].names.get(name): return s
-    if let s = prelude.get(name): return s
+                    if let s = modules[u].names.get(name):
+                        if not is_private(name): return s
+    if let s = prelude.get(name):
+        if not user or not lib_private(name): return s
     if let s = universe.get(name): return s
     0
+
+# names starting with _ stay in their module: `use` does not bring them (`import m` reaches
+# them as m._x, `from m import _x` by name). The library's are hidden from programs; its __
+# names are the runtime's, which code the compiler writes calls
+is_private = (name: int) -> bool:
+    s = name_of(name)
+    len(s) > 0 and s[0] == '_'
+
+lib_private = (name: int) -> bool:
+    s = name_of(name)
+    len(s) > 1 and s[0] == '_' and s[1] != '_'
+
+# from m import a, b as c: each name bound in the importing module (functions join any of its
+# own with that name, as overloads)
+from_imports: int[]
+
+bind_from_imports = ():
+    loop d in from_imports:
+        m = int(nodes[d].mod)
+        im = int(nodes[d].sym)
+        loop i in [0..nkids(d)):
+            id = kid(d, i)
+            nm = int(nodes[id].name)
+            if ide_sentinel != 0 and nm == ide_sentinel: ide_complete_module(im)
+            alias = nm
+            if nodes[id].aux != 0:
+                alias = int(nodes[id].aux)
+                if ide_on: ide_alias_of[alias] = nm
+            s = 0
+            if modules[im].is_prelude: s = prelude.get(nm) ?? 0
+            else: s = modules[im].names.get(nm) ?? 0
+            if s == 0 or syms[s].kind == .module:
+                cands: int[]
+                if not modules[im].is_prelude:
+                    loop k, v in modules[im].names: cands.push(k)
+                fatal(nodes[id].pos, "'{name_of(int(nodes[d].sval))}' has no '{name_of(nm)}'{suggestion(name_of(nm), cands)}")
+            if ide_on:
+                if syms[s].kind == .fns and syms[s].decl != 0: ide_ref(nodes[id].pos, nm, IK_FN, nodes[int(syms[s].decl)].pos, 0, 0)
+                else: ide_sym_ref(id, s)
+            if syms[s].kind == .fns:
+                if let ex = modules[m].names.get(alias):
+                    if syms[ex].kind != .fns: fatal(nodes[id].pos, "cannot import '{name_of(alias)}': this module has a '{name_of(alias)}' (at {pos_str(nodes[int(syms[ex].decl)].pos)}); import it with another name: {name_of(nm)} as ...")
+                o = s
+                loop o != 0:
+                    scope_add_module(m, alias, .fns, int(syms[o].ref), int(syms[o].decl))
+                    o = int(syms[o].next)
+            else:
+                if let ex = modules[m].names.get(alias):
+                    where = "at {pos_str(nodes[d].pos)}"
+                    if syms[ex].decl != 0: where = "at {pos_str(nodes[int(syms[ex].decl)].pos)}"
+                    fatal(nodes[id].pos, "cannot import '{name_of(alias)}': this module has a '{name_of(alias)}' ({where}); import it with another name: {name_of(nm)} as ...")
+                modules[m].names[alias] = new_sym(alias, syms[s].kind, int(syms[s].ref), int(syms[s].decl))
 
 # look up a name from the current context
 lookup = (name: int) -> int:
@@ -422,6 +478,10 @@ register_decls = (m: int, decls: int[]):
                 if not file_exists(path): fatal(nodes[d].pos, "cannot find module '{rel}'")
             im = load_module(path, false, nodes[d].pos)
             if nodes[d].aux == 1: modules[m].uses.push(im)
+            else if nodes[d].aux == 2:
+                # from x import a, b: bound once every module's names are known (bind_from_imports)
+                nodes[d].sym = i32(im)
+                from_imports.push(d)
             else: scope_add_module(m, nm, .module, im, d)
         else if k == .when_: eval_when_toplevel(m, d)
         else if k == .build_:
@@ -1826,7 +1886,8 @@ order_modules = (m: int, out: mut int[]):
     dfs_state[m] = true
     loop d in modules[m].decls:
         if nodes[d].kind == .import_:
-            if nodes[d].aux == 1:
+            if nodes[d].aux == 2: order_modules(int(nodes[d].sym), out)
+            else if nodes[d].aux == 1:
                 loop u in modules[m].uses: order_modules(u, out)
             else if let s = modules[m].names.get(int(nodes[d].name)):
                 if syms[s].kind == .module: order_modules(int(syms[s].ref), out)
@@ -1858,6 +1919,7 @@ check_program = (main_path: str):
     loop i < modules.len():
         register_decls(i, modules[i].decls)
         i += 1
+    bind_from_imports()
     # (native programs report crashes as they do panics: lib/std/backtrace.jo)
     if not target_wasm and prelude.get(intern("__crash_install")) != none: modules[mainm].inits.insert(0, synth_call("__crash_install", [], 0))
     # programs with update()/draw() run the game loop after main()

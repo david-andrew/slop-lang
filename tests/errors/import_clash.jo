@@ -1,0 +1,3 @@
+# error: cannot import 'gravity': this module has a 'gravity'
+from '../t/mods/physics.jo' import gravity
+gravity = 1.0

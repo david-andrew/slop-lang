@@ -267,6 +267,22 @@ c.diagnostics(muri)
 errs = [m["params"]["diagnostics"] for m in c.notes if m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uuri]
 check("multi-file: fixed", errs[-1:], [[]])
 
+# ---- from m import names ----
+open(os.path.join(tmp, "util.jo"), "w").write("# doubles\ndouble = (x: int) -> int: x * 2\n_secret = 3\n")
+fsrc = "from 'util.jo' import double as twice, _secret\nprint(twice(_secret))\n"
+c.set_text(muri, fsrc)
+check("from-import: no errors", c.diagnostics(muri), [])
+d = where(c.request("textDocument/definition", {"textDocument": {"uri": muri}, "position": lc(fsrc, fsrc.index("twice("))}))
+check("from-import: definition through an alias", d, ("util.jo", 1, 0))
+d = where(c.request("textDocument/definition", {"textDocument": {"uri": muri}, "position": lc(fsrc, fsrc.index("double"))}))
+check("from-import: definition of an imported name", d, ("util.jo", 1, 0))
+csrc = "from 'util.jo' import d\n"
+c.set_text(muri, csrc)
+r = c.request("textDocument/completion", {"textDocument": {"uri": muri}, "position": lc(csrc, len(csrc) - 1)})
+check("from-import: completion", sorted(x["label"] for x in r["items"]), ["_secret", "double"])
+c.set_text(muri, msrc)
+c.diagnostics(muri)
+
 # ---- a library file ----
 lpath = os.path.join(root, "lib", "game", "stats.jo")
 luri = "file://" + lpath

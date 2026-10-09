@@ -131,7 +131,13 @@ ide_ref = (pos: int, name: int, kind: int, decl: int, type: int, inst: int):
     if p < 0: return
     d = -1
     if decl > 0: d = ide_name_at(decl, name)
+    # (a name imported as another: its declaration has the original name)
+    if d < 0 and decl > 0:
+        if let orig = ide_alias_of.get(name): d = ide_name_at(decl, orig)
     ide_refs.push(IdeRef(p, d, i32(kind), i32(type), i32(inst)))
+
+# from m import x as y: y -> x
+ide_alias_of: {int: int} = {}
 
 # the variable a local stands for (a closure's copy, or a narrowed name, is its variable)
 ide_local_root = (l0: int) -> int:
@@ -629,6 +635,21 @@ ide_complete_names = ():
         if seen.get(nm) != none: continue
         seen[nm] = true
         ide_emit("C\t{it.name}\t{IK_FN}\tbuiltin")
+    ide_flush()
+    exit(0)
+
+# what `from m import ` can bring in: m's names (its private ones too)
+ide_complete_module = (m: int):
+    tab = modules[m].names
+    if modules[m].is_prelude: tab = prelude
+    loop nm, s in tab:
+        if nm == ide_sentinel or syms[s].kind == .module: continue
+        nms = name_of(nm)
+        if starts_with(nms, "__"): continue
+        d = int(syms[s].decl)
+        if modules[m].is_prelude and (d == 0 or int(nodes[d].mod) != m): continue
+        kd = ide_sym_detail(s)
+        ide_emit("C\t{ide_esc(nms)}\t{kd.0}\t{ide_esc(kd.1)}")
     ide_flush()
     exit(0)
 

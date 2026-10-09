@@ -97,18 +97,18 @@ lit_fs = (i: LitOut, u: LitParams) -> vec4:
     vec4(aces(c), base.w)
 
 # ---------------- shadow pass ----------------
-struct ShadowOut:
+struct _ShadowOut:
     pos: vec4
 
-shadow_vs = (v: Vertex3D, u: LitParams) -> ShadowOut: ShadowOut(u.shadow_vp * (u.model * vec4(v.pos, 1)))
-shadow_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> ShadowOut: ShadowOut(u.shadow_vp * (inst.model * vec4(v.pos, 1)))
-shadow_fs = (i: ShadowOut, u: LitParams) -> vec4: vec4(1, 1, 1, 1)
+_shadow_vs = (v: Vertex3D, u: LitParams) -> _ShadowOut: _ShadowOut(u.shadow_vp * (u.model * vec4(v.pos, 1)))
+_shadow_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> _ShadowOut: _ShadowOut(u.shadow_vp * (inst.model * vec4(v.pos, 1)))
+_shadow_fs = (i: _ShadowOut, u: LitParams) -> vec4: vec4(1, 1, 1, 1)
 
 # ---------------- sky ----------------
-struct SkyVertex:
+struct _SkyVertex:
     pos: vec2
 
-struct SkyParams:
+struct _SkyParams:
     inv_view_proj: mat4
     sky_top: vec3
     sky_horizon: vec3
@@ -118,15 +118,15 @@ struct SkyParams:
     time: f32
     stars: f32
 
-struct SkyOut:
+struct _SkyOut:
     pos: vec4
     ndc: vec2
 
-sky_vs = (v: SkyVertex, u: SkyParams) -> SkyOut: SkyOut(vec4(v.pos, 0.9999, 1), v.pos)
+_sky_vs = (v: _SkyVertex, u: _SkyParams) -> _SkyOut: _SkyOut(vec4(v.pos, 0.9999, 1), v.pos)
 
 hash21 = (p: vec2) -> f32: fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453)
 
-sky_fs = (i: SkyOut, u: SkyParams) -> vec4:
+_sky_fs = (i: _SkyOut, u: _SkyParams) -> vec4:
     a = u.inv_view_proj * vec4(i.ndc, 1, 1)
     b = u.inv_view_proj * vec4(i.ndc, -1, 1)
     dir = normalize(a.xyz / a.w - b.xyz / b.w)
@@ -142,7 +142,7 @@ sky_fs = (i: SkyOut, u: SkyParams) -> vec4:
     vec4(aces(c), 1)
 
 # ---------------- post effects (bloom) ----------------
-struct PostParams:
+struct _PostParams:
     src: Texture
     bloom: Texture
     texel: vec2
@@ -153,26 +153,26 @@ struct PostParams:
     saturation: f32
     tint: vec3
 
-struct PostOut:
+struct _PostOut:
     pos: vec4
     uv: vec2
 
-post_vs = (v: SkyVertex, u: PostParams) -> PostOut: PostOut(vec4(v.pos, 0, 1), v.pos * 0.5 + vec2(0.5, 0.5))
+_post_vs = (v: _SkyVertex, u: _PostParams) -> _PostOut: _PostOut(vec4(v.pos, 0, 1), v.pos * 0.5 + vec2(0.5, 0.5))
 
-bright_fs = (i: PostOut, u: PostParams) -> vec4:
+_bright_fs = (i: _PostOut, u: _PostParams) -> vec4:
     c = sample(u.src, i.uv).xyz
     lum = dot(c, vec3(0.299, 0.587, 0.114))
     k = smoothstep(u.threshold, u.threshold + 0.25, lum)
     vec4(c * k, 1)
 
-blur_fs = (i: PostOut, u: PostParams) -> vec4:
+_blur_fs = (i: _PostOut, u: _PostParams) -> vec4:
     d = u.dir * u.texel
     c = sample(u.src, i.uv).xyz * 0.227
     c = c + (sample(u.src, i.uv + d * 1.385).xyz + sample(u.src, i.uv - d * 1.385).xyz) * 0.316
     c = c + (sample(u.src, i.uv + d * 3.231).xyz + sample(u.src, i.uv - d * 3.231).xyz) * 0.070
     vec4(c, 1)
 
-composite_fs = (i: PostOut, u: PostParams) -> vec4:
+_composite_fs = (i: _PostOut, u: _PostParams) -> vec4:
     c = sample(u.src, i.uv).xyz + sample(u.bloom, i.uv).xyz * u.strength
     gray = dot(c, vec3(0.299, 0.587, 0.114))
     c = mix(vec3(gray, gray, gray), c, u.saturation) * u.tint
@@ -244,13 +244,13 @@ __3d_init = ():
     __3d_ready = true
     __lit = make_shader(shader(lit_vs, lit_fs))
     __lit_inst = make_shader(shader(lit_vs_inst, lit_fs))
-    __shadow_sh = make_shader(shader(shadow_vs, shadow_fs))
-    __shadow_sh_inst = make_shader(shader(shadow_vs_inst, shadow_fs))
-    __sky_sh = make_shader(shader(sky_vs, sky_fs))
-    __bright_sh = make_shader(shader(post_vs, bright_fs))
-    __blur_sh = make_shader(shader(post_vs, blur_fs))
-    __comp_sh = make_shader(shader(post_vs, composite_fs))
-    __fs_tri = mesh([SkyVertex(vec2(-1, -1)), SkyVertex(vec2(3, -1)), SkyVertex(vec2(-1, 3))])
+    __shadow_sh = make_shader(shader(_shadow_vs, _shadow_fs))
+    __shadow_sh_inst = make_shader(shader(_shadow_vs_inst, _shadow_fs))
+    __sky_sh = make_shader(shader(_sky_vs, _sky_fs))
+    __bright_sh = make_shader(shader(_post_vs, _bright_fs))
+    __blur_sh = make_shader(shader(_post_vs, _blur_fs))
+    __comp_sh = make_shader(shader(_post_vs, _composite_fs))
+    __fs_tri = mesh([_SkyVertex(vec2(-1, -1)), _SkyVertex(vec2(3, -1)), _SkyVertex(vec2(-1, 3))])
 
 # ---------------- public API ----------------
 # place the camera; call once per frame before drawing 3D objects
@@ -394,7 +394,7 @@ __render3d = ():
         else: draw(__lit, d.mesh, p)
     if __sky_on:
         glDisable(GL_CULL_FACE)
-        sp = SkyParams(inverse(vp), __sky_top, __sky_horizon, __ground_color, __sun_dir, __sun_color, f32(elapsed()), f32(__stars))
+        sp = _SkyParams(inverse(vp), __sky_top, __sky_horizon, __ground_color, __sun_dir, __sun_color, f32(elapsed()), f32(__stars))
         draw(__sky_sh, __fs_tri, sp)
     # transparent objects last, blended
     glEnable(GL_BLEND)
@@ -454,7 +454,7 @@ __post_begin = ():
     __set_screen_target()          # (it stands in for the screen)
     __post_active = true
 
-__post_pass = (sh: Shader, dst: RenderTarget, p: PostParams):
+__post_pass = (sh: Shader, dst: RenderTarget, p: _PostParams):
     glBindFramebuffer(GL_FRAMEBUFFER, u32(dst.fbo))
     glViewport(0, 0, i32(dst.texture.width), i32(dst.texture.height))
     draw(sh, __fs_tri, p)
@@ -469,7 +469,7 @@ __post_end = ():
     bh = __bloom_a.texture.height
     texel = vec2(1.0 / f32(bw), 1.0 / f32(bh))
     # (`bloom` must not alias a pass's render target: WebGL rejects feedback loops)
-    p = PostParams(__scene_rt.texture, __scene_rt.texture, texel, f32(__bloom_threshold), f32(__bloom_strength), f32(__vignette), vec2(1, 0), f32(__saturation), __tint)
+    p = _PostParams(__scene_rt.texture, __scene_rt.texture, texel, f32(__bloom_threshold), f32(__bloom_strength), f32(__vignette), vec2(1, 0), f32(__saturation), __tint)
     __post_pass(__bright_sh, __bloom_a, p)
     loop k in [0..2):
         p.src = __bloom_a.texture

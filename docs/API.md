@@ -436,22 +436,7 @@ lit_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> LitOut
 shadow_factor = (u: LitParams, sp: vec4, ndl: f32) -> f32
 aces = (c: vec3) -> vec3
 lit_fs = (i: LitOut, u: LitParams) -> vec4
-struct ShadowOut
-shadow_vs = (v: Vertex3D, u: LitParams) -> ShadowOut
-shadow_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> ShadowOut
-shadow_fs = (i: ShadowOut, u: LitParams) -> vec4
-struct SkyVertex
-struct SkyParams
-struct SkyOut
-sky_vs = (v: SkyVertex, u: SkyParams) -> SkyOut
 hash21 = (p: vec2) -> f32
-sky_fs = (i: SkyOut, u: SkyParams) -> vec4
-struct PostParams
-struct PostOut
-post_vs = (v: SkyVertex, u: PostParams) -> PostOut
-bright_fs = (i: PostOut, u: PostParams) -> vec4
-blur_fs = (i: PostOut, u: PostParams) -> vec4
-composite_fs = (i: PostOut, u: PostParams) -> vec4
 struct Draw3D
 camera3d = (pos: vec3, target: vec3, fov_degrees: f64 = 60.0, near: f64 = 0.1, far: f64 = 500.0)    # place the camera; call once per frame before drawing 3D objects
 sun = (direction: vec3, color: vec3 = vec3(1, 0.95, 0.85))

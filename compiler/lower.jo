@@ -89,15 +89,15 @@ str_data = (s: str) -> int:
     loop rodata.len() % 8 != 0: rodata.push(0)
     o = rodata.len()
     ro_starts.push(o)
-    __push_i64(rodata, -1)
-    __push_i64(rodata, len(s))
-    __push_i64(rodata, len(s) + 1)
+    push_i64(rodata, -1)
+    push_i64(rodata, len(s))
+    push_i64(rodata, len(s) + 1)
     loop c in s: rodata.push(c)
     rodata.push(0)
     str_off[s] = o
     o
 
-__push_i64 = (b: mut u8[], v: int):
+push_i64 = (b: mut u8[], v: int):
     loop i in [0..8): b.push(u8((v >> (8 * i)) & 255))
 
 global_addr_off = (g: int) -> int:
@@ -2326,9 +2326,9 @@ const_array = (e: int, et: int) -> int:
     ro_starts.push(o)
     n = nkids(e)
     sz = tsize(et)
-    __push_i64(rodata, -1)
-    __push_i64(rodata, n)
-    __push_i64(rodata, n)
+    push_i64(rodata, -1)
+    push_i64(rodata, n)
+    push_i64(rodata, n)
     loop i in [0..n):
         c = kid(e, i)
         bits = 0

@@ -45,7 +45,7 @@ for sub, title in SECTIONS:
             f = re.match(r"(?:extern\s+)?(\([^)\s]+\)|[A-Za-z_]\w*)(\[[^\]]*\])?\s*=\s*\(", s)
             if not s.startswith(" ") and (m or f):
                 name = m.group(2) if m else f.group(1)
-                if not name.startswith("__"):
+                if not name.startswith("_"):      # (private, and the runtime's __ names)
                     sig = s
                     if f and not m:
                         sig = signature(s)

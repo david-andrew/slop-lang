@@ -411,6 +411,7 @@ id_cfn = 0
 id_end = 0
 id_type = 0
 id_soa = 0
+id_from = 0
 
 # parser modes
 p_matrix = 0          # > 0 inside array brackets: a space separates elements
@@ -1997,6 +1998,29 @@ parse_type_alias = () -> int:
     nodes[d].a = i32(parse_type())
     d
 
+# the module of an import: 'path/to/file.jo' (relative to this file; aux2 = 1) or a library
+# module's name (thread, std.json); sval is the path, name the module's name
+parse_module_spec = (d: int):
+    if pk() == .str_lit:
+        t = advance()
+        path = decode_str(tok_src(t), toks[t].pos, false)
+        nodes[d].sval = i32(intern(path))
+        base = path
+        sl = rfind(path, "/")
+        if sl >= 0: base = path[sl + 1..]
+        base = strip_ext(base)
+        nodes[d].name = i32(intern(base))
+        nodes[d].aux2 = 1
+    else:
+        nm = expect_ident("module name")
+        path = name_of(nm)
+        last = nm
+        loop accept(.dot):
+            last = expect_ident("module name")
+            path = path + "/" + name_of(last)
+        nodes[d].sval = i32(intern(path))
+        nodes[d].name = i32(last)
+
 parse_toplevel = () -> int:
     pos = cur_pos()
     attrs: int[]
@@ -2018,30 +2042,33 @@ parse_toplevel = () -> int:
         d = parse_fn_decl(true)
     else if k == .kw_struct: d = parse_struct()
     else if k == .kw_enum: d = parse_enum()
+    else if k == .ident and toks[ti].ival == id_from and (pkn(1) == .str_lit or pkn(1) == .ident):
+        # from physics import step, Body as B: those names (aux 2; each an ident whose aux is
+        # its new name, or 0)
+        advance()
+        d = mk(.import_, pos)
+        nodes[d].aux = 2
+        parse_module_spec(d)
+        expect(.kw_import, "'import' (from <module> import <names>)")
+        paren = accept(.lparen)
+        names: int[]
+        loop true:
+            if paren: skip_newlines()
+            if paren and pk() == .rparen: break
+            id = mk(.ident, cur_pos())
+            nodes[id].name = i32(expect_name("a name to import"))
+            if accept(.kw_as): nodes[id].aux = i32(expect_name("the name to import it as"))
+            names.push(id)
+            if not accept(.comma): break
+        if paren:
+            skip_newlines()
+            expect(.rparen, "")
+        set_list(d, names)
     else if k == .kw_import or k == .kw_use:
         is_use = toks[advance()].kind == .kw_use
         d = mk(.import_, pos)
         if is_use: nodes[d].aux = 1
-        if pk() == .str_lit:
-            # use 'path/to/file.jo': relative to this file
-            t = advance()
-            path = decode_str(tok_src(t), toks[t].pos, false)
-            nodes[d].sval = i32(intern(path))
-            base = path
-            sl = rfind(path, "/")
-            if sl >= 0: base = path[sl + 1..]
-            base = strip_ext(base)
-            nodes[d].name = i32(intern(base))
-            nodes[d].aux2 = 1
-        else:
-            nm = expect_ident("module name")
-            path = name_of(nm)
-            last = nm
-            loop accept(.dot):
-                last = expect_ident("module name")
-                path = path + "/" + name_of(last)
-            nodes[d].sval = i32(intern(path))
-            nodes[d].name = i32(last)
+        parse_module_spec(d)
         if accept(.kw_as): nodes[d].name = i32(expect_ident("alias"))
     else if k == .kw_test:
         advance()
@@ -2082,6 +2109,7 @@ parse_file = (file: int) -> int[]:
         id_end = intern("end")
         id_type = intern("type")
         id_soa = intern("soa")
+        id_from = intern("from")
     toks = lex(file, files[file].src)
     if stop_after == "lex":
         toks = []

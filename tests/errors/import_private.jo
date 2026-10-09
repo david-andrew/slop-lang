@@ -1,0 +1,3 @@
+# error: '_helper' (it is private to physics.jo
+use '../t/mods/physics.jo'
+print(_helper())

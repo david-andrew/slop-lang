@@ -341,6 +341,18 @@ join_types = (a: int, b: int, pos: int) -> int:
 # ---------------- places ----------------
 cp_inner = 0           # > 0 while checking the base of an element or field being written
 
+# (a private name of a module this one uses: say so)
+private_hint = (name: int) -> str:
+    m = cur_mod()
+    if m < 0 or not is_private(name) or modules[m].is_prelude: return ""
+    loop u in modules[m].uses:
+        if not modules[u].is_prelude and modules[u].names.get(name) != none:
+            f = files[int(modules[u].file)].path
+            s = rfind(f, "/")
+            if s >= 0: f = f[s + 1..]
+            return " (it is private to {f}: `use` leaves out names starting with _; `from '{f}' import {name_of(name)}` brings it in)"
+    ""
+
 # m[k] for a map m (a call of its `[]`)
 is_map_get = (n: int) -> bool:
     if nodes[n].kind != .call or nodes[n].aux != 0 or nkids(n) != 2 or nodes[n].sym == 0: return false
@@ -1090,6 +1102,7 @@ conversion = (n: int, to0: int, args: int[]) -> int:
 
 collect_in = (table: {int: int}, name: int, out: mut int[]):
     s = table.get(name) ?? 0
+    if s != 0 and hide_private and is_private(name) and (not hide_lib_only or name_of(name)[1] != '_'): return
     if s == 0 or syms[s].kind != .fns: return
     o = s
     loop o != 0:
@@ -1097,18 +1110,30 @@ collect_in = (table: {int: int}, name: int, out: mut int[]):
         if not out.contains(d): out.push(d)
         o = int(syms[o].next)
 
+# (while set, collect_in leaves out private names: those of used modules, or with
+# hide_lib_only those of the library)
+hide_private = false
+hide_lib_only = false
+
 collect_module = (m: int, name: int, out: mut int[]):
     if m < 0: return
     if modules[m].is_prelude: collect_in(prelude, name, out)
     else:
         collect_in(modules[m].names, name, out)
+        hide_private = true
         loop u in modules[m].uses:
+            hide_lib_only = modules[u].is_prelude
             if modules[u].is_prelude: collect_in(prelude, name, out)
             else: collect_in(modules[u].names, name, out)
+        hide_private = false
 
 collect_fns = (name: int, out: mut int[]):
-    collect_module(cur_mod(), name, out)
+    m = cur_mod()
+    collect_module(m, name, out)
+    hide_private = m >= 0 and not modules[m].is_prelude
+    hide_lib_only = true
     collect_in(prelude, name, out)
+    hide_private = false
 
 call_by_name = (n: int, name: int, mod_scope: int, args: int[], expected: int, ufcs: bool) -> int:
     if ide_sentinel != 0 and name == ide_sentinel:
@@ -1188,7 +1213,7 @@ call_by_name = (n: int, name: int, mod_scope: int, args: int[], expected: int, u
             fatal(nodes[n].pos, "'{name_of(name)}' is a variable of type {type_str(int(locals[int(syms[hs].ref)].type))} here (it hides the function or type of that name); rename the variable")
         all = visible_names()
         loop it in intrinsics: all.push(intern(it.name))
-        fatal(nodes[n].pos, "unknown function '{name_of(name)}'{suggestion(name_of(name), all)}")
+        fatal(nodes[n].pos, "unknown function '{name_of(name)}'{private_hint(name)}{suggestion(name_of(name), all)}")
     resolve_fn_call(n, name, decls, args, expected)
 
 check_expr_in_module = (n: int, m: int) -> int:
@@ -2243,7 +2268,7 @@ check_expr = (n: int, expected: int) -> int:
         nm = int(nodes[n].name)
         if ide_sentinel != 0 and nm == ide_sentinel: ide_complete_names()
         s = lookup(nm)
-        if s == 0: fatal(nodes[n].pos, "unknown name '{name_of(nm)}'{suggestion(name_of(nm), visible_names())}")
+        if s == 0: fatal(nodes[n].pos, "unknown name '{name_of(nm)}'{private_hint(nm)}{suggestion(name_of(nm), visible_names())}")
         sk = syms[s].kind
         if ide_on and sk != .fns: ide_sym_ref(n, s)
         nodes[n].aux = i32(int(sk))
