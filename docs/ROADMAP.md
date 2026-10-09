@@ -33,25 +33,33 @@ Left:
   at a cost to the common `update(players[i])`; decide with real game code in hand.
 - Keep each bug found as a test; run the fuzzers before releases.
 
-## 2. Finish one small game, with its tutorial (M, ongoing)
+## 2. Finish one small game, with its tutorial (ongoing)
 
-One jam-sized 2D game, finished: title screen, a beginning and an end, restart, menus, music and
-sounds, saved settings and progress; playable on Linux, Windows and the web from one source, and
-uploaded somewhere real (itch.io). Write the website tutorial as the game is built, step by step,
-runnable in the playground. Everything it trips over feeds the items below and re-ranks them;
-limitations it works around are written down rather than allowed to grow it into an engine.
-(The larger jotw/botw-clone projects come after, as the 3D test.)
+Done (0.3.1): Lumen (examples/lumen) is a finished small game: four valleys, title menu, valley
+select, settings, pause, best times and progress saved, an ending; it runs on Linux, Windows and
+the web from one source. The website has a tutorial (docs/TUTORIAL.md: Firefly, eight steps that
+each run, with links into the playground; the tests build every step).
 
-## 3. Shipping essentials (M, alongside 2)
+Left: upload Lumen to itch.io (needs an account: the zip is `sloppy build --target wasm -o
+lumen.zip`), play it through on real machines, and write down what was awkward. What it showed so
+far: menus were missing (now lib/game/ui.jo), saving was missing (save_data), and a game loop
+that draws its menus in draw() needs the key that opened a menu ignored for a frame (Lumen's
+`menu` helper; worth folding into ui.jo if it comes up again). The larger jotw/botw-clone
+projects come after, as the 3D test.
 
-- Saves that last: a per-user save directory on desktop, and on the web storage that survives a
-  reload (today `write_file` in the browser only keeps data in memory); a simple serializer
-  (structs <-> text) for saves and settings.
-- Assets that fail loudly: loaders validate their input and say what is wrong and where.
-- `sloppy build` makes an upload-ready bundle per platform: one executable with a whole asset
-  directory embedded, an icon (Windows resource), and for the web an itch.io-ready .zip.
-- An error-handling convention for this kind of code (`T | Error` with a short way to pass an
-  error up), since loading and saving are where errors happen.
+## 3. Shipping essentials (alongside 2)
+
+Done (0.3.1): `save_data`/`load_data` (a per-user place on desktop, the browser's storage on the
+web; PROGRAM_NAME and the build block's `name`); `load_wav` rejects what it cannot read; web
+builds as an itch.io-ready zip (`-o game.zip`); program icons (`icon = "icon.png"`: the Windows
+.exe's icon and window icon, the page's favicon); the error convention (`T | SomeError`, passed on
+with `if r is SomeError: return r`) in the language reference.
+
+Left:
+- Linux window icons (X11's _NET_WM_ICON; Wayland desktops take icons from .desktop files).
+- A whole asset directory embedded at once (`embed` takes one file).
+- A serializer (structs <-> text) for saves and settings, if hand-written formats keep recurring.
+- Sugar for passing errors on (a `try`), if code shows the two-line pattern is too much.
 
 ## 4. Windows, in separate steps
 

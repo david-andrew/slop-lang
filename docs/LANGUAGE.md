@@ -437,6 +437,30 @@ n = lookup(key) ?? 0                    # default
 k = lookup(key)!                        # unwrap or panic
 ```
 
+**Errors.** A function that can fail returns its result or the reason: `T | SomeError` (a struct
+of your own, holding what the caller needs to know), or `T?` when there is nothing to say. A
+caller passes a failure on with `if r is SomeError: return r`, after which `r` is a `T`. Panics
+are for mistakes in the program (an index out of bounds, a broken assumption); things that can go
+wrong while it runs (bad input, a missing file) are values.
+
+```gdscript
+struct ParseError:
+    msg: str
+    line: int
+
+parse_num = (s: str, line: int) -> int | ParseError:
+    if let n = to_int(s): return n
+    ParseError("not a number: '{s}'", line)
+
+total = (text: str) -> int | ParseError:
+    sum = 0
+    loop i in 0.. and l in split(text, "\n"):
+        r = parse_num(l, i + 1)
+        if r is ParseError: return r
+        sum += r
+    sum
+```
+
 **Tuples:**
 
 ```gdscript
