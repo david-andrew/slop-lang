@@ -57,6 +57,28 @@ __map_rehash[K, V] = (m: mut Map[K, V], ns: int):
     if e >= 0:
         m.vals[e] = v
         return
+    __map_add(m, k, v, h)
+
+# the entry of k, for changing m[k] in place (m[k] += 1, m[k].push(x), m[k].hp -= 5): a missing
+# key is added, its value starting as V's zero value (or the default d, for a struct with
+# default field values)
+__map_entry[K, V] = (m: mut Map[K, V], k: K) -> int:
+    h = hash(k)
+    e = __map_find(m, k, h)
+    if e >= 0: return e
+    z: V
+    __map_add(m, k, z, h)
+    m.keys.len() - 1
+
+__map_entry[K, V] = (m: mut Map[K, V], k: K, d: V) -> int:
+    h = hash(k)
+    e = __map_find(m, k, h)
+    if e >= 0: return e
+    __map_add(m, k, d, h)
+    m.keys.len() - 1
+
+# a new entry (k is not in m)
+__map_add[K, V] = (m: mut Map[K, V], k: K, v: V, h: u64):
     n = m.keys.len()
     if (n + 1) * 4 > m.slots.len() * 3:
         ns = m.slots.len() * 2

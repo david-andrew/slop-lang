@@ -1,0 +1,55 @@
+# changing a map's values in place: m[k] += 1, m[k].push(x), m[k].x = v (a missing key is added)
+struct P:
+    x: int
+    hp = 100
+    tags: str[]
+counts: {str: int} = {}
+loop w in ["a", "b", "a", "c", "a"]: counts[w] += 1
+print(counts)
+groups: {int: str[]} = {}
+loop w in ["one", "two", "three", "four", "five"]: groups[len(w)].push(w)
+print(groups)
+ps: {str: P} = {}
+ps["a"].x = 9
+ps["a"].hp -= 5
+ps["b"].tags.push("new")
+print(ps)
+m: {str: int[]} = {"a": [1, 2]}
+m["a"][0] = 7
+loop mut v in m["a"]: v += 1
+print(m)
+mm: {int: {int: int}} = {}
+mm[1][2] = 3
+mm[1][4] += 1
+print(mm)
+# copies stay separate
+c2 = counts
+c2["a"] += 100
+print(counts["a"], c2["a"])
+# reading a missing key still panics
+f = (k: str) -> int: counts[k]
+print(counts.get("zz") ?? -1)
+inc = (cs: mut {str: int}, k: str): cs[k] += 1
+c3: {str: int} = {}
+inc(c3, "q")
+inc(c3, "q")
+print(c3)
+icounts: {int: int} = {}
+iwords: {int: int[]} = {}
+local = ():
+    c: {int: int} = {}
+    g: {int: int[]} = {}
+    loop i in [0..20000):
+        c[i % 1000] += i
+        g[i % 37].push(i)
+        c[(i * 7) % 3001] += 1
+    s = 0
+    loop k, v in c: s += k * 3 + v
+    t = 0
+    loop k, v in g: t += v.len() * k + v[v.len() - 1]
+    print(c.len(), s, g.len(), t)
+loop i in [0..20000):
+    icounts[i % 1000] += i
+    iwords[i % 37].push(i)
+print(icounts.len(), icounts[999], iwords.len(), iwords[36].len())
+local()

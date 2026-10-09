@@ -117,7 +117,7 @@ say()
 say("## 3. Compile speed")
 say()
 if not os.path.exists("bench/big.jo"):
-    run(["python3", "tools/genbench.py"])
+    run(["python3", "tools/genbench.py", "2000", "bench/big"])
 lines = len(open("bench/big.jo").read().splitlines())
 clines = len(open("bench/big.c").read().splitlines())
 dbg = cpu_time([SLOPPY, "build", "bench/big.jo", "-o", f"{BUILD}/big"])

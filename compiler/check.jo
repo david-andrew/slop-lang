@@ -1190,9 +1190,9 @@ check_for = (s: int):
                 el = new_local(elname, et, pos)
                 locals[el].flags = i32(int(locals[el].flags) | LF_ALIAS)
                 ix = mk(.index, pos)
-                base = clone(it)
-                check_expr(base, 0)
-                nodes[ix].a = i32(last_checked)
+                # (it is checked; m[k] of a map was made the place in it by check_place)
+                base = copy_place(it)
+                nodes[ix].a = i32(base)
                 nodes[ix].b = i32(mk_ident_local(idx, pos))
                 nodes[ix].type = i32(et)
                 add_flag(ix, NF_CHECKED)
@@ -1330,7 +1330,8 @@ check_assign = (s: int) -> int:
             check_expr(call, 0)
             nodes[es].a = i32(last_checked)
             return es
-        if types[bt].kind == .struct_:
+        # (m[k] += x for a map changes the value in place: see map_elem_place)
+        if types[bt].kind == .struct_ and not (op != int(Tok.assign) and is_map_type(bt) and nodes[lhs].b != 0):
             call = mk(.call, nodes[s].pos)
             callee = mk(.ident, nodes[s].pos)
             nodes[callee].name = i32(intern("[]="))
@@ -1358,7 +1359,8 @@ check_assign = (s: int) -> int:
                 nodes[bin].b = i32(val)
                 val = bin
             set_list(call, [recv] + ixs + [val])
-            clear_flag(recv, NF_CHECKED)
+            # (a resolved call, such as m[1] in m[1][2] = 3, is not checked again)
+            if nodes[recv].kind != .call: clear_flag(recv, NF_CHECKED)
             es = mk(.exprstmt, nodes[s].pos)
             check_expr(call, 0)
             nodes[es].a = i32(last_checked)

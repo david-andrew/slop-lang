@@ -198,6 +198,24 @@ map keys like `T[]`. A copy copies the elements. Where a `T[]` is expected (`sum
 parameter `xs: T[]`) a fixed-size array is passed as a new array holding a copy; `push`,
 `pop` and the other functions that change the length need a `T[]`.
 
+### Maps
+
+`{K: V}` maps keys to values and keeps them in insertion order. `m[k]` reads a value (a
+missing key is an error; `m.get(k)` gives an optional, `m.get(k, default)` a default) and
+`m[k] = v` sets one. Changing the value in place, `m[k] += 1`, `m[k].push(x)`,
+`m[k].hp -= 5`, `m[k][i] = x` or `loop mut x in m[k]`, works on the stored value and adds a
+missing key first, with V's zero value (for a struct, its default field values):
+
+```gdscript
+counts: {str: int} = {}
+loop w in words: counts[w] += 1
+groups: {int: str[]} = {}
+loop w in words: groups[len(w)].push(w)
+loop k, v in counts: print("{k}: {v}")
+```
+
+`m.has(k)`, `m.remove(k)`, `m.keys()`, `m.values()` and `m.len()` do what they say.
+
 ## 5. Functions
 
 ```gdscript
