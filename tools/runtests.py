@@ -51,7 +51,10 @@ for t in tests:
         continue
     out = r.stdout
     if r.returncode != 0 and not name.startswith("panic"):
-        out += f"[exit {r.returncode}] {r.stderr}"
+        # (the backtrace after a panic differs with --release and is not there on the web;
+        # tests/backtrace checks it)
+        err = "".join(l for l in r.stderr.splitlines(True) if not l.startswith(("    in ", "    called from ", "    ... and ")))
+        out += f"[exit {r.returncode}] {err}"
     if expected is None:
         print(f"NEW  {name}:\n{out}")
         failed += 1
@@ -67,6 +70,24 @@ for t in tests:
         failed += 1
     else:
         passed += 1
+# backtraces after a panic: tests/backtrace/*.jo, all of stderr against .out (native debug builds)
+if compiler != "sloppy0" and target == "native" and not release:
+    sloppy = os.path.join(root, "bin", "sloppy") if compiler == "sloppy" else os.path.abspath(compiler)
+    for t in sorted(glob.glob(os.path.join(root, "tests", "backtrace", "*.jo"))):
+        name = "backtrace/" + os.path.basename(t)[:-3]
+        if pattern not in name: continue
+        exe = f"/tmp/sloppy-tests/bt_{os.path.basename(t)[:-3]}"
+        subprocess.run([sloppy, "build", t, "-o", exe], capture_output=True, env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")))
+        r = subprocess.run([exe], capture_output=True, text=True, timeout=20)
+        out = r.stdout + r.stderr
+        exp_path = t[:-3] + ".out"
+        if not os.path.exists(exp_path):
+            print(f"NEW  {name}:\n{out}")
+            failed += 1
+        elif out != open(exp_path).read():
+            print(f"FAIL {name}:\n{out}")
+            failed += 1
+        else: passed += 1
 # `test` blocks in tests/unit, run with `sloppy test` (native, self-hosted compiler only)
 if compiler != "sloppy0" and target == "native":
     sloppy = os.path.join(root, "bin", "sloppy") if compiler == "sloppy" else os.path.abspath(compiler)

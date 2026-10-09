@@ -1,0 +1,14 @@
+# a panic shows where each function on the call stack was called from
+struct Enemy:
+    hp: int
+hit = (e: mut Enemy, d: int):
+    e.hp -= d
+    if e.hp < 0: panic("hit an enemy that was already defeated")
+fight = (es: mut Enemy[], rounds: int):
+    loop r in [0..rounds):
+        loop mut e in es: hit(e, 2)
+start = ():
+    es = [Enemy(5), Enemy(9)]
+    fight(es, 4)
+print("before")
+start()

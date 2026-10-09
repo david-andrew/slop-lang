@@ -60,6 +60,7 @@ struct Ins:
     b: i32
     c: i32
     imm: int
+    pos: i32          # where in the source (an index into ir_positions; 0: not known)
 
 struct IrFn:
     name: str
@@ -131,10 +132,21 @@ new_slot = (size: int, align: int) -> int:
 # 1 marks one that never returns): register allocation weighs them as if outside any loop
 ir_cold = false
 
+# source positions of instructions (for backtraces and debuggers): ir_pos is the current one,
+# as an index into ir_positions
+ir_positions: int[] = [0]
+ir_pos = 0
+
+ir_set_pos = (p: int):
+    if p == 0: return
+    if ir_positions[ir_pos] == p: return
+    ir_positions.push(p)
+    ir_pos = ir_positions.len() - 1
+
 emit = (op: Op, ty: int, dst: int, a: int, b: int, c0: int, imm: int) -> int:
     c = c0
     if ir_cold and op == .call and c == 0: c = 2
-    ir.code.push(Ins(op, i32(ty), i32(dst), i32(a), i32(b), i32(c), imm))
+    ir.code.push(Ins(op, i32(ty), i32(dst), i32(a), i32(b), i32(c), imm, i32(ir_pos)))
     ir.code.len() - 1
 
 e_iconst = (v: int) -> int:

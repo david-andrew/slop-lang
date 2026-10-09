@@ -1,0 +1,141 @@
+# Backtraces at a panic (called by __panic in lib/core/rt.jo).
+
+# where the functions on the call stack were called from: return addresses found through the
+# frame pointers, function names in the program file's .symtab, lines in its .sloppy_lines
+# (written by the compiler: compiler/x64.jo, x64_line_table)
+__in_backtrace = false
+
+__backtrace = ():
+    when TARGET != "wasm":
+        if __in_backtrace: return
+        __in_backtrace = true
+        jb = __alloc(64)
+        __setjmp(jb)
+        fp = (jb as *int)[1]
+        rets: int[]
+        loop rets.len() < 200 and fp != 0 and fp & 7 == 0:
+            ret = (fp as *int)[1]
+            next = (fp as *int)[0]
+            if ret == 0: break
+            rets.push(ret)
+            # (frames of callers are above; another stack -- a thread's parent -- is not followed)
+            if next <= fp or next - fp > (1 << 23): break
+            fp = next
+        if let exe = read_bytes("/proc/self/exe"): __backtrace_print(rets, exe)
+        __in_backtrace = false
+
+__u16_at = (b: u8[], o: int) -> int: int(b[o]) | (int(b[o + 1]) << 8)
+__u32_at = (b: u8[], o: int) -> int: __u16_at(b, o) | (__u16_at(b, o + 2) << 16)
+__u64_at = (b: u8[], o: int) -> int: __u32_at(b, o) | (__u32_at(b, o + 4) << 32)
+
+__cstr_at = (b: u8[], o: int) -> str:
+    e = o
+    loop e < b.len() and b[e] != 0: e += 1
+    str_from_bytes(b[o..e))
+
+__backtrace_print = (rets: int[], exe: u8[]):
+    if exe.len() < 64 or exe[0] != 0x7F: return
+    shoff = __u64_at(exe, 0x28)
+    shnum = __u16_at(exe, 0x3C)
+    shstr = __u16_at(exe, 0x3E)
+    if shnum == 0 or shoff + shnum * 64 > exe.len(): return
+    names_off = __u64_at(exe, shoff + shstr * 64 + 24)
+    sym_off = 0
+    sym_size = 0
+    str_off = 0
+    lines_off = 0
+    lines_size = 0
+    text_addr = 0
+    loop i in [0..shnum):
+        h = shoff + i * 64
+        nm = __cstr_at(exe, names_off + __u32_at(exe, h))
+        if nm == ".symtab":
+            sym_off = __u64_at(exe, h + 24)
+            sym_size = __u64_at(exe, h + 32)
+        else if nm == ".strtab": str_off = __u64_at(exe, h + 24)
+        else if nm == ".sloppy_lines":
+            lines_off = __u64_at(exe, h + 24)
+            lines_size = __u64_at(exe, h + 32)
+        else if nm == ".text": text_addr = __u64_at(exe, h + 16)
+    if sym_off == 0 or lines_off == 0: return
+    # the line table: return address -> (file, line)
+    files: str[]
+    p = lines_off + 4
+    nf = __u32_at(exe, p)
+    p += 4
+    loop k in [0..nf):
+        n = __u32_at(exe, p)
+        files.push(str_from_bytes(exe[p + 4..p + 4 + n)))
+        p += 4 + n
+    ne = __u32_at(exe, p)
+    p += 4
+    addrs = fill(0, ne)
+    fis = fill(0, ne)
+    lns = fill(0, ne)
+    a = text_addr
+    loop k in [0..ne):
+        v = 0
+        loop j in [0..3):
+            x = 0
+            sh = 0
+            loop true:
+                c = int(exe[p])
+                p += 1
+                x |= (c & 127) << sh
+                sh += 7
+                if c < 128: break
+            if j == 0: v = x
+            else if j == 1: fis[k] = x
+            else: lns[k] = x
+        a += v
+        addrs[k] = a
+    shown = 0
+    hidden = 0
+    loop ret in rets:
+        # the function the return address is in
+        fname = ""
+        s = sym_off
+        loop s + 24 <= sym_off + sym_size:
+            v = __u64_at(exe, s + 8)
+            sz = __u64_at(exe, s + 16)
+            if ret > v and ret <= v + sz:
+                fname = __cstr_at(exe, str_off + __u32_at(exe, s))
+                break
+            s += 24
+        # (runtime and library internals are left out)
+        if len(fname) == 0 or starts_with(fname, "f___"):
+            hidden += 1
+            continue
+        lo = 0
+        hi = ne - 1
+        found = -1
+        loop lo <= hi:
+            mid = (lo + hi) / 2
+            if addrs[mid] == ret:
+                found = mid
+                break
+            if addrs[mid] < ret: lo = mid + 1
+            else: hi = mid - 1
+        where = ""
+        if found >= 0 and fis[found] < files.len(): where = " ({files[fis[found]]}:{lns[found]})"
+        how = "    called from "
+        if shown == 0: how = "    in "
+        if shown >= 24:
+            __write_err("    ... and {rets.len() - shown - hidden} more\n")
+            return
+        __write_err("{how}{__fn_display(fname)}{where}\n")
+        shown += 1
+
+# f_update_12 -> update; f_init_game_3 -> the top level of game; f_lambda_7 -> a function literal
+__fn_display = (sym: str) -> str:
+    s = sym
+    if starts_with(s, "f_"): s = s[2..]
+    u = rfind(s, "_")
+    if u > 0:
+        digits = true
+        loop c in s[u + 1..]:
+            if c < '0' or c > '9': digits = false
+        if digits: s = s[..u)
+    if starts_with(s, "init_"): return "the top level of {s[5..]}"
+    if s == "lambda": return "a function literal"
+    s

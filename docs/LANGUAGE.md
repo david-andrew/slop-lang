@@ -303,6 +303,20 @@ defer close(f)                         # runs when the enclosing block exits
 `[0, 3..9]` is `[0, 3, 6, 9]`. In index brackets: `xs[2..5)`, `xs[2..]`, `xs[..3)`, `xs[end]`
 (the last element), `xs[1..end-1]`.
 
+**Panics.** An index out of bounds, `!` on `none`, a division by zero, a failed `assert` or
+`panic("message")` stops the program with the message and where each function on the way
+was called from (the frames of the runtime left out):
+
+```
+panic: hit an enemy that was already defeated
+    in hit (game.jo:6)
+    called from fight (game.jo:9)
+    called from update (game.jo:31)
+```
+
+(Release builds inline small functions: their frames show as the line of the call. In a web
+page the browser's console has the JavaScript stack.)
+
 **Combined loops.** Bindings and conditions join with `and` / `or` in one loop header:
 
 ```gdscript

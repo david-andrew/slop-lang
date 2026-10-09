@@ -1,0 +1,7 @@
+[10, 20]
+panic: closure.jo:4: index 3 out of bounds (length 3)
+    in lookup (closure.jo:4)
+    called from a function literal (closure.jo:6)
+    called from map (array.jo:20)
+    called from apply (closure.jo:2)
+    called from the top level of closure (closure.jo:6)

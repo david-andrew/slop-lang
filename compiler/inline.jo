@@ -120,6 +120,8 @@ inline_call = (call: Ins, callee: IrFn, out: mut Ins[]):
         ni = remap(ci, callee, vm, sm)
         # (the calls of a callee inlined on a rarely taken path are on it too)
         if call.c == 2 and op == .call and ni.c == 0: ni.c = 2
+        # (in a backtrace the inlined code is the call's line of the function it is in now)
+        ni.pos = call.pos
         out.push(ni)
         if op == .block or op == .loop or op == .if_: depth += 1
         else if op == .end: depth -= 1

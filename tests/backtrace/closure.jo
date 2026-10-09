@@ -1,0 +1,6 @@
+# frames of closures and of functions given as values
+apply = (xs: int[], f: (int) -> int) -> int[]: xs.map(f)
+table = [10, 20, 30]
+lookup = (i: int) -> int: table[i]
+print(apply([0, 1], lookup))
+print(apply([2, 3], (i: int) -> int: lookup(i) + 1))

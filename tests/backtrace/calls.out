@@ -1,0 +1,6 @@
+before
+panic: hit an enemy that was already defeated
+    in hit (calls.jo:6)
+    called from fight (calls.jo:9)
+    called from start (calls.jo:12)
+    called from the top level of calls (calls.jo:14)

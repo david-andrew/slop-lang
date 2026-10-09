@@ -1994,11 +1994,13 @@ emit_ins = (pos: int, ins: Ins):
             b(0xE8)
             b32(0)
             call_fix.push((code.len() - 4, int(ins.imm)))
+            call_site(ins)
             pop_call_stack()
             store_result(ins)
         calli, callc:
             emit_call_args(a, bb, int(ins.c), R11)
             b(0x41); b(0xFF); b(0xD3)     # call r11
+            call_site(ins)
             pop_call_stack()
             store_result(ins)
         syscall:
@@ -2230,6 +2232,62 @@ x64_entry = (inits: int[], main_lf: int) -> int:
     mov_imm(RAX, 231)
     b(0x0F); b(0x05)                          # exit_group
     start
+
+# where each call returns to, and the source position of the call (an index into
+# ir_positions): the line table of backtraces (lib/core/rt.jo, __backtrace)
+call_sites: int[]
+
+call_site = (ins: Ins):
+    if ins.pos == 0: return
+    call_sites.push(code.len())
+    call_sites.push(int(ins.pos))
+
+# the ".sloppy_lines" section: "SLN1", the files (u32 count, then u32 length and name each),
+# then u32 count and for each call site in address order: varints of the return address's
+# offset in .text since the previous one, the file and the line
+x64_line_table = () -> u8[]:
+    if call_sites.len() == 0: return []
+    out: u8[] = ['S', 'L', 'N', '1']
+    fidx: {int: int} = {}
+    fnames: str[]
+    ents: int[]
+    k = 0
+    loop k < call_sites.len():
+        p = ir_positions[call_sites[k + 1]]
+        f = pos_file(p)
+        if fidx.get(f) == none:
+            fidx[f] = fnames.len()
+            path = "?"
+            if f >= 0 and f < files.len(): path = files[f].path
+            s = rfind(path, "/")
+            if s >= 0: path = path[s + 1..]
+            fnames.push(path)
+        l, c = line_col(p)
+        ents.push(call_sites[k])
+        ents.push(fidx[f])
+        ents.push(l)
+        k += 2
+    put32(out, fnames.len())
+    loop nm in fnames:
+        put32(out, len(nm))
+        loop ch in nm: out.push(ch)
+    put32(out, ents.len() / 3)
+    last = 0
+    k = 0
+    loop k < ents.len():
+        put_varint(out, ents[k] - last)
+        last = ents[k]
+        put_varint(out, ents[k + 1])
+        put_varint(out, ents[k + 2])
+        k += 3
+    out
+
+put_varint = (out: mut u8[], v0: int):
+    v = v0
+    loop v >= 128:
+        out.push(u8((v & 127) | 128))
+        v = v >> 7
+    out.push(u8(v))
 
 stub_fix: (int, int)[]
 stub_addr: int[] = [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]

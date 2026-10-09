@@ -304,6 +304,7 @@ compile = (path: str, out0: str) -> str:
         # (sloppy watch: after the first build, a patch for the program running)
         if watch_build and not watch_first: ok = watch_make_patch()
         else:
+            elf_lines = x64_line_table()
             ok = write_elf(out, code, entry, rodata, data_size + 8 + bss_reserve)
             if ok and watch_build: watch_record_image()
         size = code.len()

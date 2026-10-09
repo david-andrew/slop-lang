@@ -25,6 +25,8 @@ elf_layout = (text_len: int, ro_len: int) -> (int, int, int):
 
 # function symbols for debuggers/profilers: (name, offset in text, size)
 elf_syms: (str, int, int)[]
+# the line table backtraces read (x64_line_table), or empty
+elf_lines: u8[]
 
 write_elf = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int) -> bool:
     text_off, ro_off, data_off = elf_layout(text.len(), ro.len())
@@ -47,6 +49,7 @@ write_elf = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int) ->
     put16(out, 64)             # shentsize
     nsec = 0
     if elf_syms.len() > 0: nsec = 5
+    if elf_syms.len() > 0 and elf_lines.len() > 0: nsec = 6
     put16(out, nsec)
     put16(out, nsec - 1)       # shstrndx
     # text segment (includes headers)
@@ -100,7 +103,9 @@ write_elf = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int) ->
         append_bytes(out, symtab)
         strtab_off = out.len()
         append_bytes(out, strtab)
-        shstr = "\0.text\0.symtab\0.strtab\0.shstrtab\0"
+        lines_off = out.len()
+        append_bytes(out, elf_lines)
+        shstr = "\0.text\0.symtab\0.strtab\0.shstrtab\0.sloppy_lines\0"
         shstr_off = out.len()
         loop c in shstr: out.push(c)
         loop out.len() % 8 != 0: out.push(0)
@@ -114,6 +119,8 @@ write_elf = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int) ->
         sec(out, 7, 2, 0, 0, symtab_off, symtab.len(), 3, 1, 8, 24)
         # .strtab
         sec(out, 15, 3, 0, 0, strtab_off, strtab.len(), 0, 0, 1, 0)
+        # .sloppy_lines (where each call returns to, and the source line of the call)
+        if nsec == 6: sec(out, 33, 1, 0, 0, lines_off, elf_lines.len(), 0, 0, 1, 0)
         # .shstrtab
         sec(out, 23, 3, 0, 0, shstr_off, len(shstr), 0, 0, 1, 0)
     delete_file(path)
