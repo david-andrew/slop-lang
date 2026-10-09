@@ -35,8 +35,13 @@ helper_lf: {str: int} = {}
 
 # data segments
 rodata: u8[]
+ro_starts: int[]            # where each item (a string, a constant, an array) in rodata starts
 str_off: {str: int} = {}
 data_size = 8     # offset 0 holds the initial stack pointer
+# data words keeping the C functions found: their offsets and library|name
+ffi_offs: int[]
+ffi_keys: str[]
+ffi_slot: {int: int} = {}       # offset -> index
 global_off: {int: int} = {}
 entry_points: int[]
 
@@ -82,6 +87,7 @@ str_data = (s: str) -> int:
     if let o = str_off.get(s): return o
     loop rodata.len() % 8 != 0: rodata.push(0)
     o = rodata.len()
+    ro_starts.push(o)
     __push_i64(rodata, -1)
     __push_i64(rodata, len(s))
     __push_i64(rodata, len(s) + 1)
@@ -2249,6 +2255,7 @@ all_const = (e: int, et: int) -> bool:
 const_array = (e: int, et: int) -> int:
     loop rodata.len() % 8 != 0: rodata.push(0)
     o = rodata.len()
+    ro_starts.push(o)
     n = nkids(e)
     sz = tsize(et)
     __push_i64(rodata, -1)
@@ -2616,6 +2623,14 @@ write_root = (n0: int) -> int:
 same_var = (a: int, b: int) -> bool: nodes[a].aux == nodes[b].aux and nodes[a].sym == nodes[b].sym
 
 # could code n change the variable at ident node rn (a global, or a local)?
+# a conversion of an array or string to a raw pointer (through which it may be written)
+raw_view = (n: int) -> bool:
+    a = int(nodes[n].a)
+    if a == 0 or nodes[n].type == 0 or nodes[a].type == 0: return false
+    tk = tkind(ntype(n))
+    fk = tkind(ntype(a))
+    (tk == .ptr or tk == .int_) and (fk == .array or fk == .str_)
+
 may_write_root = (n: int, rn: int) -> bool:
     if n <= 0: return false
     k = nodes[n].kind
@@ -2627,9 +2642,12 @@ may_write_root = (n: int, rn: int) -> bool:
         if w != 0 and same_var(w, rn): return true
     if k == .intrinsic and nkids(n) > 0:
         id = nodes[n].aux as IN
-        if id == .push or id == .pop or id == .insert or id == .remove or id == .clear or id == .reserve or id == .resize or id == .truncate or id == .extend:
+        if id == .push or id == .pop or id == .insert or id == .remove or id == .clear or id == .reserve or id == .resize or id == .truncate or id == .extend or id == .arrdata:
             w = write_root(kid(n, 0))
             if w != 0 and same_var(w, rn): return true
+    if k == .addr or (k == .cast or k == .conv) and raw_view(n):
+        w = write_root(int(nodes[n].a))
+        if w != 0 and same_var(w, rn): return true
     if k == .for_ and has_flag(n, NF_MUT):
         w = write_root(int(nodes[n].a))
         if w != 0 and same_var(w, rn): return true
@@ -3166,9 +3184,16 @@ fp_scan = (n: int, ctx: int):
         fp_target(int(nodes[n].a))
         fp_scan(int(nodes[n].b), 0)
         return
+    # (a pointer to a variable, or to an array's elements, may write it: data() also makes the
+    # array one of its own first, which may move it)
+    if k == .addr or (k == .cast or k == .conv) and raw_view(n):
+        key = lpath_key(int(nodes[n].a))
+        if len(key) > 0: fp_kill.push(key)
+        fp_scan(int(nodes[n].a), 1)
+        return
     if k == .intrinsic and nkids(n) > 0:
         id = nodes[n].aux as IN
-        if id == .push or id == .pop or id == .insert or id == .remove or id == .clear or id == .reserve or id == .resize or id == .truncate or id == .extend:
+        if id == .push or id == .pop or id == .insert or id == .remove or id == .clear or id == .reserve or id == .resize or id == .truncate or id == .extend or id == .arrdata:
             key = lpath_key(kid(n, 0))
             if len(key) > 0: fp_kill.push(key)
             fp_scan(kid(n, 0), 1)
@@ -3922,6 +3947,9 @@ lower_extern_thunk = (lf: int, f: int):
     data_size = align_up(data_size, 8)
     slot = data_size
     data_size += 8
+    ffi_slot[slot] = ffi_offs.len()
+    ffi_offs.push(slot)
+    ffi_keys.push("ffi|{lib}|{nm}")
     fp = vreg(VI)
     e_mov(fp, e_load(VI, e_gaddr(slot), 0, 8))
     iff(e_bin(.eq, VI, fp, e_iconst(0)))

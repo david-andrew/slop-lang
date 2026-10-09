@@ -1,0 +1,923 @@
+# `jot watch file.jot`: run a program and keep it up to date while its files change.
+#
+# This process (the driver) never compiles itself: each build is a fresh compile in a copy of it
+# (fork), so builds start clean. The first build is an ordinary executable, run with two pipes
+# (fds 3 and 4, as for the interactive prompt). A game (a program with update/draw) keeps running
+# from then on: each later build is linked against it instead, by the link map (where each
+# function, global and piece of read-only data is in the running game), and only what changed is
+# sent, as a patch the game applies between frames (lib/std/watch.jot):
+#   - a function whose code changed goes into a region of the game reserved for new code, and a
+#     jump to it is written at its first address (so calls, function values and closures already
+#     in the game's state all reach the new code); new functions go there too
+#   - globals keep their values (the game's state, its window, its GPU data), except those whose
+#     declaration changed or that are new: these are (re)initialized, in a region kept free for
+#     them when their type's layout changed
+#   - read-only data (strings, constants) is shared by content
+# A program without update/draw is run again from the start on each change. Errors from the
+# compiler are shown in the terminal (and over the game); the game keeps running what it has.
+
+use 'util.jot'
+use 'lex.jot'
+use 'ast.jot'
+use 'parse.jot'
+use 'types.jot'
+use 'check.jot'
+use 'expr.jot'
+use 'ir.jot'
+use 'lower.jot'
+use 'opt.jot'
+use 'inline.jot'
+use 'x64.jot'
+use 'elf.jot'
+use 'repl.jot'
+use 'main.jot'
+
+const WATCH_REGION = WATCH_CODE_AT       # where new code goes in the program (x64.jot)
+const WATCH_REGION_SIZE = WATCH_CODE_SIZE
+const WATCH_DATA_RESERVE = 64 << 20      # room after the globals for globals that are new
+
+watch_first = true          # (this build: an executable; else a patch for the running program)
+
+# ---- the link map ----
+# functions: key -> first address (the one calls use), latest address, hash of the code
+wm_fkeys: str[]
+wm_fcanon: int[]
+wm_flatest: int[]
+wm_fhash: int[]
+wm_fidx: {str: int} = {}
+# globals: key -> address, size, layout of the type, hash of the declaration
+wm_gkeys: str[]
+wm_gaddr: int[]
+wm_gsize: int[]
+wm_gsig: str[]
+wm_ginit: int[]
+wm_gidx: {str: int} = {}
+# read-only data: hash of an item's bytes -> address
+wm_ro: {int: int} = {}
+wm_stubs: int[]
+wm_next = 0                 # next free address for code (and read-only data) in the program
+wm_data_next = 0            # next free address for new globals
+wm_data_end = 0
+wm_game = false             # the program has update/draw (it is patched; others run again)
+wm_files: str[]             # the source files it was built from
+
+# what a build produced (for the driver)
+w_patch: u8[]
+w_changed: str[]            # names of the functions replaced
+w_reset: str[]              # names of the globals initialized again (their declarations changed)
+w_added: str[]              # ... and of new ones
+w_init_lf = -1              # the function initializing new and changed globals
+
+wm_clear = ():
+    wm_fkeys = []
+    wm_fcanon = []
+    wm_flatest = []
+    wm_fhash = []
+    wm_fidx = {}
+    wm_gkeys = []
+    wm_gaddr = []
+    wm_gsize = []
+    wm_gsig = []
+    wm_ginit = []
+    wm_gidx = {}
+    wm_ro = {}
+    wm_stubs = []
+    wm_files = []
+
+wm_add_fn = (k: str, canon: int, latest: int, h: int):
+    wm_fidx[k] = wm_fkeys.len()
+    wm_fkeys.push(k)
+    wm_fcanon.push(canon)
+    wm_flatest.push(latest)
+    wm_fhash.push(h)
+
+wm_add_glob = (k: str, addr: int, size: int, sig: str, ih: int):
+    if let i = wm_gidx.get(k):
+        wm_gaddr[i] = addr
+        wm_gsize[i] = size
+        wm_gsig[i] = sig
+        wm_ginit[i] = ih
+        return
+    wm_gidx[k] = wm_gkeys.len()
+    wm_gkeys.push(k)
+    wm_gaddr.push(addr)
+    wm_gsize.push(size)
+    wm_gsig.push(sig)
+    wm_ginit.push(ih)
+
+# ---- hashing ----
+wh_byte = (h: int, b: int) -> int: (h xor (b & 255)) * 1099511628211
+wh_int = (h0: int, v: int) -> int:
+    h = h0
+    loop k in [0..8): h = wh_byte(h, v >> (8 * k))
+    h
+wh_str = (h0: int, s: str) -> int:
+    h = h0
+    loop c in s: h = wh_byte(h, int(c))
+    wh_byte(h, 0)
+WH0 = -3750763034362895579
+
+# ---- stable names for what a build contains ----
+wk_mod = (m: int) -> str:
+    if m < 0 or m >= modules.len(): return "?"
+    files[int(modules[m].file)].path
+
+wk_inst = (f: int) -> str:
+    s = fns[f].sym
+    base = s
+    if starts_with(base, "f_"): base = base[2..]
+    u = rfind(base, "_")
+    if u > 0: base = base[..u)
+    t = ""
+    if fns[f].fntype != 0: t = type_str(int(fns[f].fntype))
+    ta = ""
+    loop a in fns[f].targs: ta = "{ta},{type_str(a)}"
+    "{wk_mod(int(fns[f].mod))}|{base}|{fns[f].kind}|{t}|{ta}"
+
+# lambdas: by the top-level declaration they are in, their place among its lambdas, their type
+# and what they capture (closures made by the old code keep their environment: a lambda whose
+# captures change is another one)
+wk_lam: {int: str} = {}
+
+wk_lambda_keys = ():
+    wk_lam = {}
+    insts: int[]
+    encl: int[]
+    loop i in [0..lfuncs.len()):
+        if lfuncs[i].kind != LK_INST: continue
+        f = lfuncs[i].inst
+        if f < 0 or fns[f].kind != FK_LAMBDA or fns[f].decl == 0: continue
+        insts.push(f)
+        encl.push(wk_enclosing(f))
+    loop k in 0.. and f in insts:
+        p = nodes[int(fns[f].decl)].pos
+        rank = 0
+        loop j in 0.. and g in insts:
+            if encl[j] == encl[k] and nodes[int(fns[g].decl)].pos < p: rank += 1
+        caps = ""
+        loop c in fns[f].caps: caps = "{caps},{name_of(int(locals[int(c.inner)].name))}:{type_str(int(locals[int(c.inner)].type))}"
+        en = "?"
+        if encl[k] != 0 and nodes[encl[k]].name != 0: en = name_of(int(nodes[encl[k]].name))
+        t = ""
+        if fns[f].fntype != 0: t = type_str(int(fns[f].fntype))
+        wk_lam[f] = "{wk_mod(int(fns[f].mod))}|lambda@{en}#{rank}|{FK_LAMBDA}|{t}|{caps}"
+
+# the top-level declaration a lambda is written in (0: none found)
+wk_enclosing = (f: int) -> int:
+    p = nodes[int(fns[f].decl)].pos
+    m = int(fns[f].mod)
+    if m < 0 or m >= modules.len(): return 0
+    best = 0
+    loop d in modules[m].decls:
+        dp = nodes[d].pos
+        if pos_file(dp) == pos_file(p) and dp <= p and (best == 0 or dp > nodes[best].pos): best = d
+    best
+
+# a key per lfunc ("" for those without code); the same key in two builds is the same function
+wk_fn_keys = () -> str[]:
+    wk_lambda_keys()
+    out: str[]
+    seen: {str: int} = {}
+    loop i in [0..lfuncs.len()):
+        if i >= fn_addr.len() or fn_addr[i] < 0:
+            out.push("")
+            continue
+        k = ""
+        if lfuncs[i].kind == LK_HELPER:
+            k = "h|{lfuncs[i].hkind}|{type_str(lfuncs[i].htype)}"
+            if lfuncs[i].inst >= 0 and lfuncs[i].inst < fns.len() and (lfuncs[i].hkind == .thunk or lfuncs[i].hkind == .partial or lfuncs[i].hkind == .envdrop): k = "{k}|{wk_inst(lfuncs[i].inst)}"
+        else if lfuncs[i].inst == w_init_inst: k = "watch-init"
+        else if wk_lam.get(lfuncs[i].inst) != none: k = wk_lam[lfuncs[i].inst]
+        else: k = wk_inst(lfuncs[i].inst)
+        # (the same key twice: numbered in the order found, which builds keep)
+        n = seen.get(k) ?? 0
+        seen[k] = n + 1
+        if n > 0: k = "{k}#{n}"
+        out.push(k)
+    out
+
+# what a person calls the function of a key (for messages)
+wk_pretty = (k: str) -> str:
+    p = split(k, "|")
+    if p.len() < 2 or p[0] == "h": return ""
+    nm = p[1]
+    if p.len() > 2 and p[2] == "{FK_INIT}": return ""
+    if starts_with(nm, "lambda@"): return "a lambda in {nm[7..rfind(nm, "#"))}"
+    if starts_with(nm, "__"): return ""
+    nm
+
+wk_glob = (g: int) -> str: "{wk_mod(int(globals[g].mod))}|{name_of(int(globals[g].name))}"
+
+# the layout of a type, as far as code depends on it
+wk_sig = (t0: int, depth: int) -> str:
+    t = prune(t0)
+    k = types[t].kind
+    if depth > 6: return type_str(t)
+    if k == .struct_ or k == .enum_:
+        si = int(types[t].st)
+        out = "{type_str(t)}:{tsize(t)}("
+        loop i in [0..int(structs[si].nfields)):
+            f = int(structs[si].fields) + i
+            out = "{out}{name_of(int(fields[f].name))}={wk_sig(int(fields[f].type), depth + 1)}@{fields[f].offset},"
+        loop i in [0..int(structs[si].nvariants)):
+            v = int(structs[si].variants) + i
+            out = "{out}|{name_of(int(variants[v].name))}"
+        "{out})"
+    else if k == .array or k == .opt or k == .ptr: "{k}({wk_sig(int(types[t].elem), depth + 1)})"
+    else if k == .tuple:
+        out = "("
+        loop fo in field_list(t): out = "{out}{wk_sig(fo.0, depth + 1)},"
+        "{out})"
+    else: type_str(t)
+
+# a global's declaration, as text without comments (a change re-runs it)
+wk_decl_hash = (g: int) -> int:
+    d = int(globals[g].decl)
+    if d == 0: return 0
+    p = nodes[d].pos
+    f = pos_file(p)
+    if f < 0 or f >= files.len(): return 0
+    src = files[f].src
+    i = pos_off(p)
+    h = WH0
+    # its line, and the lines after it indented more (or blank)
+    ls = i
+    loop ls > 0 and src[ls - 1] != '\n': ls -= 1
+    ind = i - ls
+    first = true
+    loop i < len(src):
+        e = find_byte(src, '\n', i)
+        if e < 0: e = len(src)
+        line = src[i..e)
+        if not first:
+            t = trim(line)
+            lead = len(line) - len(trim_start(line))
+            if len(t) > 0 and lead <= ind: break
+        first = false
+        h = wh_str(h, trim(line[..repl_code_end(line))))
+        i = e + 1
+    h
+
+# ---- the link map of a first build ----
+watch_record_image = ():
+    wm_clear()
+    keys = wk_fn_keys()
+    relocs_collect()
+    loop i in [0..keys.len()):
+        if len(keys[i]) == 0: continue
+        a = img_text_addr + fn_addr[i]
+        wm_add_fn(keys[i], a, a, fn_hash(i, keys))
+    loop k, off in global_off:
+        wm_add_glob(wk_glob(k), img_data_addr + off, gsize(k), wk_sig(int(globals[k].type), 0), wk_decl_hash(k))
+    wm_add_glob("__sp0", img_data_addr, 8, "", 0)
+    loop i in [0..ffi_offs.len()): wm_add_glob(ffi_keys[i], img_data_addr + ffi_offs[i], 8, "", 0)
+    loop k in [0..ro_starts.len()):
+        h = ro_item_hash(k)
+        if wm_ro.get(h) == none: wm_ro[h] = img_ro_addr + ro_starts[k]
+    wm_stubs = []
+    loop s in stub_addr:
+        if s >= 0: wm_stubs.push(img_text_addr + s)
+        else: wm_stubs.push(0)
+    wm_next = WATCH_REGION + 4096           # (after the first page: the region's mark)
+    wm_data_next = align_up(img_data_addr + data_size + 8, 16)
+    wm_data_end = img_data_addr + data_size + 8 + WATCH_DATA_RESERVE
+    wm_game = update_fn != 0 or draw_present()
+    wm_files_collect()
+
+draw_present = () -> bool:
+    loop m in modules:
+        if m.is_main: return m.names.get(intern("draw")) != none
+    false
+
+wm_files_collect = ():
+    wm_files = []
+    loop m in modules: wm_files.push(files[int(m.file)].path)
+
+gsize = (g: int) -> int:
+    sz = tsize(int(globals[g].type))
+    if sz < 8: sz = 8
+    sz
+
+# ---- references in code: (position, kind, target, offset within it) ----
+# kinds: 0 a function (target: lfunc), 1 read-only data (target: item), 2 a global (target:
+# global, -1 for the initial stack pointer's word), 3 a stub (target: its number), 4 the word
+# keeping a C function found (target: its offset)
+rl_pos: int[]
+rl_kind: int[]
+rl_tgt: int[]
+rl_off: int[]
+g_offs: int[]               # globals by offset
+g_ids: int[]
+
+relocs_collect = ():
+    g_offs = []
+    g_ids = []
+    pairs: int[]
+    loop k, off in global_off: pairs.push(k)
+    pairs.sort_by((g: int): global_off[g])
+    loop g in pairs:
+        g_offs.push(global_off[g])
+        g_ids.push(g)
+    order: int[]
+    n = call_fix.len() + data_fix.len() + stub_fix.len()
+    pos_all: int[]
+    loop f in call_fix: pos_all.push(f.0)
+    loop f in data_fix: pos_all.push(f.0)
+    loop f in stub_fix: pos_all.push(f.0)
+    loop i in [0..n): order.push(i)
+    order.sort_by((i: int): pos_all[i])
+    rl_pos = []
+    rl_kind = []
+    rl_tgt = []
+    rl_off = []
+    nc = call_fix.len()
+    nd = data_fix.len()
+    loop i in order:
+        rl_pos.push(pos_all[i])
+        if i < nc:
+            rl_kind.push(0)
+            rl_tgt.push(call_fix[i].1)
+            rl_off.push(0)
+        else if i < nc + nd:
+            f = data_fix[i - nc]
+            if f.1 == 0:
+                it = ro_item_of(f.2)
+                rl_kind.push(1)
+                rl_tgt.push(it)
+                rl_off.push(f.2 - ro_starts[it])
+            else if ffi_slot.get(f.2) != none:
+                rl_kind.push(4)
+                rl_tgt.push(f.2)
+                rl_off.push(0)
+            else:
+                g = global_at(f.2)
+                rl_kind.push(2)
+                rl_tgt.push(g)
+                if g < 0: rl_off.push(f.2)
+                else: rl_off.push(f.2 - global_off[g])
+        else:
+            rl_kind.push(3)
+            rl_tgt.push(stub_fix[i - nc - nd].1)
+            rl_off.push(0)
+
+ro_item_of = (off: int) -> int:
+    lo = 0
+    hi = ro_starts.len()
+    loop lo < hi:
+        mid = (lo + hi) / 2
+        if ro_starts[mid] <= off: lo = mid + 1
+        else: hi = mid
+    if lo == 0: ice("read-only data at {off} is in no item")
+    lo - 1
+
+ro_item_end = (k: int) -> int:
+    if k + 1 < ro_starts.len(): return ro_starts[k + 1]
+    rodata.len()
+
+ro_item_hash = (k: int) -> int:
+    h = WH0
+    loop j in [ro_starts[k]..ro_item_end(k)): h = wh_byte(h, int(rodata[j]))
+    h
+
+# the global holding data offset off (-1: the initial stack pointer's word at 0)
+global_at = (off: int) -> int:
+    if off < 8: return -1
+    lo = 0
+    hi = g_offs.len()
+    loop lo < hi:
+        mid = (lo + hi) / 2
+        if g_offs[mid] <= off: lo = mid + 1
+        else: hi = mid
+    if lo == 0: ice("data at {off} is in no global")
+    g = g_ids[lo - 1]
+    if off >= g_offs[lo - 1] + gsize(g): ice("data at {off} is in no global")
+    g
+
+# the first reference at or after code position p
+rl_first = (p: int) -> int:
+    lo = 0
+    hi = rl_pos.len()
+    loop lo < hi:
+        mid = (lo + hi) / 2
+        if rl_pos[mid] < p: lo = mid + 1
+        else: hi = mid
+    lo
+
+# a function's code with what it refers to by name rather than by place: equal hashes in two
+# builds mean the same code
+fn_hash = (lf: int, keys: str[]) -> int:
+    s = fn_addr[lf]
+    e = s + fn_len[lf]
+    h = WH0
+    r = rl_first(s)
+    p = s
+    loop p < e:
+        if r < rl_pos.len() and rl_pos[r] == p:
+            h = wh_int(h, p - s)
+            h = wh_str(h, rl_name(r, keys))
+            h = wh_int(h, rl_off[r])
+            p += 4
+            r += 1
+        else:
+            h = wh_byte(h, int(code[p]))
+            p += 1
+    h
+
+rl_name = (r: int, keys: str[]) -> str:
+    k = rl_kind[r]
+    t = rl_tgt[r]
+    if k == 0: return "F{keys[t]}"
+    if k == 1: return "R{ro_item_hash(t)}"
+    if k == 2:
+        if t < 0: return "G__sp0"
+        return "G{wk_glob(t)}"
+    if k == 4: return "G{ffi_keys[ffi_slot[t]]}"
+    "S{t}"
+
+# ---- the globals a build must initialize in the running program ----
+# new ones, those whose type's layout changed and those whose declaration changed (the rest keep
+# their values)
+w_init_inst = -1
+
+watch_globals_to_init = () -> int[]:
+    out: int[]
+    loop k, off in global_off:
+        key = wk_glob(k)
+        if let i = wm_gidx.get(key):
+            if wm_gsig[i] == wk_sig(int(globals[k].type), 0) and wm_ginit[i] == wk_decl_hash(k): continue
+        if globals[k].decl == 0: continue
+        out.push(k)
+    out.sort()
+    out
+
+# (after the program's functions are lowered) a function initializing them, lowered too (the
+# globals it refers to have room already: the modules' own initialization refers to them)
+watch_lower_inits = ():
+    decls: int[]
+    loop g in watch_globals_to_init():
+        d = int(globals[g].decl)
+        if not decls.contains(d): decls.push(d)
+    w_init_inst = new_inst(FK_INIT, 0, "watch_init")
+    b = mk(.block, 0)
+    set_list(b, decls)
+    fns[w_init_inst].body = i32(b)
+    fns[w_init_inst].ret = i32(T_VOID)
+    fns[w_init_inst].state = 2
+    nl = lfuncs.len()
+    w_init_lf = lf_of_inst(w_init_inst)
+    i = nl
+    loop i < lfuncs.len():
+        lower_function(i)
+        if opt_release: rel_collect()
+        else: emit_function()
+        i += 1
+
+# ---- a patch for the running program ----
+# messages (lib/std/watch.jot): words [op, a, b], then for op 1 and 4 b bytes
+#   1 write the bytes at address a    2 run the function at a    3 jump from a to b
+#   4 show text over the game (a: 1 for errors; empty: nothing)   5 the end: apply
+wp_put = (op: int, a: int, bytes: u8[]):
+    __push_i64(w_patch, op)
+    __push_i64(w_patch, a)
+    __push_i64(w_patch, bytes.len())
+    loop x in bytes: w_patch.push(x)
+
+wp_jump = (from: int, to: int):
+    __push_i64(w_patch, 3)
+    __push_i64(w_patch, from)
+    __push_i64(w_patch, to)
+
+wp_run = (a: int):
+    __push_i64(w_patch, 2)
+    __push_i64(w_patch, a)
+    __push_i64(w_patch, 0)
+
+wp_end = ():
+    __push_i64(w_patch, 5)
+    __push_i64(w_patch, 0)
+    __push_i64(w_patch, 0)
+
+w_place = (n: int) -> int:
+    a = align_up(wm_next, 16)
+    wm_next = a + n
+    if wm_next > WATCH_REGION + WATCH_REGION_SIZE: fatal(0, "jot watch: no room left for new code (restart the program: r)")
+    a
+
+watch_make_patch = () -> bool:
+    w_patch = []
+    w_changed = []
+    w_reset = []
+    w_added = []
+    keys = wk_fn_keys()
+    relocs_collect()
+    inits = watch_globals_to_init()
+    loop g in inits:
+        nm = name_of(int(globals[g].name))
+        if starts_with(nm, "__"): continue
+        if wm_gidx.get(wk_glob(g)) == none: w_added.push(nm)
+        else: w_reset.push(nm)
+    # globals: where each is in the program (new ones, and those whose layout changed, get new
+    # room)
+    gaddr: {int: int} = {}
+    moved: {int: bool} = {}
+    loop k, off in global_off:
+        key = wk_glob(k)
+        sig = wk_sig(int(globals[k].type), 0)
+        ih = wk_decl_hash(k)
+        sz = gsize(k)
+        a = 0
+        if let i = wm_gidx.get(key):
+            if wm_gsig[i] == sig: a = wm_gaddr[i]
+        if a == 0:
+            al = talign(int(globals[k].type))
+            if al < 16: al = 16
+            a = align_up(wm_data_next, al)
+            wm_data_next = a + sz
+            if wm_data_next > wm_data_end: fatal(0, "jot watch: no room left for new globals (restart the program: r)")
+            moved[k] = true
+        gaddr[k] = a
+        wm_add_glob(key, a, sz, sig, ih)
+    ffi_addr: {int: int} = {}
+    loop fi in [0..ffi_offs.len()):
+        off = ffi_offs[fi]
+        k = ffi_keys[fi]
+        if let i = wm_gidx.get(k): ffi_addr[off] = wm_gaddr[i]
+        else:
+            a = align_up(wm_data_next, 8)
+            wm_data_next = a + 8
+            ffi_addr[off] = a
+            wm_add_glob(k, a, 8, "", 0)
+    # read-only data: what the program does not have yet goes into the code region
+    ro_addr = fill(0, ro_starts.len())
+    loop k in [0..ro_starts.len()):
+        h = ro_item_hash(k)
+        if let a = wm_ro.get(h): ro_addr[k] = a
+        else:
+            n = ro_item_end(k) - ro_starts[k]
+            a = w_place(n)
+            ro_addr[k] = a
+            wm_ro[h] = a
+            wp_put(1, a, rodata[ro_starts[k]..ro_item_end(k)))
+    # functions: new ones, and those whose code changed or whose globals moved, get new code
+    place = fill(0, keys.len())
+    loop i in [0..keys.len()):
+        k = keys[i]
+        if len(k) == 0: continue
+        h = fn_hash(i, keys)
+        fresh = true
+        if let j = wm_fidx.get(k):
+            if wm_fhash[j] == h and not refers_moved(i, moved): fresh = false
+        if not fresh: continue
+        a = w_place(fn_len[i])
+        place[i] = a
+        if let j = wm_fidx.get(k):
+            wm_flatest[j] = a
+            wm_fhash[j] = h
+            p = wk_pretty(k)
+            if len(p) > 0 and not w_changed.contains(p): w_changed.push(p)
+        else: wm_add_fn(k, a, a, h)
+    # their code, with what it refers to where it is in the program
+    loop i in [0..keys.len()):
+        if place[i] == 0: continue
+        a = place[i]
+        s = fn_addr[i]
+        n = fn_len[i]
+        b = code[s..s + n)
+        r = rl_first(s)
+        loop r < rl_pos.len() and rl_pos[r] < s + n:
+            p = rl_pos[r] - s
+            k = rl_kind[r]
+            t = rl_tgt[r]
+            target = 0
+            if k == 0:
+                target = wm_fcanon[wm_fidx[keys[t]]]
+            else if k == 1: target = ro_addr[t] + rl_off[r]
+            else if k == 2:
+                if t < 0: target = wm_gaddr[wm_gidx["__sp0"]] + rl_off[r]
+                else: target = gaddr[t] + rl_off[r]
+            else if k == 4: target = ffi_addr[t]
+            else: target = wm_stubs[t]
+            d = target - (a + p + 4)
+            loop q in [0..4): b[p + q] = u8((d >> (8 * q)) & 255)
+            r += 1
+        wp_put(1, a, b)
+    # replaced functions: a jump from their first address
+    loop i in [0..keys.len()):
+        if place[i] == 0: continue
+        j = wm_fidx[keys[i]]
+        if wm_fcanon[j] != place[i]: wp_jump(wm_fcanon[j], place[i])
+    # then the new and changed globals are initialized (through an entry that keeps the stack
+    # aligned as calls expect)
+    if w_init_lf >= 0 and fn_addr.len() > w_init_lf and fn_addr[w_init_lf] >= 0 and inits.len() > 0:
+        j = wm_fidx[keys[w_init_lf]]
+        e = w_place(16)
+        stub: u8[] = [0x48, 0x83, 0xEC, 0x08, 0xE8, 0, 0, 0, 0, 0x48, 0x83, 0xC4, 0x08, 0xC3]
+        d = wm_flatest[j] - (e + 9)
+        loop q in [0..4): stub[5 + q] = u8((d >> (8 * q)) & 255)
+        wp_put(1, e, stub)
+        wp_run(e)
+    wp_put(4, 0, [])
+    wp_end()
+    wm_files_collect()
+    true
+
+refers_moved = (lf: int, moved: {int: bool}) -> bool:
+    if moved.len() == 0: return false
+    s = fn_addr[lf]
+    r = rl_first(s)
+    loop r < rl_pos.len() and rl_pos[r] < s + fn_len[lf]:
+        if rl_kind[r] == 2 and rl_tgt[r] >= 0 and moved.get(rl_tgt[r]) != none: return true
+        r += 1
+    false
+
+# ---- the driver ----
+w_to = -1                   # pipes to and from the running program
+w_from = -1
+w_pid = -1
+w_ready = false             # it takes patches (its game loop runs, with room for new code)
+w_out = ""
+w_args: str[]
+
+watch_main = (path: str, args: str[]):
+    mkdir("/tmp/jot-cache")
+    w_out = "/tmp/jot-cache/watch-{syscall(39)}.bin"
+    w_args = args
+    ino = syscall(294, 0x800 | 0x80000)              # inotify_init1(IN_NONBLOCK | IN_CLOEXEC)
+    wds: {int: str} = {}                              # watch -> directory
+    dirs: {str: bool} = {}
+    eprint("jot watch: {path} (saving a file reloads it; r + enter restarts, q + enter quits)\n")
+    fresh = true
+    loop true:
+        if fresh:
+            watch_stop()
+            t0 = time()
+            if watch_compile(path, true):
+                watch_run()
+                fresh = false
+            else: eprint("jot watch: waiting for changes\n")
+            fl = wm_files
+            if fl.len() == 0: fl.push(path)
+            loop f in fl:
+                d = w_dir(f)
+                if dirs.get(d) == none:
+                    dirs[d] = true
+                    wd = syscall(254, ino, data(__zstr(d)), 0x8 | 0x80 | 0x100)  # CLOSE_WRITE, MOVED_TO, CREATE
+                    if wd >= 0: wds[wd] = d
+        # wait for a change, the program ending, or a command
+        ev = watch_wait(ino)
+        if ev == 1:
+            # a file changed: wait a moment for the editor to finish, then build
+            sleep(0.03)
+            watch_drain(ino)
+            if w_pid < 0 or not wm_game or not w_ready:
+                fresh = true
+                continue
+            t0 = time()
+            if watch_compile(path, false): watch_send(t0)
+            else:
+                eprint("jot watch: the program keeps running the last version that compiled\n")
+                # (and shows the errors)
+                w_patch = []
+                wp_put(4, 1, bytes(w_errors))
+                wp_end()
+                watch_send_note()
+        else if ev == 2:
+            st = watch_reap()
+            if st == 0 and wm_game:
+                eprint("jot watch: the game was closed\n")
+                exit(0)
+            if st >= 0: eprint("jot watch: the program ended ({watch_status_str(st)}); waiting for changes (r + enter runs it again)\n")
+        else if ev == 3: fresh = true
+        else if ev == 4:
+            watch_stop()
+            exit(0)
+
+w_dir = (f: str) -> str:
+    s = rfind(f, "/")
+    if s < 0: return "."
+    if s == 0: return "/"
+    f[..s)
+
+watch_status_str = (st: int) -> str:
+    if st & 127 != 0: return "signal {st & 127}"
+    c = (st >> 8) & 255
+    if c == 101: return "a panic"
+    "exit status {c}"
+
+# poll: 1 a file changed, 2 the program ended, 3 restart, 4 quit
+watch_wait = (ino: int) -> int:
+    loop true:
+        pf = [ino | (1 << 32), 0 | (1 << 32), -1]
+        n = 2
+        if w_from >= 0:
+            pf[2] = w_from | (1 << 32)
+            n = 3
+        r = syscall(7, data(pf), n, -1)
+        if r < 0: continue
+        if (pf[0] >> 48) & 0xFFFF != 0:
+            if watch_drain(ino): return 1
+        if (pf[1] >> 48) & 0xFFFF != 0:
+            buf = fill(u8(0), 256)
+            got = syscall(0, 0, data(buf), 256)
+            if got <= 0:
+                # (no terminal input any more: only files and the program)
+                sleep(0.2)
+                continue
+            line = trim(str_from_bytes(buf[..got)))
+            if line == "r": return 3
+            if line == "q": return 4
+            if len(line) > 0: eprint("jot watch: r + enter restarts the program, q + enter quits\n")
+        if n == 3 and (pf[2] >> 48) & 0xFFFF != 0:
+            # the program: gone, or saying (once its game loop starts) whether it takes patches
+            b = [0]
+            got = syscall(0, w_from, data(b), 8)
+            if got <= 0: return 2
+            w_ready = b[0] == 0
+    0
+
+# read pending file events: was a source file written?
+watch_drain = (ino: int) -> bool:
+    any = false
+    buf = fill(u8(0), 8192)
+    loop true:
+        n = syscall(0, ino, data(buf), 8192)
+        if n <= 0: break
+        i = 0
+        loop i + 16 <= n:
+            ln = int(buf[i + 12]) | (int(buf[i + 13]) << 8) | (int(buf[i + 14]) << 16)
+            nm = ""
+            j = i + 16
+            loop j < i + 16 + ln and buf[j] != 0:
+                nm += str_from_bytes(buf[j..j + 1))
+                j += 1
+            if ends_with(nm, ".jot") and not starts_with(nm, "."): any = true
+            i += 16 + ln
+    any
+
+# build in a copy of this process; the errors go to the terminal (and are kept for the game)
+w_errors = ""
+
+watch_compile = (path: str, first: bool) -> bool:
+    res = "/tmp/jot-cache/watch-{syscall(39)}.res"
+    ep: i32[] = [-1, -1]
+    syscall(293, data(ep), 0x80000)
+    pid = syscall(57)
+    if pid == 0:
+        syscall(33, int(ep[1]), 2)
+        watch_first = first
+        watch_build = true
+        if first: wm_clear()
+        bss_reserve = WATCH_DATA_RESERVE
+        out = compile(path, w_out)
+        if len(out) == 0: syscall(60, 1)
+        watch_write_result(res)
+        syscall(60, 0)
+    syscall(3, int(ep[1]))
+    w_errors = ""
+    buf = fill(u8(0), 4096)
+    loop true:
+        n = syscall(0, int(ep[0]), data(buf), 4096)
+        if n <= 0: break
+        __write_fd(2, data(buf), n)
+        if len(w_errors) < 4000: w_errors += str_from_bytes(buf[..n))
+    syscall(3, int(ep[0]))
+    st = [0]
+    syscall(61, pid, data(st), 0, 0)
+    if st[0] != 0: return false
+    ok = watch_read_result(res)
+    delete_file(res)
+    ok
+
+watch_write_result = (res: str):
+    gm = 0
+    if wm_game: gm = 1
+    t = "N\t{wm_next}\t{wm_data_next}\t{wm_data_end}\t{gm}\n"
+    t += "S"
+    loop a in wm_stubs: t += "\t{a}"
+    t += "\n"
+    lines: str[]
+    loop i in [0..wm_fkeys.len()): lines.push("F\t{wm_fkeys[i]}\t{wm_fcanon[i]}\t{wm_flatest[i]}\t{wm_fhash[i]}")
+    loop i in [0..wm_gkeys.len()): lines.push("G\t{wm_gkeys[i]}\t{wm_gaddr[i]}\t{wm_gsize[i]}\t{wm_ginit[i]}\t{wm_gsig[i]}")
+    loop h, a in wm_ro: lines.push("R\t{h}\t{a}")
+    loop f in wm_files: lines.push("W\t{f}")
+    loop c in w_changed: lines.push("C\t{c}")
+    loop c in w_reset: lines.push("Z\t{c}")
+    loop c in w_added: lines.push("A\t{c}")
+    t += lines.join("\n")
+    out: u8[]
+    __push_i64(out, len(t))
+    loop c in t: out.push(c)
+    __push_i64(out, w_patch.len())
+    loop x in w_patch: out.push(x)
+    write_bytes(res, out)
+
+watch_read_result = (res: str) -> bool:
+    b = read_bytes(res) ?? []
+    if b.len() < 16: return false
+    tl = w_i64(b, 0)
+    t = str_from_bytes(b[8..8 + tl))
+    pl = w_i64(b, 8 + tl)
+    w_patch = b[16 + tl..16 + tl + pl)
+    wm_clear()
+    w_changed = []
+    w_reset = []
+    w_added = []
+    loop line in split(t, "\n"):
+        p = split(line, "\t")
+        if p.len() == 0: continue
+        k = p[0]
+        if k == "N" and p.len() >= 5:
+            wm_next = to_int(p[1]) ?? 0
+            wm_data_next = to_int(p[2]) ?? 0
+            wm_data_end = to_int(p[3]) ?? 0
+            wm_game = p[4] == "1"
+        else if k == "S":
+            loop i in [1..p.len()): wm_stubs.push(to_int(p[i]) ?? 0)
+        else if k == "F" and p.len() >= 5: wm_add_fn(p[1], to_int(p[2]) ?? 0, to_int(p[3]) ?? 0, to_int(p[4]) ?? 0)
+        else if k == "G" and p.len() >= 6: wm_add_glob(p[1], to_int(p[2]) ?? 0, to_int(p[3]) ?? 0, p[5], to_int(p[4]) ?? 0)
+        else if k == "R" and p.len() >= 3: wm_ro[to_int(p[1]) ?? 0] = to_int(p[2]) ?? 0
+        else if k == "W" and p.len() >= 2: wm_files.push(p[1])
+        else if k == "C" and p.len() >= 2: w_changed.push(p[1])
+        else if k == "Z" and p.len() >= 2: w_reset.push(p[1])
+        else if k == "A" and p.len() >= 2: w_added.push(p[1])
+    true
+
+w_i64 = (b: u8[], at: int) -> int:
+    v = 0
+    loop k in [0..8): v = v | (int(b[at + k]) << (8 * k))
+    v
+
+# start the program built, with its end of two pipes as fds 3 and 4
+watch_run = ():
+    a: i32[] = [-1, -1]
+    b: i32[] = [-1, -1]
+    syscall(293, data(a), 0x80000)
+    syscall(293, data(b), 0x80000)
+    pid = syscall(57)
+    if pid == 0:
+        syscall(33, int(a[0]), 3)
+        syscall(33, int(b[1]), 4)
+        argv = [w_out]
+        loop x in w_args: argv.push(x)
+        exec(w_out, argv)
+        syscall(60, 127)
+    syscall(3, int(a[0]))
+    syscall(3, int(b[1]))
+    w_to = int(a[1])
+    w_from = int(b[0])
+    w_pid = pid
+
+watch_stop = ():
+    if w_pid < 0: return
+    syscall(62, w_pid, 15)                            # SIGTERM
+    watch_reap()
+
+# the program ended: its status (-1: none was running)
+watch_reap = () -> int:
+    if w_pid < 0: return -1
+    st = [0]
+    syscall(61, w_pid, data(st), 0, 0)
+    syscall(3, w_to)
+    syscall(3, w_from)
+    w_to = -1
+    w_from = -1
+    w_pid = -1
+    w_ready = false
+    st[0]
+
+# send a patch; the program applies it at its next frame and answers
+watch_send = (t0: f64):
+    if let dp = env("JOT_WATCH_DUMP"): write_bytes(dp, w_patch)
+    if not __write_all(w_to, w_patch): return
+    b = fill(u8(0), 8)
+    got = syscall(0, w_from, data(b), 8)
+    if got <= 0:
+        st = watch_reap()
+        eprint("jot watch: the program ended ({watch_status_str(st)}); waiting for changes\n")
+        return
+    ms = int((time() - t0) * 1000.0)
+    what = "no code changed"
+    if w_changed.len() > 0:
+        shown = w_changed
+        if shown.len() > 6: shown = shown[..6)
+        what = shown.join(", ")
+        if w_changed.len() > 6: what += " and {w_changed.len() - 6} more"
+    msg = "jot watch: reloaded in {ms} ms: {what}"
+    if w_added.len() > 0: msg += "; new: {w_added.join(", ")}"
+    if w_reset.len() > 0: msg += "; set again: {w_reset.join(", ")}"
+    eprint("{msg}\n")
+
+watch_send_note = ():
+    if not w_ready or not __write_all(w_to, w_patch): return
+    b = [0]
+    if syscall(0, w_from, data(b), 8) <= 0:
+        st = watch_reap()
+        eprint("jot watch: the program ended ({watch_status_str(st)}); waiting for changes\n")
+
+__write_all = (fd: int, b: u8[]) -> bool:
+    got = 0
+    loop got < b.len():
+        r = syscall(1, fd, data(b) + got, b.len() - got)
+        if r <= 0: return false
+        got += r
+    true

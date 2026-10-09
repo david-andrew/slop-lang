@@ -1731,6 +1731,7 @@ build_option = (key: str) -> int:
 
 # ---------------- program ----------------
 want_cpu_flag = false           # (release builds for x86-64: the vectorizer may use __cpu_avx2)
+watch_build = false             # (built for `jot watch`: WATCH is true in the program)
 runtime_names = ["__alloc", "__free", "__panic", "__panic_bounds", "__panic_unwrap", "__free_obj", "__arr_clone", "__arr_push_slot",
     "__arr_reserve", "__arr_insert_slot", "__arr_remove_slot", "__arr_slice", "__arr_concat", "__str_concat", "__str_eq",
     "__str_cmp", "__str_slice", "__str_append", "__buf_finish", "__buf_append_str", "__arr_resize", "__arr_repeat", "__arr_filled",
@@ -1762,7 +1763,9 @@ add_universe = ():
     tr = mk(.bool_lit, 0)
     nodes[tr].ival = 1
     fl = mk(.bool_lit, 0)
-    consts = [("TARGET", tv, T_STR), ("DEBUG", tr, T_BOOL), ("BOOTSTRAP", fl, T_BOOL)]
+    wv = mk(.bool_lit, 0)
+    if watch_build: nodes[wv].ival = 1
+    consts = [("TARGET", tv, T_STR), ("DEBUG", tr, T_BOOL), ("BOOTSTRAP", fl, T_BOOL), ("WATCH", wv, T_BOOL)]
     loop c in consts:
         nm = intern(c.0)
         globals.push(Global(name = i32(nm), is_const = true, init = i32(c.1), state = 2, type = i32(c.2)))

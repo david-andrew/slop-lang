@@ -60,6 +60,8 @@ draw = ():
 - **Fast compiles.** About 250,000 lines per second on one core (debug builds), roughly 20x
   faster than `gcc -O0`. Hello world compiles and runs in ~10 ms. There are no incremental
   builds and no build system: build options live in the source (`build:` block).
+- **Edit while it runs.** `jot watch game.jot` reloads the running game as you save: new code
+  takes over between two frames, and the game keeps its state, its window and what it loaded.
 - **Fast programs.** Release builds (`opt = release`) are within ~1.5x of `gcc -O2` on the
   benchmark set (geometric mean), with bounds checks kept on. `parallel_map` and friends use
   every core.
@@ -103,6 +105,7 @@ bin/jot                       # an interactive prompt
 bin/jot examples/shapes.jot   # compile and run
 bin/jot examples/lumen/lumen.jot          # the 2D demo game
 bin/jot examples/dunes/dunes.jot          # the 3D demo game
+bin/jot watch examples/lumen/lumen.jot    # ... reloaded as you edit it, without restarting
 bin/jot --web examples/dunes/dunes.jot    # the same game in the browser
 bin/jot build examples/dunes/dunes.jot --target wasm -o dunes.html   # a page to keep or share
 bin/jot test tests/unit/sample_test.jot  # run `test` blocks

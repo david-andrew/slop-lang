@@ -713,8 +713,12 @@ else:
     __game_run = (update: (f64) -> void, draw: () -> void):
         window(__win_title, __win_w, __win_h)
         __fixed_step = env("JOT_SCREENSHOT") != none
+        when WATCH:
+            __watch_init()
         last = time()
         loop not __win_close:
+            when WATCH:
+                __watch_frame()
             __platform_poll()
             now = time()
             dt = clamp(now - last, 0.0, 0.1)
@@ -769,8 +773,11 @@ __run_frame = (dt: f64, update: (f64) -> void, draw: () -> void):
         __fps_n = 0
     t0 = time()
     __gfx_begin_frame()
-    update(dt)
-    draw()
+    when WATCH:
+        __watch_update_draw(dt, update, draw)
+    else:
+        update(dt)
+        draw()
     __gfx_end_frame()
     __audio_update()
     __frame_cpu += time() - t0

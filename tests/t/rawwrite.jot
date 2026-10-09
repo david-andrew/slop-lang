@@ -1,0 +1,38 @@
+# requires: jot
+# Writes through raw pointers to an array's elements (data(), &, a cast) must be seen by later
+# reads of the array, also in loops (where release builds keep an array's place in a register).
+fill2 = (p: *u8, v: int):
+    q = p as *int
+    q[0] = v
+    q[1] = v + 1
+
+# fills n words at p from src, a few at a time (like reading from a pipe)
+read_all = (src: int[], p: *u8, n: int) -> bool:
+    q = p as *int
+    got = 0
+    loop got < n:
+        q[got] = src[got]
+        got += 1
+    true
+
+main = ():
+    hdr = [0, 0, 0]
+    loop k in [0..2):
+        q = data(hdr) as *int
+        q[0] = 5 + k
+        print("{hdr[0]} {hdr[1]}")
+    xs = [0, 0]
+    loop k in [0..2):
+        fill2(data(xs) as *u8, 10 * k)
+        s = xs[0] + xs[1]
+        print("{s}")
+    w = [5, 77, 99, 6, 1, 2]
+    h = [0, 0, 0]
+    loop k in [0..2):
+        if not read_all(w[3 * k..], data(h) as *u8, 3): return
+        print("{h[0]} {h[1]} {h[2]}")
+    n = 0
+    loop k in [0..3):
+        p = &n
+        p[0] = p[0] + k
+    print("{n}")

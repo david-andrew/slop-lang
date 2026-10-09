@@ -1,6 +1,7 @@
 # The Jot compiler.
 #   jot file.jot [args]     compile and run
 #   jot build file.jot [-o out] [--target wasm] [--release]
+#   jot watch file.jot [args]     run it, and reload it while its files change (watch.jot)
 
 build:
     opt = release
@@ -23,13 +24,14 @@ use 'wasm.jot'
 use 'ide.jot'
 use 'lsp.jot'
 use 'repl.jot'
+use 'watch.jot'
 
 # (a release is tagged v<JOT_VERSION>: .github/workflows/release.yml checks)
 const JOT_VERSION = "0.1.0"
 const JOT_INSTALL_URL = "https://david-andrew.github.io/slop-lang/install"
 
 usage = ():
-    eprint("usage: jot                                          (an interactive prompt)\n       jot [--web] [--release] file.jot [args...]   (--web: build for the browser and open it there)\n       jot test file.jot\n       jot check file.jot\n       jot lsp   (a language server for editors, on standard input and output)\n       jot --version\n       jot upgrade   (install the latest release)\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
+    eprint("usage: jot                                          (an interactive prompt)\n       jot [--web] [--release] file.jot [args...]   (--web: build for the browser and open it there)\n       jot watch file.jot [args...]   (run it, and reload it while its files change)\n       jot test file.jot\n       jot check file.jot\n       jot lsp   (a language server for editors, on standard input and output)\n       jot --version\n       jot upgrade   (install the latest release)\n       jot build file.jot [-o output] [--target native|wasm] [--release] [--ir]")
     exit(2)
 
 find_lib_dir = () -> str:
@@ -258,6 +260,7 @@ compile = (path: str, out0: str) -> str:
         else: emit_function()
         break
     if lower_only: return ""
+    if watch_build and not watch_first: watch_lower_inits()
     if opt_release: release_pipeline()
     t2 = time()
     ok = false
@@ -277,7 +280,11 @@ compile = (path: str, out0: str) -> str:
         img_ro_addr = ELF_BASE + ro_off
         img_data_addr = ELF_BASE + data_off
         x64_resolve(img_text_addr, img_ro_addr, img_data_addr)
-        ok = write_elf(out, code, entry, rodata, data_size + 8 + bss_reserve)
+        # (jot watch: after the first build, a patch for the program running)
+        if watch_build and not watch_first: ok = watch_make_patch()
+        else:
+            ok = write_elf(out, code, entry, rodata, data_size + 8 + bss_reserve)
+            if ok and watch_build: watch_record_image()
         size = code.len()
     t3 = time()
     if ra_stat: eprint("regalloc: spill cost {ra_spill_cost}, save cost {ra_save_cost} (int) {ra_save_x} (float), of {ra_total} weighted accesses\n")
@@ -354,6 +361,14 @@ main = ():
         else: usage()
         first += 1
     if first >= a.len(): usage()
+    if a[first] == "watch":
+        if a.len() < first + 2: usage()
+        if cli_target == "wasm": fatal(0, "jot watch runs programs natively (for the web, use jot build --target wasm)")
+        cli_target = "native"
+        wargs: str[]
+        loop i in [first + 2..a.len()): wargs.push(a[i])
+        watch_main(a[first + 1], wargs)
+        return
     if a[first] == "test":
         if a.len() < first + 2: usage()
         test_mode = true

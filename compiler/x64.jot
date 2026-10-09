@@ -326,6 +326,9 @@ vsoff: int[]
 slot_off: int[]
 frame_size = 0
 callee_off: int[]          # save offset per register (0 = not used)
+const WATCH_CODE_AT = 0x50000000       # jot watch: where later builds' code goes (above where the
+const WATCH_CODE_SIZE = 0x20000000     # heap may start, within 2 GB of the globals)
+
 ra_on = true              # false: spill everything (fast debug codegen)
 ra_prio = true            # (release builds: allocate_release; JOT_RA_LINEAR=1: allocate)
 callee_pool = [RBX, 12, 13, 14, 15]
@@ -1299,6 +1302,7 @@ ro_const = (bits: int) -> int:
     if let o = ro_consts.get(bits): return o
     loop rodata.len() % 8 != 0: rodata.push(0)
     o = rodata.len()
+    ro_starts.push(o)
     loop k in [0..8): rodata.push(u8((bits >> (8 * k)) & 255))
     ro_consts[bits] = o
     o
@@ -2111,8 +2115,11 @@ ra_total = 0
 ra_verbose = false
 ra_fn_base = 0
 
+fn_len: int[]               # lfunc -> its code's length (jot watch)
+
 x64_function = ():
     loop fn_addr.len() <= ir.fn_index: fn_addr.push(-1)
+    loop fn_len.len() <= ir.fn_index: fn_len.push(0)
     loop code.len() % 16 != 0: b(0xCC)
     fn_addr[ir.fn_index] = code.len()
     fn_start = code.len()
@@ -2153,6 +2160,7 @@ x64_function = ():
         else: emit_ins(pos, ins)
         if ci < call_pos.len() and call_pos[ci] == pos: ci += 1
     elf_syms.push((ir.name, fn_start, code.len() - fn_start))
+    fn_len[ir.fn_index] = code.len() - fn_start
     if ra_stat:
         if ra_verbose:
             sp = 0
@@ -2192,6 +2200,24 @@ x64_entry = (inits: int[], main_lf: int) -> int:
     b(0x83)
     modrr(4, RSP)
     b(0xF0)                                   # and rsp, -16
+    if watch_build:
+        # (jot watch: room for the code of later builds, taken before anything else can be put
+        # there; its first word tells lib/std/watch.jot it is there)
+        mov_imm(RDI, WATCH_CODE_AT)
+        mov_imm(RSI, WATCH_CODE_SIZE)
+        mov_imm(RDX, 7)
+        mov_imm(10, 0x104022)                 # private, anonymous, no reserve, fixed (no replace)
+        mov_imm(8, -1)
+        mov_imm(9, 0)
+        mov_imm(RAX, 9)
+        b(0x0F); b(0x05)                      # mmap
+        mov_imm(RCX, WATCH_CODE_AT)
+        b(0x48); b(0x39); b(0xC8)             # cmp rax, rcx
+        b(0x75); b(0)                         # jne over the mark
+        j = code.len()
+        mov_imm(RDX, 0x6A6F74776174636B)
+        mov_mr(RAX, 0, RDX)
+        code[j - 1] = u8(code.len() - j)
     loop f in inits:
         b(0xE8)
         b32(0)

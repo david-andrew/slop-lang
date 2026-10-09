@@ -283,6 +283,9 @@ __panic = (msg: str):
     __write_err("panic: ")
     __write_err(msg)
     __write_err("\n")
+    # (under jot watch, a game pauses instead: lib/std/watch.jot)
+    when WATCH:
+        __watch_panic(msg)
     __exit(101)
 
 __panic_bounds = (i: int, n: int, loc: str):

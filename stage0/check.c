@@ -1218,12 +1218,14 @@ static void add_universe(void) {
   };
   for (size_t i = 0; i < sizeof tys / sizeof *tys; i++) scope_add(universe, internc(tys[i].n), S_TYPE, tys[i].t, NULL);
   // compile-time constants
-  struct { const char *n; Node *v; } cs[3];
+  struct { const char *n; Node *v; } cs[4];
   Node *tv = new_node(N_STR, (Pos){0}); tv->sval = internc(g_target_wasm ? "wasm" : "native");
   Node *dv = new_node(N_BOOL, (Pos){0}); dv->ival = 1;
   Node *bv = new_node(N_BOOL, (Pos){0}); bv->ival = 1;
+  Node *wv = new_node(N_BOOL, (Pos){0}); wv->ival = 0;
   cs[0].n = "TARGET"; cs[0].v = tv; cs[1].n = "DEBUG"; cs[1].v = dv; cs[2].n = "BOOTSTRAP"; cs[2].v = bv;
-  for (int i = 0; i < 3; i++) {
+  cs[3].n = "WATCH"; cs[3].v = wv;
+  for (int i = 0; i < 4; i++) {
     Global *g = arena_alloc(sizeof(Global));
     g->name = internc(cs[i].n); g->is_const = true; g->init = cs[i].v; g->state = 2;
     g->type = cs[i].v->kind == N_STR ? t_str : t_bool;

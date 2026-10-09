@@ -636,11 +636,32 @@ screen.
 
 ```
 jot file.jot [args]     compile and run (wasm target: opens the browser)
+jot watch file.jot      run it, and reload it while its files change
 jot --web file.jot      compile for the web and open it in the browser
 jot build file.jot      write the executable / .html
 jot test file.jot       run `test` blocks
 jot check file.jot      type check only
 ```
+
+**Reloading while it runs.** `jot watch game.jot` runs the game and keeps watching the files it
+is built from. Each time one is saved the game is rebuilt and the running game takes the new
+code between two frames, without starting over: the window stays open and every global keeps
+its value (the player where they are, the level as it is, what is loaded on the GPU), so a
+change to how something moves or looks shows at once.
+
+- Changed and new functions take effect at the next frame, also in function values and closures
+  the game keeps (a lambda that captures other variables than before is a new one: closures made
+  earlier keep running the old code).
+- A global is set again from its declaration when that declaration changes (`speed = 300.0`
+  after `speed = 200.0`), or when its type's layout does (a field added to a struct it holds);
+  new globals are set when they appear. Top-level statements and `main` do not run again.
+- A build with errors leaves the game running as it was, with the errors over it and in the
+  terminal. A panic in `update` or `draw` pauses the game with the message on the screen; saving
+  a fix goes on from there.
+- `r` (and enter) in the terminal starts the program again from the beginning; `q` quits.
+- A program without `update`/`draw` is run again from the start each time its files change.
+
+`jot watch` runs native builds (Linux), in debug or release mode as the build block says.
 
 ## 13. Calling C
 
