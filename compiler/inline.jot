@@ -9,6 +9,7 @@ use 'opt.jot'
 const INLINE_MAX = 24       # callee size limit, in IR instructions
 const INLINE_LOOP_MAX = 96  # ... for a call in a loop to a leaf (a function that calls nothing)
 const INLINE_WRAPPER_MAX = 64   # ... for a leaf called once by a function at most this size
+const INLINE_LOOPY_CALLER_MAX = 400     # (a leaf with a loop: only into callers this small)
 inl_calls = 0               # calls (that return, not on rare paths) in the function being inlined into
 
 rel_fns: IrFn[]             # lowered functions, in lowering order
@@ -19,17 +20,22 @@ rel_collect = ():
     rel_by_index[ir.fn_index] = rel_fns.len()
     rel_fns.push(ir)
 
-# 0: not inlined, 1: small (inlined anywhere), 2: a leaf inlined into loops
+# 0: not inlined, 1: small (inlined anywhere), 2: a leaf inlined into loops, 3: the same with a
+# loop of its own (into callers that are not large: in a large one, what its loop keeps in
+# registers may not get them, and a call costs little next to a loop)
 inlinable = (f: IrFn) -> int:
     if f.cabi or len(f.export_name) > 0 or f.code.len() > INLINE_LOOP_MAX: return 0
     leaf = true
+    has_loop = false
     loop ins in f.code:
+        if ins.op == .loop: has_loop = true
         if ins.op == .call and ins.imm == f.fn_index: return 0         # recursive
         if ins.op == .intr and ins.imm >= 2: return 0                 # setjmp-like intrinsics
         # (calls on rarely taken paths, like the out-of-line refcounting during a parallel job,
         # do not count)
         if (ins.op == .call and ins.c == 0) or ins.op == .calli or ins.op == .callc or ins.op == .syscall: leaf = false
     if f.code.len() <= INLINE_MAX: return 1
+    if leaf and has_loop: return 3
     if leaf: return 2
     0
 
@@ -124,9 +130,10 @@ inline_target = (ins: Ins, depth: int, self_pos: int, snap: IrFn[], can: int[]) 
     j = inline_callee(ins, self_pos, snap)
     if j < 0: return -1
     if can[j] == 1 or (can[j] == 2 and depth > 0): return j
+    if can[j] == 3 and depth > 0 and ir.code.len() <= INLINE_LOOPY_CALLER_MAX: return j
     # a leaf into a caller that is little more than the call (a wrapper, like a map's get around
     # its lookup): the caller becomes a leaf itself, which loops can then take in
-    if can[j] == 2 and ir.code.len() <= INLINE_WRAPPER_MAX and inl_calls == 1: return j
+    if can[j] >= 2 and ir.code.len() <= INLINE_WRAPPER_MAX and inl_calls == 1: return j
     -1
 
 # the function a direct call (that returns) calls, if it was collected (-1: none)
