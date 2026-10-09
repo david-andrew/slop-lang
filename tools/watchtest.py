@@ -207,6 +207,27 @@ def test_migrate(d):
         w.quit()
 
 
+def test_assets(d):
+    # a file a global's declaration names, and the functions a GPU program is made from
+    src = open(os.path.join(root, "examples", "cube.jot")).read()
+    src = src.replace("update = (dt: f64): t += dt", "update = (dt: f64):\n    t += dt\n    if frame_number() % 10 == 0: print(\"tick level={len(level)} prog={prog.prog}\")\n    sleep(0.005)")
+    src += 'level = embed("level.txt")\n'
+    write(d, "level.txt", "hello level\n")
+    write(d, "g.jot", src)
+    w = Watch(d, "g.jot")
+    try:
+        p0 = int(w.expect(r"tick level=12 prog=(\d+)").group(1))
+        write(d, "level.txt", "a longer level text\n")
+        w.expect(r"set again: level")
+        w.expect(r"tick level=20")
+        write(d, "g.jot", src.replace("pulse = 0.85 + 0.15", "pulse = 0.5 + 0.5"))
+        w.expect(r"reloaded in \d+ ms: cube_fs; set again: prog")
+        p1 = int(w.expect(r"tick level=20 prog=(\d+)").group(1))
+        assert p1 != p0, "the GPU program was not made again"
+    finally:
+        w.quit()
+
+
 def test_program(d):
     # without update/draw: run again from the start on each change
     write(d, "p.jot", 'print("run one")\n')
@@ -220,7 +241,7 @@ def test_program(d):
         w.quit()
 
 
-tests = [test_game, test_modules_release, test_migrate, test_program]
+tests = [test_game, test_modules_release, test_migrate, test_assets, test_program]
 passed = failed = 0
 for t in tests:
     with tempfile.TemporaryDirectory() as d:

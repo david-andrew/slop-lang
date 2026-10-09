@@ -262,6 +262,33 @@ wk_decl_hash = (g: int) -> int:
         first = false
         h = wh_str(h, trim(line[..repl_code_end(line))))
         i = e + 1
+    # and what it is made from that is not its text: the GPU programs made from shader functions,
+    # and files named in it (an image loaded with embed or read_bytes...)
+    wk_extra(int(nodes[d].b), int(globals[g].mod), h)
+
+w_assets: str[]             # files named in declarations (watched, as the sources are)
+
+wk_extra = (n: int, m: int, h0: int) -> int:
+    if n <= 0 or n >= nodes.len(): return h0
+    h = h0
+    k = nodes[n].kind
+    if k == .intrinsic and nodes[n].aux == i32(int(IN.shader)):
+        if let src = glsl_of.get(n): h = wh_str(h, src)
+    if k == .str_lit:
+        nm = name_of(int(nodes[n].sval))
+        if len(nm) > 0 and len(nm) < 400 and find_byte(nm, '\n') < 0:
+            p = nm
+            if not starts_with(p, "/") and m >= 0 and m < modules.len() and file_exists("{modules[m].dir}/{nm}"): p = "{modules[m].dir}/{nm}"
+            if file_exists(p):
+                if let b = read_file(p):
+                    h = wh_str(h, b)
+                    if not w_assets.contains(p): w_assets.push(p)
+    h = wk_extra(int(nodes[n].a), m, h)
+    h = wk_extra(int(nodes[n].b), m, h)
+    h = wk_extra(int(nodes[n].c), m, h)
+    h = wk_extra(int(nodes[n].d), m, h)
+    loop i in [0..nkids(n)): h = wk_extra(kid(n, i), m, h)
+    loop i in [0..nkids2(n)): h = wk_extra(kid2(n, i), m, h)
     h
 
 # ---- the link map of a first build ----
@@ -269,6 +296,7 @@ watch_record_image = ():
     wm_clear()
     keys = wk_fn_keys()
     relocs_collect()
+    if env("JOT_WATCH_TRACE") != none: watch_trace(keys)
     loop i in [0..keys.len()):
         if len(keys[i]) == 0: continue
         a = img_text_addr + fn_addr[i]
@@ -299,6 +327,8 @@ draw_present = () -> bool:
 wm_files_collect = ():
     wm_files = []
     loop m in modules: wm_files.push(files[int(m.file)].path)
+    loop a in w_assets:
+        if not wm_files.contains(a): wm_files.push(a)
 
 gsize = (g: int) -> int:
     sz = tsize(int(globals[g].type))
@@ -512,6 +542,30 @@ w_place = (n: int) -> int:
     if wm_next > WATCH_REGION + WATCH_REGION_SIZE: fatal(0, "jot watch: no room left for new code (restart the program: r)")
     a
 
+# (JOT_WATCH_TRACE=file: each function's key, then what its code refers to and its bytes)
+watch_trace = (keys: str[]):
+    out = ""
+    loop i in [0..keys.len()):
+        if len(keys[i]) == 0: continue
+        out += "{keys[i]}\n"
+        s = fn_addr[i]
+        r = rl_first(s)
+        loop r < rl_pos.len() and rl_pos[r] < s + fn_len[i]:
+            out += "  @{rl_pos[r] - s} {rl_name(r, keys)}+{rl_off[r]}\n"
+            if rl_kind[r] == 1:
+                t = rl_tgt[r]
+                b = ""
+                loop q in [ro_starts[t]..ro_item_end(t)):
+                    c = rodata[q]
+                    if c >= 32 and c < 127: b += str_from_bytes(rodata[q..q + 1))
+                    else: b += "\\{int(c)}"
+                out += "   = ({ro_item_end(t) - ro_starts[t]}) {b}\n"
+            r += 1
+        h = ""
+        loop p in [s..s + fn_len[i]): h += "{int(code[p])} "
+        out += "  {h}\n"
+    write_file(env("JOT_WATCH_TRACE") ?? "", out)
+
 watch_make_patch = () -> bool:
     w_patch = []
     w_changed = []
@@ -519,6 +573,7 @@ watch_make_patch = () -> bool:
     w_added = []
     keys = wk_fn_keys()
     relocs_collect()
+    if env("JOT_WATCH_TRACE") != none: watch_trace(keys)
     inits = watch_globals_to_init()
     w_kept = []
     loop g in w_migrate:
@@ -662,7 +717,6 @@ watch_main = (path: str, args: str[]):
     w_out = "/tmp/jot-cache/watch-{syscall(39)}.bin"
     w_args = args
     ino = syscall(294, 0x800 | 0x80000)              # inotify_init1(IN_NONBLOCK | IN_CLOEXEC)
-    wds: {int: str} = {}                              # watch -> directory
     dirs: {str: bool} = {}
     eprint("jot watch: {path} (saving a file reloads it; r + enter restarts, q + enter quits)\n")
     fresh = true
@@ -674,14 +728,16 @@ watch_main = (path: str, args: str[]):
                 watch_run()
                 fresh = false
             else: eprint("jot watch: waiting for changes\n")
-            fl = wm_files
-            if fl.len() == 0: fl.push(path)
-            loop f in fl:
-                d = w_dir(f)
-                if dirs.get(d) == none:
-                    dirs[d] = true
-                    wd = syscall(254, ino, data(__zstr(d)), 0x8 | 0x80 | 0x100)  # CLOSE_WRITE, MOVED_TO, CREATE
-                    if wd >= 0: wds[wd] = d
+        # (each time: a build may name files it did not before)
+        fl = wm_files
+        if fl.len() == 0: fl.push(path)
+        loop f in fl:
+            d = w_dir(f)
+            w_watched["{d}/{w_base(f)}"] = true
+            if dirs.get(d) == none:
+                dirs[d] = true
+                wd = syscall(254, ino, data(__zstr(d)), 0x8 | 0x80 | 0x100)  # CLOSE_WRITE, MOVED_TO, CREATE
+                if wd >= 0: w_wds[wd] = d
         # wait for a change, the program ending, or a command
         ev = watch_wait(ino)
         if ev == 1:
@@ -769,9 +825,21 @@ watch_drain = (ino: int) -> bool:
             loop j < i + 16 + ln and buf[j] != 0:
                 nm += str_from_bytes(buf[j..j + 1))
                 j += 1
+            wd = int(buf[i]) | (int(buf[i + 1]) << 8) | (int(buf[i + 2]) << 16) | (int(buf[i + 3]) << 24)
             if ends_with(nm, ".jot") and not starts_with(nm, "."): any = true
+            else if let dir = w_wds.get(wd):
+                if w_watched.get("{dir}/{nm}") != none: any = true
             i += 16 + ln
     any
+
+# the files built from, by directory/name (for file events: which matter)
+w_wds: {int: str} = {}
+w_watched: {str: bool} = {}
+
+w_base = (f: str) -> str:
+    s = rfind(f, "/")
+    if s < 0: return f
+    f[s + 1..]
 
 # build in a copy of this process; the errors go to the terminal (and are kept for the game)
 w_errors = ""
@@ -919,6 +987,7 @@ watch_send = (t0: f64):
         return
     ms = int((time() - t0) * 1000.0)
     what = "no code changed"
+    if w_reset.len() + w_added.len() + w_kept.len() > 0: what = "the same code"
     if w_changed.len() > 0:
         shown = w_changed
         if shown.len() > 6: shown = shown[..6)

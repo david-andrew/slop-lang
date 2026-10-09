@@ -42,6 +42,7 @@ data_size = 8     # offset 0 holds the initial stack pointer
 ffi_offs: int[]
 ffi_keys: str[]
 ffi_slot: {int: int} = {}       # offset -> index
+glsl_of: {int: str} = {}        # (jot watch) shader() node -> the GLSL made for it
 global_off: {int: int} = {}
 entry_points: int[]
 
@@ -1750,6 +1751,7 @@ gen_intrinsic = (e: int) -> Val:
         vsf = int(nodes[args[0]].sym)
         fsf = int(nodes[args[1]].sym)
         vs, fs, lay = glsl_build(vsf, fsf)
+        if watch_build: glsl_of[e] = vs + fs + lay
         t = ntype(e)
         si = int(types[prune(t)].st)
         layout(t)

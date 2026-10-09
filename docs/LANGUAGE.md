@@ -653,8 +653,10 @@ change to how something moves or looks shows at once.
   the game keeps (a lambda that captures other variables than before is a new one: closures made
   earlier keep running the old code).
 - A global is set again from its declaration when that declaration changes (`speed = 300.0`
-  after `speed = 200.0`); new globals are set when they appear. Top-level statements and `main`
-  do not run again.
+  after `speed = 200.0`), when a file it names changes (`player = load_texture(embed("player.png"))`
+  after the image is saved), or when the functions of a GPU program it makes do
+  (`sky = make_shader(shader(sky_vs, sky_fs))`). New globals are set when they appear.
+  Top-level statements and `main` do not run again.
 - When a struct the game holds changes (a field added, removed, reordered, or of another numeric
   type), the values are kept: each is converted to the new layout field by field (by name),
   through arrays, optionals, maps and nested structs; a new field starts at its default (a
