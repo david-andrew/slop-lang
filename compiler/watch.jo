@@ -1228,10 +1228,7 @@ w32_key = () -> int:
 w32_wait = () -> int:
     when TARGET == "windows":
         loop true:
-            if w32_files_changed(): return 1
-            k = w32_key()
-            if k == 'r': return 3
-            if k == 'q': return 4
+            # (the program first: whether it takes patches must be known when a change comes)
             if w_pid >= 0:
                 # the program: gone, or saying (once its game loop starts) whether it takes patches
                 avail: u32[] = [0]
@@ -1241,6 +1238,10 @@ w32_wait = () -> int:
                     if v < 0: return 2
                     w_ready = v == 0
                     continue
+            if w32_files_changed(): return 1
+            k = w32_key()
+            if k == 'r': return 3
+            if k == 'q': return 4
             Sleep(40)
         return 0
     else:
