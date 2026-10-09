@@ -587,6 +587,8 @@ __sw_draw_mesh = (prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo:
     if prog <= 0 or prog >= __sp_vs.len() or __sp_vs[prog] == null or nverts == 0: return
     nf = __sp_out[prog] / 4
     vargs = __sp_args[prog]
+    vsp = __sp_vs[prog]
+    fsp = __sp_fs[prog]
     vs2 = __sp_vs[prog] as cfn(*u8, *u8, *u8)
     vs3 = __sp_vs[prog] as cfn(*u8, *u8, *u8, *u8)
     fs = __sp_fs[prog] as cfn(*u8, *u8, *u8)
@@ -647,8 +649,13 @@ __sw_draw_mesh = (prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo:
             if ids:
                 mine[0] = v
                 mine[1] = g / nverts
-            if vargs == 3: vs3(o as *u8, vb + v * stride, instb + (g / nverts) * istride, uni)
-            else: vs2(o as *u8, vb + v * stride, uni)
+            when TARGET == "windows":
+                # (cfn calls use Windows' convention there; the shader functions are Sloppy's)
+                if vargs == 3: __call_raw(vsp, o as *u8, vb + v * stride, instb + (g / nverts) * istride, uni)
+                else: __call_raw(vsp, o as *u8, vb + v * stride, uni)
+            else:
+                if vargs == 3: vs3(o as *u8, vb + v * stride, instb + (g / nverts) * istride, uni)
+                else: vs2(o as *u8, vb + v * stride, uni)
             __sw_project(o, pvp + g * pstride, nf, vx, vy, vw, vh, fp)
     )
     # triangles, clipped against the near plane z >= -w where needed
@@ -746,7 +753,10 @@ __sw_draw_mesh = (prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo:
             vin[2] = z
             vin[3] = iw
             if disc: mine[2] = 0
-            fs(col as *u8, vin as *u8, uni)
+            when TARGET == "windows":
+                __call_raw(fsp, col as *u8, vin as *u8, uni)
+            else:
+                fs(col as *u8, vin as *u8, uni)
             if disc:
                 if mine[2] != 0: continue
                 if dwrite: dp[pix * 4] = z

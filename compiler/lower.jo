@@ -1704,6 +1704,12 @@ gen_intrinsic = (e: int) -> Val:
         d = vreg(VI)
         emit(.syscall, VI, d, i32(start), i32(vs.len()), 0, 0)
         return V(d, false)
+    if id == .callc:
+        fp = gen_expr(args[0]).v
+        vs: int[]
+        loop i in [1..args.len()): vs.push(gen_expr(args[i]).v)
+        e_calli(fp, vs, -1, false)
+        return V(-1, false)
     if id == .memcpy:
         d = gen_expr(args[0]).v
         s = gen_expr(args[1]).v

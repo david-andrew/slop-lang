@@ -33,7 +33,7 @@ intrinsics = [
     Intrinsic("assert", .assert, false), Intrinsic("print", .print, false), Intrinsic("embed", .embed, false),
     Intrinsic("str_from_bytes", .from_bytes, false), Intrinsic("bytes", .to_bytes, false), Intrinsic("__argv", .argv, false),
     Intrinsic("unreachable", .unreachable, false), Intrinsic("sqrt", .sqrt, false), Intrinsic("__fmt_fields", .fmt_struct, false), Intrinsic("__fmt_elem_value", .fmt_elem, false), Intrinsic("__gpu_kernel", .gpu_kernel, false),
-    Intrinsic("__hash_value", .hash, false), Intrinsic("__set_len", .setlen, false), Intrinsic("__call_c", .callc, false),
+    Intrinsic("__hash_value", .hash, false), Intrinsic("__set_len", .setlen, false), Intrinsic("__call_raw", .callc, false),
     Intrinsic("shader", .shader, false), Intrinsic("__setjmp", .setjmp, false), Intrinsic("__longjmp", .longjmp, false), Intrinsic("__jump", .jump, false),
     Intrinsic("__clone_thread", .clone_thread, false), Intrinsic("__atomic_add", .atomic_add, false),
     Intrinsic("__atomic_cas", .atomic_cas, false), Intrinsic("__stack_ptr", .stack_ptr, false),
@@ -1564,11 +1564,6 @@ check_intrinsic = (n: int, id: IN, args: int[], expected: int) -> int:
         if not type_eq(int(fns[vsf].ret), fns[fsf].ptypes[0]): fatal(nodes[n].pos, "the fragment function's input must be the vertex function's output type")
         if not type_eq(fns[vsf].ptypes[fns[vsf].ptypes.len() - 1], fns[fsf].ptypes[1]): fatal(nodes[n].pos, "both shader functions must take the same uniforms type")
         if not type_eq(int(fns[fsf].ret), T_VEC4): fatal(nodes[n].pos, "the fragment function must return a vec4 color")
-        # (the software renderer calls them through C function pointers: on Windows they need
-        # the adapters @cabi functions get, x64.jo)
-        if target_windows:
-            fns[vsf].cabi = true
-            fns[fsf].cabi = true
         s = prelude.get(intern("ShaderSource")) ?? 0
         if s == 0: fatal(nodes[n].pos, "ShaderSource is not available")
         r = get_struct_inst(int(syms[s].ref), [])
@@ -1641,8 +1636,11 @@ check_intrinsic = (n: int, id: IN, args: int[], expected: int) -> int:
         nargs_check(n, nargs, 0, 0, "__stack_ptr")
         r = T_RAWPTR
     else if id == .callc:
-        # __call_c(fnptr, args...) : call a C function pointer (rarely needed; cfn types are preferred)
-        fatal(nodes[n].pos, "__call_c is not supported")
+        # __call_raw(f, args...): call the code at f the way Sloppy functions are called (the
+        # software renderer's shader functions: the address of a function with pointer arguments)
+        if nargs < 1: fatal(nodes[n].pos, "__call_raw takes a function's address and its arguments")
+        loop i in [0..nargs): arg_type(args, i, T_RAWPTR)
+        r = T_VOID
     else: fatal(nodes[n].pos, "unsupported intrinsic")
     nodes[n].type = i32(r)
     r
