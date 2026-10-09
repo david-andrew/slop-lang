@@ -291,6 +291,27 @@ mkdir = (path: str) -> bool:
         r = syscall(83, data(__zstr(path)), 0x1ED)
         r == 0 or r == -17
 
+# the current directory
+cwd = () -> str:
+    when TARGET == "wasm":
+        return "/"
+    else when TARGET == "windows":
+        return __w32_cwd()
+    else:
+        buf = fill(u8(0), 4096)
+        n = syscall(79, data(buf), 4096)
+        if n <= 0: return "/"
+        str_from_bytes(buf[..n - 1))
+
+# a directory for temporary files (TMPDIR, else /tmp; on Windows, the user's temporary directory)
+temp_dir = () -> str:
+    when TARGET == "windows":
+        return __w32_temp_dir()
+    else:
+        if let t = env("TMPDIR"):
+            if len(t) > 0: return t
+        "/tmp"
+
 # ---------------- `sloppy test` support ----------------
 __tests_run = 0
 __test_t0 = 0.0

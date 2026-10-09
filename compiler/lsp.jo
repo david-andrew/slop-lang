@@ -238,7 +238,7 @@ lsp_fill = () -> bool:
         inpos = 0
     n = inbuf.len()
     inbuf.resize(n + 65536)
-    r = syscall(0, 0, data(inbuf) + n, 65536)
+    r = __read_fd(0, data(inbuf) + n, 65536)
     if r <= 0:
         inbuf.resize(n)
         in_eof = true
@@ -274,8 +274,23 @@ lsp_input_ready = () -> bool: lsp_wait_input(0)
 # input waiting, or arriving within ms milliseconds?
 lsp_wait_input = (ms: int) -> bool:
     if lsp_have_msg(): return true
-    fds = [0 | (1 << 32)]                   # struct pollfd: fd 0, events POLLIN
-    syscall(7, data(fds), 1, ms) > 0
+    when TARGET == "windows":
+        # (standard input is a pipe from the editor: look into it until there is something)
+        h = GetStdHandle(u32(0xFFFFFFF6))
+        avail: u32[] = [0]
+        until = time() + f64(ms) / 1000.0
+        loop true:
+            if PeekNamedPipe(h, null, 0, null, data(avail), null) == 0:
+                # (input that cannot be looked into, as under Wine: there is nothing until a read
+                # finds something; otherwise the editor is gone, and reading says so)
+                return GetLastError() != u32(50)
+            if avail[0] > 0: return true
+            if time() >= until: return false
+            Sleep(1)
+        return false
+    else:
+        fds = [0 | (1 << 32)]                   # struct pollfd: fd 0, events POLLIN
+        return syscall(7, data(fds), 1, ms) > 0
 
 lsp_read = () -> str?:
     loop true:
@@ -422,7 +437,8 @@ struct Doc:
 docs: Doc[]
 doc_by_uri: {str: int} = {}
 root_lib = ""
-empty_main = "/tmp/.sloppy-lsp-empty-main.jo"
+# (a program for checking library files alone: it uses nothing, and is not on disk)
+empty_main = "/.sloppy-lsp-empty-main.jo"
 
 uri_to_path = (uri: str) -> str:
     s = uri
@@ -437,12 +453,16 @@ uri_to_path = (uri: str) -> str:
             continue
         out.push(c)
         i += 1
-    ide_norm(str_from_bytes(out))
+    p = str_from_bytes(out)
+    # (file:///c%3A/x: c:/x)
+    if len(p) >= 3 and p[0] == '/' and p[2] == ':': p = p[1..]
+    ide_norm(os_path(p))
 
 path_to_uri = (path: str) -> str:
     hexd = "0123456789ABCDEF"
     out: u8[]
     loop b in "file://": out.push(b)
+    if not starts_with(path, "/"): out.push('/')
     loop c in path:
         if is_alnum(c) or c == '/' or c == '-' or c == '.' or c == '_' or c == '~':
             out.push(c)
@@ -495,70 +515,201 @@ struct RunOut:
 
 # check the program in a child process; its findings, as lines
 run_child = (main_path: str, doc_path: str, sentinel: bool, skips: str[], lower: bool, wide: bool) -> RunOut:
-    fds = [0]
-    if syscall(293, data(fds), 0x80000) != 0: return RunOut([], false)          # pipe2(O_CLOEXEC)
-    rfd = fds[0] & 0xFFFFFFFF
-    wfd = fds[0] >> 32
-    pid = syscall(57)                                   # fork
-    if pid < 0: return RunOut([], false)
-    if pid == 0:
+    when TARGET == "windows":
+        return run_child_w32(main_path, doc_path, sentinel, skips, lower, wide)
+    else:
+        fds = [0]
+        if syscall(293, data(fds), 0x80000) != 0: return RunOut([], false)          # pipe2(O_CLOEXEC)
+        rfd = fds[0] & 0xFFFFFFFF
+        wfd = fds[0] >> 32
+        pid = syscall(57)                                   # fork
+        if pid < 0: return RunOut([], false)
+        if pid == 0:
+            syscall(3, rfd)
+            check_child(main_path, doc_path, sentinel, skips, lower, wide, wfd)
+        syscall(3, wfd)
+        out: u8[]
+        deadline = time() + 20.0
+        killed = false
+        loop true:
+            pfd = [rfd | (1 << 32)]
+            left = int((deadline - time()) * 1000.0)
+            if left <= 0:
+                syscall(62, pid, 9)                         # kill
+                killed = true
+                break
+            pr = syscall(7, data(pfd), 1, left)
+            if pr < 0: continue
+            if pr == 0: continue
+            n = out.len()
+            out.resize(n + 65536)
+            r = syscall(0, rfd, data(out) + n, 65536)
+            if r <= 0:
+                out.resize(n)
+                break
+            out.resize(n + r)
         syscall(3, rfd)
-        ide_on = true
-        ide_fd = wfd
-        ide_doc = doc_path
-        ide_wide = wide
-        if sentinel: ide_sentinel = intern("__sloppy_complete__")
-        # (file numbers are the same in every check of the same texts)
-        loop s in skips:
-            fp = split_pos(s)
-            ide_skip[mkpos(fp.0, fp.1)] = true
-        test_mode = true
-        if lower:
-            # (lowering finds some errors too: in shader code, data races)
-            lower_only = true
-            compile(main_path, "")
-        else:
-            scan_build_block(main_path)
-            target_wasm = build_target == "wasm"
-            if target_wasm: ptr_size = 4
-            init_types()
-            check_program(main_path)
-        ide_finish()
-        exit(0)
-    syscall(3, wfd)
-    out: u8[]
-    deadline = time() + 20.0
-    killed = false
-    loop true:
-        pfd = [rfd | (1 << 32)]
-        left = int((deadline - time()) * 1000.0)
-        if left <= 0:
-            syscall(62, pid, 9)                         # kill
-            killed = true
-            break
-        pr = syscall(7, data(pfd), 1, left)
-        if pr < 0: continue
-        if pr == 0: continue
-        n = out.len()
-        out.resize(n + 65536)
-        r = syscall(0, rfd, data(out) + n, 65536)
-        if r <= 0:
-            out.resize(n)
-            break
-        out.resize(n + r)
-    syscall(3, rfd)
-    status = [0]
-    syscall(61, pid, data(status), 0, 0)                # wait4
-    if killed:
-        lsp_log("checking {doc_path} took too long")
+        status = [0]
+        syscall(61, pid, data(status), 0, 0)                # wait4
+        if killed:
+            lsp_log("checking {doc_path} took too long")
+            return RunOut([], false)
+        st = status[0] & 0xFFFF
+        text = str_from_bytes(out)
+        ok = st == 0
+        if not ok:
+            sig = st & 127
+            lsp_log("the checker failed on {doc_path} (status {st}, signal {sig})")
+        RunOut(split(text, "\n"), ok)
+
+# (the child: check, write the findings to fd, and end)
+check_child = (main_path: str, doc_path: str, sentinel: bool, skips: str[], lower: bool, wide: bool, fd: int):
+    ide_on = true
+    ide_fd = fd
+    ide_doc = doc_path
+    ide_wide = wide
+    if sentinel: ide_sentinel = intern("__sloppy_complete__")
+    # (file numbers are the same in every check of the same texts)
+    loop s in skips:
+        fp = split_pos(s)
+        ide_skip[mkpos(fp.0, fp.1)] = true
+    test_mode = true
+    if lower:
+        # (lowering finds some errors too: in shader code, data races)
+        lower_only = true
+        compile(main_path, "")
+    else:
+        scan_build_block(main_path)
+        target_wasm = build_target == "wasm"
+        if target_wasm: ptr_size = 4
+        init_types()
+        check_program(main_path)
+    ide_finish()
+    exit(0)
+
+# Windows has no fork: the child is this program again (sloppy lsp --child), told what to check,
+# and the editor's texts, on its standard input; each string as "<length>:<bytes>"
+run_child_w32 = (main_path: str, doc_path: str, sentinel: bool, skips: str[], lower: bool, wide: bool) -> RunOut:
+    when TARGET == "windows":
+        req: str[]
+        put = (s: str):
+            req.push("{len(s)}:")
+            req.push(s)
+        put(main_path)
+        put(doc_path)
+        put("{int(sentinel)}{int(lower)}{int(wide)}")
+        put("{skips.len()}")
+        loop s in skips: put(s)
+        put("{ide_texts.len()}")
+        loop p, t in ide_texts:
+            put(p)
+            put(t)
+        msg = join(req, "")
+        # pipes for the child's input and output; this side's ends are not inherited
+        sa = fill(0, 3)
+        sa[0] = 24
+        sa[2] = 1                                       # bInheritHandle
+        in_r: *u8[] = [null]
+        in_w: *u8[] = [null]
+        out_r: *u8[] = [null]
+        out_w: *u8[] = [null]
+        if CreatePipe(data(in_r), data(in_w), data(sa) as *u8, u32(1 << 16)) == 0: return RunOut([], false)
+        if CreatePipe(data(out_r), data(out_w), data(sa) as *u8, u32(1 << 16)) == 0:
+            CloseHandle(in_r[0])
+            CloseHandle(in_w[0])
+            return RunOut([], false)
+        SetHandleInformation(in_w[0], 1, 0)
+        SetHandleInformation(out_r[0], 1, 0)
+        si = fill(0, 13)                                # STARTUPINFOW
+        si[0] = 104
+        (data(si) as *u32)[15] = u32(0x100)             # STARTF_USESTDHANDLES
+        si[10] = in_r[0] as int
+        si[11] = out_w[0] as int
+        si[12] = GetStdHandle(u32(0xFFFFFFF4)) as int
+        pi = fill(0, 3)
+        exe = exe_path()
+        wcmd = __wide("\"{exe}\" lsp --child")
+        wexe = __wide(exe)
+        started = CreateProcessW(data(wexe), data(wcmd), null, null, 1, u32(0x08000000), null, null, data(si) as *u8, data(pi) as *u8) != 0   # CREATE_NO_WINDOW
+        CloseHandle(in_r[0])
+        CloseHandle(out_w[0])
+        if not started:
+            CloseHandle(in_w[0])
+            CloseHandle(out_r[0])
+            lsp_log("could not start the checker ({exe})")
+            return RunOut([], false)
+        proc = pi[0] as *u8
+        CloseHandle(pi[1] as *u8)
+        w: u32[] = [0]
+        off = 0
+        loop off < len(msg):
+            if WriteFile(in_w[0], data(msg) + off, u32(min(len(msg) - off, 1 << 20)), data(w), null) == 0: break
+            off += int(w[0])
+        CloseHandle(in_w[0])
+        out: u8[]
+        deadline = time() + 20.0
+        killed = false
+        avail: u32[] = [0]
+        loop true:
+            # (fails once the child has ended and everything it wrote is read)
+            if PeekNamedPipe(out_r[0], null, 0, null, data(avail), null) == 0: break
+            if avail[0] == 0:
+                if time() > deadline:
+                    TerminateProcess(proc, 1)
+                    killed = true
+                    break
+                WaitForSingleObject(proc, 5)
+                continue
+            n = out.len()
+            out.resize(n + int(avail[0]))
+            if ReadFile(out_r[0], data(out) + n, avail[0], data(w), null) == 0:
+                out.resize(n)
+                break
+            out.resize(n + int(w[0]))
+        CloseHandle(out_r[0])
+        WaitForSingleObject(proc, u32(0xFFFFFFFF))
+        code: u32[] = [0]
+        GetExitCodeProcess(proc, data(code))
+        CloseHandle(proc)
+        if killed:
+            lsp_log("checking {doc_path} took too long")
+            return RunOut([], false)
+        ok = code[0] == 0
+        if not ok: lsp_log("the checker failed on {doc_path} (exit code {code[0]})")
+        return RunOut(split(str_from_bytes(out), "\n"), ok)
+    else:
         return RunOut([], false)
-    st = status[0] & 0xFFFF
-    text = str_from_bytes(out)
-    ok = st == 0
-    if not ok:
-        sig = st & 127
-        lsp_log("the checker failed on {doc_path} (status {st}, signal {sig})")
-    RunOut(split(text, "\n"), ok)
+
+# sloppy lsp --child: the check run_child_w32 asks for
+child_main = ():
+    buf: u8[]
+    loop true:
+        n = buf.len()
+        buf.resize(n + 65536)
+        r = __read_fd(0, data(buf) + n, 65536)
+        if r <= 0:
+            buf.resize(n)
+            break
+        buf.resize(n + r)
+    # the strings, in order
+    xs: str[]
+    at = 0
+    loop at < buf.len():
+        c = at
+        loop c < buf.len() and buf[c] != ':': c += 1
+        k = to_int(str_from_bytes(buf[at..c))) ?? 0
+        xs.push(str_from_bytes(buf[c + 1..min(c + 1 + k, buf.len()))))
+        at = c + 1 + k
+    loop xs.len() < 5: xs.push("")
+    main_path = xs[0]
+    doc_path = xs[1]
+    flags = xs[2] + "000"
+    ns = to_int(xs[3]) ?? 0
+    skips = xs[4..4 + ns)
+    at = 4 + ns
+    nt = to_int(xs[at]) ?? 0
+    loop i in [0..nt): ide_texts[xs[at + 1 + 2 * i]] = xs[at + 2 + 2 * i]
+    check_child(main_path, doc_path, flags[0] == '1', skips, flags[1] == '1', flags[2] == '1', 1)
 
 # parse a child's lines into r (files are renumbered into r.paths)
 take_lines = (r: mut Result, lines_: str[]):
@@ -949,7 +1100,7 @@ use_target = (d: int, off: int) -> str:
         e = find_byte(line, line[q], q + 1)
         if e < 0: return ""
         rel = line[q + 1..e)
-        if starts_with(rel, "/"): return ide_norm(rel)
+        if is_abs_path(rel): return ide_norm(rel)
         return ide_norm("{dir}/{rel}")
     nm = trim(line[find_byte(line, ' ') + 1..])
     k = find(nm, " as ")
@@ -1444,10 +1595,13 @@ lsp_main = ():
     root_lib = ide_norm(lib_dir)
     ide_texts[empty_main] = ""
     a = args()
+    if a.len() >= 3 and a[2] == "--child":
+        child_main()
+        return
     if a.len() >= 4 and a[2] == "--dump":
         # (debugging: what a check of a file reports)
-        path = ide_norm(a[3])
-        if not starts_with(path, "/"): path = ide_norm((env("PWD") ?? ".") + "/" + a[3])
+        path = ide_norm(os_path(a[3]))
+        if not is_abs_path(path): path = ide_norm(os_path(cwd()) + "/" + path)
         main_path = path
         if starts_with(path, root_lib + "/"): main_path = empty_main
         sk: str[]

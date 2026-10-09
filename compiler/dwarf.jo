@@ -35,13 +35,10 @@ cstr = (out: mut u8[], s: str):
 # the .debug_abbrev, .debug_info and .debug_line sections for code at text_addr
 dwarf_sections = (text_addr: int, text_len: int, main_path: str, version: str) -> (str, u8[])[]:
     if line_rows.len() == 0: return []
-    cwdb = fill(u8(0), 4096)
-    n = syscall(79, data(cwdb), 4096)
-    cwd = "/"
-    if n > 0: cwd = str_from_bytes(cwdb[..n - 1))
+    dir = os_path(cwd())
     abs = (p: str) -> str:
-        if starts_with(p, "/"): return p
-        "{cwd}/{p}"
+        if is_abs_path(p): return p
+        "{dir}/{p}"
     # files, numbered from 1
     fidx = fill(0, files.len())
     fnames: str[]
@@ -139,7 +136,7 @@ dwarf_sections = (text_addr: int, text_len: int, main_path: str, version: str) -
     cstr(die, "sloppy {version}")   # DW_AT_producer
     put16(die, 0x0002)              # DW_AT_language: DW_LANG_C (the closest a debugger knows)
     cstr(die, abs(main_path))       # DW_AT_name
-    cstr(die, cwd)                  # DW_AT_comp_dir
+    cstr(die, dir)                  # DW_AT_comp_dir
     put64(die, text_addr)           # DW_AT_low_pc
     put64(die, text_len)            # DW_AT_high_pc (a length)
     put32(die, 0)                   # DW_AT_stmt_list

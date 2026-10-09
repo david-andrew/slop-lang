@@ -1420,7 +1420,6 @@ check_intrinsic = (n: int, id: IN, args: int[], expected: int) -> int:
         else if types[t].kind == .array: r = mk_ptr(int(types[t].elem))
         else: fatal(nodes[n].pos, "data() needs an array or string")
     else if id == .syscall:
-        if target_windows: fatal(nodes[n].pos, "syscall() is Linux's: a Windows program calls the system's DLL functions (lib/core/windows.jo)")
         if nargs < 1 or nargs > 7: fatal(nodes[n].pos, "syscall takes 1 to 7 arguments")
         loop i in [0..nargs):
             t = arg_type(args, i, 0)
@@ -1490,7 +1489,7 @@ check_intrinsic = (n: int, id: IN, args: int[], expected: int) -> int:
         if nodes[a].kind != .str_lit or nodes[a].aux != 0: fatal(nodes[n].pos, "embed() needs a string literal path")
         rel = name_of(int(nodes[a].sval))
         path = rel
-        if not starts_with(rel, "/"): path = "{files[pos_file(nodes[n].pos)].dir}/{rel}"
+        if not is_abs_path(rel): path = "{files[pos_file(nodes[n].pos)].dir}/{rel}"
         d = read_file(path)
         if d == none: fatal(nodes[n].pos, "embed: cannot read '{path}'")
         nodes[n].sval = i32(intern(d!))

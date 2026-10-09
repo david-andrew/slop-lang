@@ -38,8 +38,8 @@ usage = ():
 
 find_lib_dir = () -> str:
     if let e = env("SLOPPY_LIB"):
-        if len(e) > 0: return e
-    exe = exe_path()
+        if len(e) > 0: return os_path(e)
+    exe = os_path(exe_path())
     d = exe
     s = rfind(d, "/")
     if s >= 0: d = d[..s)
@@ -53,13 +53,22 @@ find_lib_dir = () -> str:
 # sloppy update [version]: install the latest release (or that one) over this installation, with
 # the install script as new users get it; it does nothing when this is already the latest
 self_update = (version: str):
-    exe = exe_path()
+    exe = os_path(exe_path())
     d = exe
     loop _ in [0..2):
         s = rfind(d, "/")
         if s >= 0: d = d[..s)
     if file_exists("{d}/compiler/main.jo"):
         eprint("sloppy: {exe} was built from the source in {d}; to update it: cd {d} && git pull && tools/bootstrap.sh")
+        exit(1)
+    when TARGET == "windows":
+        if not file_exists("{d}/lib/core/rt.jo"):
+            eprint("sloppy: {exe} is not in an installation (bin\\sloppy.exe with lib\\ beside it); to install the latest release, in PowerShell: irm {SLOPPY_INSTALL_URL}.ps1 | iex")
+            exit(1)
+        # (the install script, with what it is to do in environment variables: iex takes no arguments)
+        ps = "$env:SLOPPY_INSTALL='{d}'; $env:SLOPPY_CURRENT='{SLOPPY_VERSION}'; $env:SLOPPY_WANT='{version}'; irm {SLOPPY_INSTALL_URL}.ps1 | iex"
+        exec("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps])
+        eprint("sloppy: could not run PowerShell")
         exit(1)
     if not file_exists("{d}/lib/core/rt.jo"):
         eprint("sloppy: {exe} is not in an installation (bin/sloppy with lib/ beside it); to install the latest release: curl -fsSL {SLOPPY_INSTALL_URL} | bash")
@@ -205,7 +214,11 @@ compile = (path: str, out0: str) -> str:
     if lower_only: opt_release = false
     tgt = build_target
     if len(cli_target) > 0: tgt = cli_target
-    if tgt == "" or tgt == "native": tgt = "linux"
+    if tgt == "" or tgt == "native":
+        # (the system this compiler runs on)
+        tgt = "linux"
+        when TARGET == "windows":
+            tgt = "windows"
     if tgt != "linux" and tgt != "windows" and tgt != "wasm":
         eprint("sloppy: unknown target '{tgt}' (native, linux, windows or wasm)")
         exit(2)
@@ -338,6 +351,12 @@ compile = (path: str, out0: str) -> str:
     if not ok: return ""
     out
 
+open_in_browser = (path: str) -> bool:
+    when TARGET == "windows":
+        return spawn_detached("C:\\Windows\\System32\\cmd.exe", ["cmd", "/c", "start", "", path])
+    else:
+        return spawn_detached("/usr/bin/xdg-open", ["xdg-open", path])
+
 main = ():
     a = args()
     if a.len() >= 2 and (a[1] == "--version" or a[1] == "version"):
@@ -351,7 +370,11 @@ main = ():
     lib_dir = find_lib_dir()
     # no file: the interactive prompt
     if a.len() < 2 or a[1] == "repl":
-        repl_main()
+        when TARGET == "windows":
+            eprint("sloppy: the interactive prompt is not on Windows yet (run a file: sloppy file.jo)")
+            exit(2)
+        else:
+            repl_main()
         return
     if a[1] == "build":
         if a.len() < 3: usage()
@@ -370,7 +393,7 @@ main = ():
             else if x == "--ir": dump = true
             else if x == "--release": cli_release = true
             else if x == "--time": timing = true
-            else: path = x
+            else: path = os_path(x)
             i += 1
         if len(path) == 0: usage()
         if len(out) == 0:
@@ -386,11 +409,12 @@ main = ():
         # type check only
         if a.len() < 3: usage()
         if let s = env("SLOPPY_STOP"): stop_after = s
-        scan_build_block(a[2])
+        path = os_path(a[2])
+        scan_build_block(path)
         target_wasm = build_target == "wasm"
         if target_wasm: ptr_size = 4
         init_types()
-        check_program(a[2])
+        check_program(path)
         return
     first = 1
     # options for running come before the file (what follows it goes to the program)
@@ -411,26 +435,31 @@ main = ():
         cli_target = "native"
         wargs: str[]
         loop i in [first + 2..a.len()): wargs.push(a[i])
-        watch_main(a[first + 1], wargs)
+        when TARGET == "windows":
+            eprint("sloppy: sloppy watch is not on Windows yet (run the file: sloppy file.jo)")
+            exit(2)
+        else:
+            watch_main(os_path(a[first + 1]), wargs)
         return
     if a[first] == "test":
         if a.len() < first + 2: usage()
         test_mode = true
         cli_target = "native"         # tests run natively even for web games
         first += 1
-    path = a[first]
-    mkdir("/tmp/sloppy-cache")
+    path = os_path(a[first])
+    cache = os_path(temp_dir()) + "/sloppy-cache"
+    mkdir(cache)
     base = path
     s = rfind(base, "/")
     if s >= 0: base = base[s + 1..]
     base = strip_ext(base)
     if test_mode: base = base + ".test"
-    built = compile(path, "/tmp/sloppy-cache/{base}.bin")
+    built = compile(path, "{cache}/{base}.bin")
     if len(built) == 0: exit(1)
     if target_wasm:
         # open the page in the default browser, detached (the browser's output does not
         # reach this terminal, and sloppy returns at once)
-        if spawn_detached("/usr/bin/xdg-open", ["xdg-open", built]): eprint("sloppy: opened {built} in the browser")
+        if open_in_browser(built): eprint("sloppy: opened {built} in the browser")
         else: eprint("sloppy: built {built}; open it in a browser")
         exit(0)
     run_args = [built]

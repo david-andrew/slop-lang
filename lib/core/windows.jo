@@ -96,6 +96,20 @@ when TARGET == "windows":
     extern WaitForSingleObject = (h: *u8, ms: u32) -> u32
     @lib("kernel32.dll")
     extern GetExitCodeProcess = (h: *u8, code: *u32) -> i32
+    @lib("kernel32.dll")
+    extern TerminateProcess = (h: *u8, code: u32) -> i32
+    @lib("kernel32.dll")
+    extern CreatePipe = (r: **u8, w: **u8, sec: *u8, size: u32) -> i32
+    @lib("kernel32.dll")
+    extern SetHandleInformation = (h: *u8, mask: u32, flags: u32) -> i32
+    @lib("kernel32.dll")
+    extern PeekNamedPipe = (h: *u8, buf: *u8, size: u32, got: *u32, avail: *u32, left: *u32) -> i32
+    @lib("kernel32.dll")
+    extern GetLastError = () -> u32
+    @lib("kernel32.dll")
+    extern GetCurrentDirectoryW = (n: u32, buf: *u16) -> u32
+    @lib("kernel32.dll")
+    extern GetTempPathW = (n: u32, buf: *u16) -> u32
 
     # ---------------- text: UTF-8 <-> UTF-16 ----------------
     # a NUL-terminated UTF-16 copy of s (what the W functions take)
@@ -172,6 +186,16 @@ when TARGET == "windows":
         loop off < n:
             if WriteFile(h, p + off, u32(min(n - off, 1 << 30)), data(w), null) == 0 or w[0] == 0: return
             off += int(w[0])
+
+    __w32_in: *u8 = null
+
+    __w32_read = (fd: int, p: *u8, n: int) -> int:
+        if fd != 0: return -1
+        if __w32_in == null: __w32_in = GetStdHandle(u32(0xFFFFFFF6))
+        r: u32[] = [0]
+        # (a pipe whose writer is gone: the end)
+        if ReadFile(__w32_in, p, u32(min(n, 1 << 30)), data(r), null) == 0: return 0
+        int(r[0])
 
     __w32_open_file = (path: str, write: bool) -> *u8:
         wp = __wide(path)
@@ -256,6 +280,18 @@ when TARGET == "windows":
     __w32_exe_path = () -> str:
         buf = fill(u16(0), 4096)
         n = int(GetModuleFileNameW(null, data(buf), 4096))
+        __narrow(data(buf), n)
+
+    __w32_cwd = () -> str:
+        buf = fill(u16(0), 4096)
+        n = int(GetCurrentDirectoryW(4096, data(buf)))
+        __narrow(data(buf), n)
+
+    # (without the backslash it ends with)
+    __w32_temp_dir = () -> str:
+        buf = fill(u16(0), 4096)
+        n = int(GetTempPathW(4096, data(buf)))
+        if n > 1 and buf[n - 1] == u16('\\'): n -= 1
         __narrow(data(buf), n)
 
     __w32_qpf = 0

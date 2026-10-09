@@ -467,7 +467,7 @@ register_decls = (m: int, decls: int[]):
             if nodes[d].aux2 == 1:
                 # use 'file.jo': relative to the importing file
                 path = rel
-                if not starts_with(rel, "/"): path = "{modules[m].dir}/{rel}"
+                if not is_abs_path(rel): path = "{modules[m].dir}/{rel}"
                 if len(modules[m].dir) == 0: path = rel
                 if not file_exists(path): fatal(nodes[d].pos, "cannot find '{rel}' (looked for {path})")
             else:

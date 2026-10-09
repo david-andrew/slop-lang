@@ -1690,6 +1690,8 @@ gen_intrinsic = (e: int) -> Val:
         endc()
         return V(r, false)
     if id == .syscall:
+        # (an error only where it is used: the compiler has Linux's in code Windows programs leave out)
+        if target_windows: fatal(nodes[e].pos, "syscall() is Linux's: a Windows program calls the system's DLL functions (lib/core/windows.jo)")
         vs: int[]
         loop a in args: vs.push(gen_expr(a).v)
         start = ir.args.len()

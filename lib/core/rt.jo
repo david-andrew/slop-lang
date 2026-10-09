@@ -277,6 +277,15 @@ __write_fd = (fd: int, p: *u8, n: int):
             if r <= 0: return
             off += r
 
+# read up to n bytes (0: the end, < 0: an error)
+__read_fd = (fd: int, p: *u8, n: int) -> int:
+    when TARGET == "wasm":
+        return -1
+    else when TARGET == "windows":
+        return __w32_read(fd, p, n)
+    else:
+        syscall(0, fd, p, n)
+
 __write_err = (s: str): __write_fd(2, data(s), len(s))
 
 __exit = (code: int):
