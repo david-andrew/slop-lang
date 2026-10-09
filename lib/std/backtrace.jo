@@ -7,22 +7,78 @@ __in_backtrace = false
 
 __backtrace = ():
     when TARGET != "wasm":
-        if __in_backtrace: return
-        __in_backtrace = true
         jb = __alloc(64)
         __setjmp(jb)
-        fp = (jb as *int)[1]
+        __backtrace_from((jb as *int)[1], 0)
+
+# the frames from frame pointer fp (pc: where the program was, when it is not in a call; 0:
+# none). Runs of the same call (deep recursion) are told once, with a count.
+__backtrace_from = (fp0: int, pc: int):
+    when TARGET != "wasm":
+        if __in_backtrace: return
+        __in_backtrace = true
         rets: int[]
-        loop rets.len() < 200 and fp != 0 and fp & 7 == 0:
+        counts: int[]
+        if pc != 0:
+            rets.push(pc + 1)
+            counts.push(1)
+        fp = fp0
+        n = 0
+        loop n < 1000000 and fp != 0 and fp & 7 == 0:
             ret = (fp as *int)[1]
             next = (fp as *int)[0]
             if ret == 0: break
-            rets.push(ret)
+            if rets.len() > 0 and rets[rets.len() - 1] == ret: counts[counts.len() - 1] += 1
+            else if rets.len() < 400:
+                rets.push(ret)
+                counts.push(1)
+            n += 1
             # (frames of callers are above; another stack -- a thread's parent -- is not followed)
             if next <= fp or next - fp > (1 << 23): break
             fp = next
-        if let exe = read_bytes("/proc/self/exe"): __backtrace_print(rets, exe)
+        if let exe = read_bytes("/proc/self/exe"): __backtrace_print(rets, counts, exe)
         __in_backtrace = false
+
+# ---------------- crashes ----------------
+# a segmentation fault (a stack overflow, or a bad pointer in code using raw pointers or C) or
+# another fatal signal is told like a panic, with a backtrace. The handler runs on a stack of
+# its own, since a stack overflow leaves none.
+# (the compiler puts a call of __crash_install first in a native program)
+when TARGET != "wasm":
+    __crash_install = () -> bool:
+        if env("SLOPPY_NO_CRASH_HANDLER") != none: return false
+        size = 1 << 16
+        alt = __os_pages(size)
+        st = fill(0, 3)
+        st[0] = alt as int
+        st[2] = size
+        syscall(131, data(st), 0)                          # sigaltstack
+        h: cfn(i32, *u8, *u8) = __crash
+        act = fill(0, 4)
+        act[0] = h as int
+        act[1] = 4 | 0x08000000 | 0x04000000 | 0x80000000   # SA_SIGINFO | SA_ONSTACK | SA_RESTORER | SA_RESETHAND
+        act[2] = h as int                                  # (never returned to)
+        loop sig in [4, 7, 8, 11]: syscall(13, sig, data(act), 0, 8)    # rt_sigaction
+        true
+
+    @cabi
+    __crash = (sig: i32, info: *u8, uc: *u8):
+        # the registers when it happened (ucontext_t: uc_mcontext.gregs at 40)
+        g = (uc + 40) as *int
+        rbp = g[10]
+        rsp = g[15]
+        rip = g[16]
+        addr = (info + 16) as *int
+        what = "crashed (signal {sig})"
+        if sig == 11 or sig == 7:
+            a = addr[0]
+            if a < rsp + 4096 and a > rsp - (1 << 20): what = "stack overflow (a function calls itself without end, or too deeply?)"
+            else: what = "crashed: memory access at 0x{a:x} (a bad pointer, in code using raw pointers or C?)"
+        else if sig == 8: what = "arithmetic error (division of the smallest integer by -1?)"
+        else if sig == 4: what = "illegal instruction"
+        __write_err("panic: {what}\n")
+        __backtrace_from(rbp, rip)
+        __exit(101)
 
 __u16_at = (b: u8[], o: int) -> int: int(b[o]) | (int(b[o + 1]) << 8)
 __u32_at = (b: u8[], o: int) -> int: __u16_at(b, o) | (__u16_at(b, o + 2) << 16)
@@ -33,7 +89,7 @@ __cstr_at = (b: u8[], o: int) -> str:
     loop e < b.len() and b[e] != 0: e += 1
     str_from_bytes(b[o..e))
 
-__backtrace_print = (rets: int[], exe: u8[]):
+__backtrace_print = (rets: int[], counts: int[], exe: u8[]):
     if exe.len() < 64 or exe[0] != 0x7F: return
     shoff = __u64_at(exe, 0x28)
     shnum = __u16_at(exe, 0x3C)
@@ -91,7 +147,7 @@ __backtrace_print = (rets: int[], exe: u8[]):
         addrs[k] = a
     shown = 0
     hidden = 0
-    loop ret in rets:
+    loop ri in 0.. and ret in rets:
         # the function the return address is in
         fname = ""
         s = sym_off
@@ -121,9 +177,11 @@ __backtrace_print = (rets: int[], exe: u8[]):
         how = "    called from "
         if shown == 0: how = "    in "
         if shown >= 24:
-            __write_err("    ... and {rets.len() - shown - hidden} more\n")
+            __write_err("    ... and more\n")
             return
-        __write_err("{how}{__fn_display(fname)}{where}\n")
+        times = ""
+        if counts[ri] > 1: times = " ({counts[ri]} times)"
+        __write_err("{how}{__fn_display(fname)}{where}{times}\n")
         shown += 1
 
 # (the compiler's names: init_game is the top level of game; lambda a function literal)

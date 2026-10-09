@@ -1,0 +1,6 @@
+# a stack overflow is told like a panic, the recursion folded into one line
+f = (n: int) -> int:
+    if n == 0: return 0
+    1 + f(n - 1)
+print("start")
+print(f(100000000))

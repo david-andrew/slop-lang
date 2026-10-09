@@ -1,0 +1,5 @@
+start
+panic: stack overflow (a function calls itself without end, or too deeply?)
+    in f
+    called from f (recursion.jo:4) (N times)
+    called from the top level of recursion (recursion.jo:6)

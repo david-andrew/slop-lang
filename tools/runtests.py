@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run Sloppy test programs and compare output with .out files.
 usage: runtests.py [--compiler sloppy0|sloppy|path] [--release] [--target native|wasm] [pattern]"""
-import os, subprocess, sys, glob, time
+import os, re, subprocess, sys, glob, time
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 args = sys.argv[1:]
@@ -79,7 +79,8 @@ if compiler != "sloppy0" and target == "native" and not release:
         exe = f"/tmp/sloppy-tests/bt_{os.path.basename(t)[:-3]}"
         subprocess.run([sloppy, "build", t, "-o", exe], capture_output=True, env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")))
         r = subprocess.run([exe], capture_output=True, text=True, timeout=20)
-        out = r.stdout + r.stderr
+        # (how deep a recursion gets before the stack runs out depends on the machine)
+        out = re.sub(r"\(\d+ times\)", "(N times)", r.stdout + r.stderr)
         exp_path = t[:-3] + ".out"
         if not os.path.exists(exp_path):
             print(f"NEW  {name}:\n{out}")

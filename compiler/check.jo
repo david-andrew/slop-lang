@@ -1858,6 +1858,8 @@ check_program = (main_path: str):
     loop i < modules.len():
         register_decls(i, modules[i].decls)
         i += 1
+    # (native programs report crashes as they do panics: lib/std/backtrace.jo)
+    if not target_wasm and prelude.get(intern("__crash_install")) != none: modules[mainm].inits.insert(0, synth_call("__crash_install", [], 0))
     # programs with update()/draw() run the game loop after main()
     has_upd = modules[mainm].names.get(intern("update")) != none
     has_drw = modules[mainm].names.get(intern("draw")) != none

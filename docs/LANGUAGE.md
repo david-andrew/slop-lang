@@ -314,8 +314,9 @@ panic: hit an enemy that was already defeated
     called from update (game.jo:31)
 ```
 
-(Release builds inline small functions: their frames show as the line of the call. In a web
-page the browser's console has the JavaScript stack.)
+A stack overflow (a function that calls itself without end) and a crash in code using raw
+pointers or C are reported the same way. (Release builds inline small functions: their frames
+show as the line of the call. In a web page the browser's console has the JavaScript stack.)
 
 **Debuggers and profilers.** Executables written by `sloppy build` carry DWARF line tables and
 function names, so gdb works with the `.jo` source (`break game.jo:31`, `bt`, `next`, `list`)
