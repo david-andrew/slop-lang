@@ -621,6 +621,11 @@ fs = (i: Out, u: Params) -> vec4: i.color
 prog = make_shader(shader(vs, fs))  
 m = mesh(vertices)  
 draw(prog, m, Params(mvp))  
+  
+Uniform fields are numbers, vectors, mat4 and Texture, or fixed-size arrays of them  
+(`bones: mat4[64]`, `lights: vec4[8]`). Shader code can use fixed-size arrays, `loop` over  
+them, and sample(), sample_lod(), texel(), texture_size(), discard() (fragment) and  
+vertex_id(), instance_id() (vertex).  
 
 ```gdscript
 struct ShaderSource    # produced by the compiler from shader(vs, fs)

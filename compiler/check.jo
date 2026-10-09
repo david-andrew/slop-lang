@@ -486,18 +486,22 @@ resolve_type = (tn: int) -> int:
             loop i in [0..nkids(tn)): targs.push(resolve_type(kid(tn, i)))
             return resolve_alias(int(syms[s].ref), targs, nodes[tn].pos)
         if sk == .type_:
-            if nodes[tn].nlist > 0: fatal(nodes[tn].pos, "type '{name_of(nm)}' takes no type arguments")
+            if nodes[tn].nlist > 0:
+                if fixed_size_arg(tn): return mk_fixed_checked(int(syms[s].ref), fixed_size(kid(tn, 0)), nodes[tn].pos)
+                fatal(nodes[tn].pos, "type '{name_of(nm)}' takes no type arguments")
             return int(syms[s].ref)
         if sk == .struct_ or sk == .enum_:
             d = int(syms[s].ref)
             ntp = nkids2(d)
+            if ntp == 0 and fixed_size_arg(tn):
+                return mk_fixed_checked(get_struct_inst(d, []), fixed_size(kid(tn, 0)), nodes[tn].pos)
             if nkids(tn) != ntp: fatal(nodes[tn].pos, "type '{name_of(nm)}' expects {ntp} type argument(s), got {nkids(tn)}")
             targs: int[]
             loop i in [0..ntp): targs.push(resolve_type(kid(tn, i)))
             return get_struct_inst(d, targs)
         fatal(nodes[tn].pos, "'{name_of(nm)}' is not a type")
     if k == .tarray:
-        if nodes[tn].b != 0: fatal(nodes[tn].pos, "fixed-size arrays are not supported yet")
+        if nodes[tn].b != 0: return mk_fixed_checked(resolve_type(int(nodes[tn].a)), fixed_size(int(nodes[tn].b)), nodes[tn].pos)
         if nodes[tn].aux >= 2: return nd_of(resolve_type(int(nodes[tn].a)), nodes[tn].pos)
         if has_flag(tn, NF_SOA):
             et = resolve_type(int(nodes[tn].a))
@@ -532,6 +536,31 @@ resolve_type = (tn: int) -> int:
         return mk_fn(ps, ret, mm)
     fatal(nodes[tn].pos, "invalid type")
     0
+
+# T[N] written as a type name with one argument (the parser cannot tell `int[N]` from a generic
+# type's argument): the argument is a constant's name
+fixed_size_arg = (tn: int) -> bool:
+    if nkids(tn) != 1: return false
+    a = kid(tn, 0)
+    if nodes[a].kind != .tname or nodes[a].nlist > 0 or nodes[a].sval != 0: return false
+    s = lookup(int(nodes[a].name))
+    s != 0 and syms[s].kind == .const_
+
+# the size of a fixed-size array type: a number or a compile-time constant
+fixed_size = (n: int) -> int:
+    v = 0
+    if nodes[n].kind == .tname:
+        e = mk(.ident, nodes[n].pos)
+        nodes[e].name = nodes[n].name
+        v = ceval(e).i
+    else: v = ceval(n).i
+    if v < 1: fatal(nodes[n].pos, "the size of a fixed-size array must be at least 1 (found {v})")
+    if v > (1 << 28): fatal(nodes[n].pos, "fixed-size array too large ({v} elements; use T[] for big arrays)")
+    v
+
+mk_fixed_checked = (e: int, n: int, pos: int) -> int:
+    if tkind(e) == .void_: fatal(pos, "an array of void")
+    mk_fixed(e, n)
 
 # T[,], T[,,] ...: n-dimensional arrays (lib/std/nd.jo)
 nd_of = (t: int, pos: int) -> int:
@@ -570,6 +599,7 @@ subst = (t0: int, targs: int[]) -> int:
         return t
     if k == .var: return t
     if k == .array: return mk_array(subst(int(types[t].elem), targs))
+    if k == .fixed: return mk_fixed(subst(int(types[t].elem), targs), fixed_len(t))
     if k == .ptr: return mk_ptr(subst(int(types[t].elem), targs))
     if k == .opt: return mk_opt(subst(int(types[t].elem), targs))
     if k == .fn_ or k == .tuple or k == .cfn:
@@ -1142,9 +1172,9 @@ check_for = (s: int):
             l = new_local(n1, T_INT, pos)
             nodes[s].sym = i32(l)
             nodes[s].aux = 4
-        else if k == .array or k == .str_:
+        else if k == .array or k == .str_ or k == .fixed:
             et = T_U8
-            if k == .array: et = int(types[t].elem)
+            if k == .array or k == .fixed: et = int(types[t].elem)
             idxname = 0
             if nv == 2: idxname = n1
             idx = new_local(idxname, T_INT, pos)
@@ -1166,6 +1196,7 @@ check_for = (s: int):
                 nodes[ix].b = i32(mk_ident_local(idx, pos))
                 nodes[ix].type = i32(et)
                 add_flag(ix, NF_CHECKED)
+                if k == .fixed: add_flag(ix, NF_INBOUNDS)
                 locals[el].alias = i32(ix)
                 nodes[s].aux = 2
             else:
@@ -1714,6 +1745,9 @@ ceval = (e: int) -> CVal:
         else if op == .ge: r = int(a.i >= b.i)
         else if op == .plus: r = a.i + b.i
         else if op == .minus: r = a.i - b.i
+        else if op == .star: r = a.i * b.i
+        else if op == .slash and b.i != 0: r = a.i / b.i
+        else if op == .shl: r = a.i << b.i
         else: fatal(nodes[e].pos, "unsupported operator in compile-time expression")
         return CVal(false, r, "")
     fatal(nodes[e].pos, "expression is not a compile-time constant")

@@ -639,6 +639,18 @@ gen_place = (e: int, write: bool) -> Place:
             idx = gen_expr(int(nodes[e].b)).v
             bounds_check(arr, idx, nodes[e].pos)
             return Place(true, e_bin(.add, VI, e_addi(arr, 24), idx))
+        if bk == .fixed:
+            base = gen_place(a, write)
+            ixn = int(nodes[e].b)
+            idx = gen_expr(ixn).v
+            n = fixed_len(bt)
+            # (a constant index was checked by the compiler)
+            if nodes[ixn].kind != .int_lit and not has_flag(e, NF_INBOUNDS):
+                iff(e_bin(.geu, VI, idx, e_iconst(n)))
+                e_call_nr(rt("__panic_bounds"), [idx, e_iconst(n), e_daddr(loc_data(nodes[e].pos))], -1)
+                endc()
+            esz = tsize(int(types[bt].elem))
+            return Place(true, e_bin(.add, VI, place_addr(base, bt), e_bin(.mul, VI, idx, e_iconst(esz))))
         if bk == .vec:
             base = gen_place(a, write)
             idx = gen_expr(int(nodes[e].b)).v
@@ -1911,6 +1923,27 @@ gen_conv = (e: int) -> Val:
                 if tsize(m) > 0: e_copy(e_addi(d, to_off), e_addi(src, fo), tsize(m))
             endc()
         return Val(d, true, s)
+    if cv == .fixed2arr:
+        # a new array holding copies of the elements
+        et = int(types[from].elem)
+        esz = tsize(et)
+        n = fixed_len(from)
+        src = place_addr(gen_place(a, false), from)
+        arr = vreg(VI)
+        e_mov(arr, e_call(rt("__arr_filled"), [e_iconst(n), e_iconst(esz)], VI))
+        e_copy(e_addi(arr, 24), src, n * esz)
+        if is_managed(et):
+            i = vreg(VI)
+            e_mov(i, e_iconst(0))
+            blk()
+            lop()
+            brif_to(e_bin(.ges, VI, i, e_iconst(n)), ctl - 1)
+            copy_at(e_bin(.add, VI, e_addi(arr, 24), e_bin(.mul, VI, i, e_iconst(esz))), et)
+            e_mov(i, e_addi(i, 1))
+            br_to(ctl)
+            endc()
+            endc()
+        return V(arr, true)
     if cv == .opt:
         inner = int(types[to].elem)
         s = new_temp(to)
@@ -2183,7 +2216,39 @@ is_plain_expr = (e: int) -> bool:
     if k == .field: return nodes[e].aux >= 0 and is_plain_expr(int(nodes[e].a)) and types[prune(ntype(int(nodes[e].a)))].kind == .struct_
     false
 
+# [a, b, c], [] (zeros) or [v] * N as a fixed-size array: built in place
+gen_fixed_array = (e: int, t: int) -> Val:
+    et = int(types[t].elem)
+    esz = tsize(et)
+    n = fixed_len(t)
+    s = new_temp(t)
+    d = e_slot(s)
+    if nodes[e].b != 0:
+        val = gen_owned(kid(e, 0))
+        store_val(et, d, 0, val.v)
+        if n > 1:
+            # the other elements are copies of the first
+            i = vreg(VI)
+            e_mov(i, e_iconst(1))
+            blk()
+            lop()
+            brif_to(e_bin(.ges, VI, i, e_iconst(n)), ctl - 1)
+            ea = e_bin(.add, VI, d, e_bin(.mul, VI, i, e_iconst(esz)))
+            e_copy(ea, d, esz)
+            if is_managed(et): copy_at(ea, et)
+            e_mov(i, e_addi(i, 1))
+            br_to(ctl)
+            endc()
+            endc()
+    else if nkids(e) == 0: e_zero(d, tsize(t))
+    else:
+        loop i in [0..nkids(e)):
+            val = gen_owned(kid(e, i))
+            store_val(et, d, i * esz, val.v)
+    Val(e_slot(s), true, s)
+
 gen_array = (e: int, t: int) -> Val:
+    if types[prune(t)].kind == .fixed: return gen_fixed_array(e, prune(t))
     et = int(types[t].elem)
     esz = tsize(et)
     if nodes[e].b != 0:
@@ -3049,14 +3114,23 @@ gen_for = (s: int):
     # the snapshot of an array cannot change while iterating: hoist its length and data
     n_snap = 0
     base_snap = 0
+    is_fixed = types[ct].kind == .fixed
     if aux == 1:
         sv = read_place(local_place(snap, false), ct)
-        n_snap = arr_len(sv)
-        base_snap = e_addi(sv, 24)
+        if is_fixed:
+            # (the snapshot is the elements themselves)
+            n_snap = e_iconst(fixed_len(ct))
+            base_snap = sv
+        else:
+            n_snap = arr_len(sv)
+            base_snap = e_addi(sv, 24)
     # (the array of a `loop mut` that the loop cannot replace or resize: its length is read once)
     nfp = 0
     n_fixed = 0
-    if aux == 2:
+    if aux == 2 and is_fixed:
+        nfp = fp_begin(s, idx, 0, 0)
+        n_fixed = e_iconst(fixed_len(ct))
+    else if aux == 2:
         before = fixed_paths.len()
         nfp = fp_begin(s, idx, int(nodes[s].a), int(nodes[s].a))
         fi = fixed_path_of(int(nodes[s].a))
@@ -3071,7 +3145,7 @@ gen_for = (s: int):
     i = read_place(local_place(idx, false), T_INT)
     if aux == 1:
         et = T_U8
-        if types[ct].kind == .array: et = int(types[ct].elem)
+        if types[ct].kind == .array or is_fixed: et = int(types[ct].elem)
         ea = e_bin(.add, VI, base_snap, e_bin(.mul, VI, i, e_iconst(tsize(et))))
         e_mov(int(locals[el].vreg), ea)
     else if aux == 3:
@@ -3690,12 +3764,37 @@ helper_drop = (t: int, copy: bool):
                 if copy: copy_at(e_addi(a, int(fields[f].offset)), ft)
                 else: drop_at(e_addi(a, int(fields[f].offset)), ft)
             endc()
+    else if k == .fixed:
+        et = int(types[t].elem)
+        if is_managed(et):
+            i = fixed_loop_begin(t)
+            ea = fixed_elem_addr(a, i, et)
+            if copy: copy_at(ea, et)
+            else: drop_at(ea, et)
+            fixed_loop_end(i)
     else:
         loop fo in field_list(t):
             if not is_managed(fo.0): continue
             if copy: copy_at(e_addi(a, fo.1), fo.0)
             else: drop_at(e_addi(a, fo.1), fo.0)
     e_ret(-1)
+
+# a loop over the elements of fixed-size array type t: i counts 0..N (the body goes between)
+fixed_loop_begin = (t: int) -> int:
+    i = vreg(VI)
+    e_mov(i, e_iconst(0))
+    blk()
+    lop()
+    brif_to(e_bin(.ges, VI, i, e_iconst(fixed_len(t))), ctl - 1)
+    i
+
+fixed_loop_end = (i: int):
+    e_mov(i, e_addi(i, 1))
+    br_to(ctl)
+    endc()
+    endc()
+
+fixed_elem_addr = (a: int, i: int, et: int) -> int: e_bin(.add, VI, a, e_bin(.mul, VI, i, e_iconst(tsize(et))))
 
 helper_arrrel = (t: int):
     ps = helper_params(1)
@@ -3745,6 +3844,11 @@ helper_eq = (t: int):
     k = types[t].kind
     if k == .struct_ or k == .tuple:
         loop fo in field_list(t): eq_member(fo.0, e_addi(a, fo.1), e_addi(b, fo.1), fail)
+    else if k == .fixed:
+        et = int(types[t].elem)
+        i = fixed_loop_begin(t)
+        eq_member(et, fixed_elem_addr(a, i, et), fixed_elem_addr(b, i, et), fail)
+        fixed_loop_end(i)
     else if k == .opt:
         inner = int(types[t].elem)
         ha = e_load(VI, a, tsize(inner), 1)
@@ -3824,6 +3928,11 @@ helper_hash = (t: int):
     k = types[t].kind
     if k == .struct_ or k == .tuple:
         loop fo in field_list(t): hash_member(h, fo.0, e_addi(a, fo.1))
+    else if k == .fixed:
+        et = int(types[t].elem)
+        i = fixed_loop_begin(t)
+        hash_member(h, et, fixed_elem_addr(a, i, et))
+        fixed_loop_end(i)
     else: hash_member(h, t, a)
     e_ret(h)
 

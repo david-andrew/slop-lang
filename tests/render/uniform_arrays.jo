@@ -1,0 +1,44 @@
+# fixed-size arrays in shaders: uniform arrays of each kind (indexed by values computed in the
+# shader), arrays made and looped over in shader code, and arrays of textures
+img = image(2, 1, vec4(1, 1, 1, 1))
+img.set(1, 0, vec4(0.2, 0.9, 0.4, 1))
+pal = texture(img, false)
+plain = texture(image(1, 1, vec4(0.9, 0.5, 0.1, 1)), false)
+struct V:
+    pos: vec3
+    uv: vec2
+struct U:
+    shift: mat4[2]
+    colors: vec4[4]
+    gains: f32[4]
+    pick: int[3]
+    scale: f64[2]
+    on: bool[2]
+    texs: Texture[2]
+    corner: ivec2[2]
+struct O:
+    pos: vec4
+    uv: vec2
+vs = (v: V, u: U) -> O: O(u.shift[u.pick[0]] * vec4(v.pos, 1), v.uv)
+fs = (i: O, u: U) -> vec4:
+    k = clamp(i32(i.uv.x * 4.0), 0, 3)
+    c = u.colors[k] * u.gains[k]
+    w: f32[3] = [0.25, 0.25, 0.5]
+    t = 0.0
+    loop x in w: t += x
+    loop mut x in w: x *= 2.0
+    if u.on[1] and i.uv.y > 0.5: c = vec4(c.x, c.y, f32(u.scale[1]) * t * w[2] * 0.5, 1)
+    if i.uv.y < 0.25: c = sample(u.texs[1], vec2(i.uv.x, 0.5))
+    if i.uv.y < 0.1: c = sample(u.texs[0], i.uv)
+    if u.pick[2] == 7 and i.uv.x > 0.9: c = vec4(f32(u.corner[1].x) / 10.0, f32(u.corner[1].y) / 10.0, 0, 1)
+    c
+sh = make_shader(shader(vs, fs))
+quad = mesh([V(vec3(-0.8, -0.8, 0), vec2(0, 0)), V(vec3(0.8, -0.8, 0), vec2(1, 0)), V(vec3(0.8, 0.8, 0), vec2(1, 1)),
+             V(vec3(-0.8, -0.8, 0), vec2(0, 0)), V(vec3(0.8, 0.8, 0), vec2(1, 1)), V(vec3(-0.8, 0.8, 0), vec2(0, 1))])
+draw = ():
+    clear(vec4(0.1, 0.1, 0.12, 1))
+    p = U(shift = [translation(vec3(5, 5, 0)), scaling(vec3(0.9, 0.9, 1))],
+          colors = [vec4(1, 0, 0, 1), vec4(0, 1, 0, 1), vec4(0, 0, 1, 1), vec4(1, 1, 0, 1)],
+          gains = [1.0, 0.8, 0.6, 0.4], pick = [1, 0, 7], scale = [0.0, 0.75], on = [false, true],
+          texs = [plain, pal], corner = [ivec2(0, 0), ivec2(9, 3)])
+    draw(sh, quad, p)

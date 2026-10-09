@@ -1,0 +1,95 @@
+# fixed-size arrays T[N]: stored in place, copied like any value
+const N = 4
+struct Bones:
+    m: vec4[3]
+    count: int
+a: int[4] = [1, 2, 3, 4]
+b: f64[N] = []
+c: int[3] = fill(7, 3)
+print(a, b, c, a.len(), len(c))
+a[2] = 30
+b[1] += 2.5
+print(a, b, a[2], b[1])
+k = 3
+a[k] = a[0] + a[k]
+print(a)
+d = a
+d[0] = 100
+print(a[0], d[0], a == d, a != d, a == [1, 2, 30, 5])
+s = 0
+loop x in a: s += x
+print(s)
+loop mut x in a: x *= 2
+print(a)
+loop i in 0.. and x in c: print(i, x)
+bs = Bones(count = 2)
+bs.m[1] = vec4(1, 2, 3, 4)
+bs.m[2].y = 9
+print(bs.m[1], bs.m[2], bs)
+# passed for T[] (a copy), by value, and as mut
+total = (xs: int[]) -> int:
+    acc = 0
+    loop x in xs: acc += x
+    acc
+first = (xs: int[4]) -> int: xs[0]
+twice = (xs: int[4]) -> int[4]:
+    r = xs
+    loop mut v in r: v *= 2
+    r
+print(total(a), first(a), twice(a), a.sum())
+grow = (xs: mut int[4]):
+    xs[0] = -1
+grow(a)
+print(a)
+# reference-counted elements
+names: str[3] = ["a", "b", "c"]
+names[1] = names[1] + "!"
+n2 = names
+n2[0] = "zz"
+print(names, n2)
+m: {int[2]: str} = {}
+m[[1, 2]] = "one-two"
+print(m[[1, 2]])
+grid: int[3][2] = []
+grid[1][2] = 5
+print(grid)
+# a loop over an array sees it as it was when the loop began
+e: int[4] = [1, 2, 3, 4]
+loop x in e: e[0] += x
+print(e)
+counts: int[8] = []
+bump = (i: int): counts[i % 8] += 1
+loop i in [0..20): bump(i)
+print(counts)
+sum4[T] = (xs: T[4]) -> T:
+    tot = xs[0]
+    loop i in [1..4): tot += xs[i]
+    tot
+print(sum4(e), sum4([0.5, 1.5, 2.0, 1.0]))
+g: int[3][3] = []
+loop i in [0..3):
+    loop j in [0..3): g[i][j] = i * 3 + j
+gt = 0
+loop row in g:
+    loop v in row: gt += v
+print(gt, g[2], g == g)
+hist: int[16] = []
+loop i in [0..10000): hist[(i * 7919) % 16] += 1
+hs = 0
+loop h in hist: hs += h
+print(hs, hist[3])
+p: (int, int[2]) = (1, [5, 6])
+print(p.1[1])
+o: int[2]? = none
+o = [3, 4]
+print(o!)
+before = alloc_count()
+loop r in [0..50):
+    q: str[2] = ["p", "{r}"]
+    q2 = q
+    q2[1] = "x"
+    w = [q, q2]
+    if w.len() != 2 or q == q2 and r > 100: print("?")
+print(alloc_count() - before)
+j = 7
+print(a[j])

@@ -14,7 +14,8 @@ enum IN:
     hash, alignof, unreachable, arrcap, fmt_struct, sqrt, vec_ctor, cfn_cast, wasm_call, callc, floor_,
     ceil_, fabs, fmin, fmax, setjmp, longjmp, jump, shader, extend, clone_thread, atomic_add, atomic_cas, stack_ptr, fill, fmt_elem, gpu_kernel, cpu_features
 
-enum CV: none_, int_, int2float, float2int, float_, opt, ptr, bits, fn2clos, union_
+# (fixed2arr: T[N] -> T[], a new array holding a copy of the elements)
+enum CV: none_, int_, int2float, float2int, float_, opt, ptr, bits, fn2clos, union_, fixed2arr
 
 struct Intrinsic:
     name: str
@@ -100,6 +101,8 @@ can_coerce = (n: int, from0: int, to0: int) -> bool:
     if tk == .enum_ and fk != .enum_ and is_union(to): return union_target(n, from, to) >= 0
     if is_union(from) and is_union(to): return union_within(from, to)
     if fk == .array and is_soa(to): return can_coerce(0, int(types[from].elem), soa_elem(to))
+    if fk == .fixed and tk == .array: return type_eq(int(types[from].elem), int(types[to].elem))
+    if fk == .array and tk == .fixed and n != 0 and fixed_literal_ok(n, to): return true
     if tk == .opt:
         if fk == .none_lit: return true
         if fk == .opt: return type_eq(int(types[from].elem), int(types[to].elem)) or tkind(int(types[from].elem)) == .var
@@ -188,6 +191,16 @@ coerce = (n: int, target: int) -> int:
     if fk == .array and is_soa(to) and can_coerce(0, int(types[from].elem), soa_elem(to)):
         soa_from_array(n, to)
         return n
+    if fk == .fixed and tk == .array and type_eq(int(types[from].elem), int(types[to].elem)):
+        wrap_conv(n, .fixed2arr, to)
+        return n
+    if fk == .array and tk == .fixed:
+        if not fixed_literal_ok(n, to):
+            els = "{fixed_len(to)} elements"
+            if fixed_len(to) == 1: els = "1 element"
+            fatal(nodes[n].pos, "type mismatch: expected {type_str(to)}, found {type_str(from)} (a fixed-size array is made from a literal with {els})")
+        fixed_literal(n, to)
+        return n
     if tk == .enum_ and fk != .enum_ and is_union(to):
         vi = union_target(n, from, to)
         if vi < 0: fatal(nodes[n].pos, "type mismatch: expected {type_str(to)}, found {type_str(from)}")
@@ -235,6 +248,24 @@ coerce = (n: int, target: int) -> int:
     if fk == .typeval: fatal(nodes[n].pos, "expected a value of type {type_str(to)}, found a type name")
     fatal(nodes[n].pos, "type mismatch: expected {type_str(to)}, found {type_str(from)}")
     n
+
+# an array literal that can be the fixed-size array type `to` (its elements are checked later)
+fixed_literal_ok = (n: int, to: int) -> bool:
+    if nodes[n].kind != .array or nodes[n].aux == 2: return false
+    if nodes[n].b != 0: return true
+    nkids(n) == 0 or nkids(n) == fixed_len(to)
+
+# make array literal n (already checked as T[]) the fixed-size array type `to`
+fixed_literal = (n: int, to: int):
+    et = int(types[prune(to)].elem)
+    if nodes[n].b != 0:
+        c = int(nodes[n].b)
+        if nodes[c].kind != .int_lit or nodes[c].ival != fixed_len(to): fatal(nodes[n].pos, "a fixed-size array of {fixed_len(to)} elements needs the count {fixed_len(to)} here")
+        coerce(kid(n, 0), et)
+    else:
+        loop i in [0..nkids(n)): coerce(kid(n, i), et)
+    nodes[n].type = i32(to)
+    clear_flag(n, NF_LITERAL)
 
 check_to = (n: int, target: int) -> int:
     check_expr(n, target)
@@ -350,7 +381,7 @@ check_place = (n: int, for_mut: bool):
         if bk == .ptr: return
         if bk == .str_: fatal(nodes[n].pos, "strings are immutable")
         cp_inner += 1
-        if bk == .vec:
+        if bk == .vec or bk == .fixed:
             check_place(int(nodes[n].a), for_mut)
             cp_inner -= 1
             return
@@ -463,8 +494,16 @@ match_type = (pat0: int, a0: int, binds: mut int[], depth: int) -> int:
         r = match_type(int(types[pat].elem), a, binds, depth + 1)
         if r < 0: return -1
         return r + 4
+    if pk == .array and ak == .fixed:
+        # (passed as a copy in a new array)
+        r = match_type(int(types[pat].elem), int(types[a].elem), binds, depth + 1)
+        if r < 0: return -1
+        return r + 2
     if pk != ak: return -1
     if pk == .array or pk == .ptr or pk == .opt: return match_type(int(types[pat].elem), int(types[a].elem), binds, depth + 1)
+    if pk == .fixed:
+        if types[pat].bits != types[a].bits: return -1
+        return match_type(int(types[pat].elem), int(types[a].elem), binds, depth + 1)
     if pk == .fn_ or pk == .tuple or pk == .cfn:
         if types[pat].nargs != types[a].nargs: return -1
         cost = 0
@@ -536,6 +575,7 @@ subst_partial = (pat0: int, binds: mut int[]) -> int:
         if binds[id] == 0: binds[id] = mk_var()
         return binds[id]
     if k == .array: return mk_array(subst_partial(int(types[pat].elem), binds))
+    if k == .fixed: return mk_fixed(subst_partial(int(types[pat].elem), binds), fixed_len(pat))
     if k == .ptr: return mk_ptr(subst_partial(int(types[pat].elem), binds))
     if k == .opt: return mk_opt(subst_partial(int(types[pat].elem), binds))
     if k == .fn_ or k == .tuple:
@@ -616,6 +656,18 @@ arg_cost = (a: int, pat: int, binds: mut int[]) -> int:
         if pk == .opt and is_numeric(int(types[p].elem)): return 2
         if pk == .vec: return -1
         return -1
+    fp = p
+    if pk == .param and binds[int(types[p].id)] != 0: fp = prune(binds[int(types[p].id)])
+    if types[fp].kind == .fixed and nodes[a].kind == .array and tkind(ntype(a)) == .array and fixed_literal_ok(a, fp):
+        # an array literal for a fixed-size array parameter
+        et = int(types[fp].elem)
+        if has_var(prune(et)):
+            r = match_type(et, int(types[prune(ntype(a))].elem), binds, 1)
+            if r < 0: return -1
+            return r + 1
+        loop i in [0..nkids(a)):
+            if not can_coerce(kid(a, i), ntype(kid(a, i)), et): return -1
+        return 1
     match_type(pat, ntype(a), binds, 0)
 
 check_args_untyped = (args: int[]):
@@ -1020,6 +1072,11 @@ call_by_name = (n: int, name: int, mod_scope: int, args: int[], expected: int, u
         if types[t0].kind == .array or types[t0].kind == .str_:
             if ide_on: ide_builtin_ref(n, name)
             return check_intrinsic(n, intrinsics[ii].id, args, expected)
+        if types[t0].kind == .fixed:
+            if intrinsics[ii].id != .len: fatal(nodes[n].pos, "{name_of(name)}() needs a growable array T[]; {type_str(t0)} has a fixed size")
+            # (the size is part of the type)
+            nodes[n] = Node(kind = .int_lit, pos = nodes[n].pos, ival = fixed_len(t0), type = i32(T_INT), flags = i32(NF_CHECKED))
+            return T_INT
     decls: int[]
     if not ufcs:
         s = 0
@@ -1212,6 +1269,10 @@ nargs_check = (n: int, nargs: int, lo: int, hi: int, name: str):
 
 fmt_part = (part: int, pos: int):
     t = prune(ntype(int(nodes[part].a)))
+    if types[t].kind == .fixed:
+        # (shown like an array: [1, 2, 3])
+        t = mk_array(int(types[t].elem))
+        coerce(int(nodes[part].a), t)
     if types[t].kind == .void_: fatal(nodes[int(nodes[part].a)].pos, "cannot format a value of type void")
     bt = mk_array(T_U8)
     if nodes[part].sval >= 0: nodes[part].sym = i32(resolve_by_types(intern("__fmt_spec"), [bt, t, T_STR], pos, true))
@@ -1662,6 +1723,13 @@ check_binary = (n: int, expected: int) -> int:
     if types[ta].kind == .typeval or types[tb].kind == .typeval: fatal(nodes[n].pos, "a type name cannot be used as a value here")
     # vectors
     if is_vec(ta) or is_vec(tb): return check_vec_binary(n, op, ta, tb)
+    if types[ta].kind == .fixed or types[tb].kind == .fixed:
+        if op != .eq and op != .ne: fatal(nodes[n].pos, "operator {tok_text(op)} is not defined for {type_str(ta)} and {type_str(tb)} (fixed-size arrays can be compared with == and !=)")
+        if types[ta].kind == .fixed: coerce(b, ta)
+        else: coerce(a, tb)
+        nodes[n].aux = 1
+        nodes[n].type = i32(T_BOOL)
+        return T_BOOL
     if is_struct_like(ta) or is_struct_like(tb):
         opn = tok_text(op)
         r = op_overload(n, opn)
@@ -2293,6 +2361,11 @@ check_expr = (n: int, expected: int) -> int:
             if bk == .array:
                 check_to(b, T_INT)
                 t = int(types[bt].elem)
+            else if bk == .fixed:
+                check_to(b, T_INT)
+                t = int(types[bt].elem)
+                ib = int(nodes[n].b)
+                if nodes[ib].kind == .int_lit and (nodes[ib].ival < 0 or nodes[ib].ival >= fixed_len(bt)): fatal(nodes[ib].pos, "index {nodes[ib].ival} is out of bounds for {type_str(bt)}")
             else if bk == .str_:
                 check_to(b, T_INT)
                 t = T_U8
@@ -2438,6 +2511,17 @@ check_expr = (n: int, expected: int) -> int:
         set_list(b, stmts)
         nodes[n] = nodes[b]
         return check_expr(n, expected)
+    else if k == .array and ex != 0 and exk == .fixed and fixed_literal_ok(n, ex):
+        # [a, b, c] (or [] for zeros, or [v] * N) as a fixed-size array
+        et = int(types[ex].elem)
+        if nodes[n].b != 0:
+            check_expr(kid(n, 0), et)
+            check_to(int(nodes[n].b), T_INT)
+        else:
+            loop i in [0..nkids(n)): check_expr(kid(n, i), et)
+        nodes[n].type = i32(mk_array(et))
+        fixed_literal(n, ex)
+        t = ex
     else if k == .array:
         et = 0
         if ex != 0 and exk == .array: et = int(types[ex].elem)

@@ -675,6 +675,7 @@ ide_complete_members = (t0: int):
         loop i in [0..vec_n(t)): ide_emit("C\t{names_[i]}\t{IK_FIELD}\t{type_str(vec_comp_type(t))}")
     if k == .tuple:
         loop i in [0..int(types[t].nargs)): ide_emit("C\t{i}\t{IK_FIELD}\t{type_str(zonk(targ(t, i)))}")
+    if k == .fixed: ide_emit("C\tlen\t{IK_FN}\tlen() -> int")
     loop nm in method_names(t):
         if seen.get(nm) != none or not is_alpha(name_of(nm)[0]): continue
         seen[nm] = true

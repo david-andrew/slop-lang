@@ -6,9 +6,10 @@ use 'util.jo'
 use 'ast.jo'
 use 'check.jo'
 
+# (fixed: T[N], N elements stored in place; elem is T, bits is N)
 enum TK:
     void_, bool_, int_, float_, str_, array, ptr, fn_, struct_, enum_, tuple, opt, var, param,
-    null_, range, module, typeval, none_lit, vec, cfn
+    null_, range, module, typeval, none_lit, vec, cfn, fixed
 
 const TF_HAS_VAR = 1
 const TF_LAID_OUT = 2
@@ -162,6 +163,8 @@ basic = (kind: TK, bits: int, sign: bool, size: int) -> int:
     mk_type(t, [])
 
 mk_array = (e: int) -> int: mk_type(TypeInfo(kind = .array, elem = i32(e)), [])
+mk_fixed = (e: int, n: int) -> int: mk_type(TypeInfo(kind = .fixed, elem = i32(e), bits = i32(n)), [])
+fixed_len = (t: int) -> int: int(types[prune(t)].bits)
 mk_ptr = (e: int) -> int: mk_type(TypeInfo(kind = .ptr, elem = i32(e)), [])
 mk_opt = (e: int) -> int: mk_type(TypeInfo(kind = .opt, elem = i32(e)), [])
 mk_fn = (params: int[], ret: int, mutmask: int) -> int: mk_type(TypeInfo(kind = .fn_, elem = i32(ret), mutmask = i32(mutmask)), params)
@@ -338,7 +341,7 @@ is_managed = (t0: int) -> bool:
     t = prune(t0)
     k = types[t].kind
     if k == .str_ or k == .array or k == .fn_: return true
-    if k == .struct_ or k == .enum_ or k == .tuple or k == .opt:
+    if k == .struct_ or k == .enum_ or k == .tuple or k == .opt or k == .fixed:
         layout(t)
         return int(types[t].flags) & TF_MANAGED != 0
     false
@@ -346,7 +349,7 @@ is_managed = (t0: int) -> bool:
 is_aggregate = (t0: int) -> bool:
     t = prune(t0)
     k = types[t].kind
-    if k == .struct_ or k == .tuple or k == .opt or k == .fn_ or k == .range or k == .vec: return true
+    if k == .struct_ or k == .tuple or k == .opt or k == .fn_ or k == .range or k == .vec or k == .fixed: return true
     if k == .enum_: return not simple_enum(t)
     false
 
@@ -380,6 +383,12 @@ layout = (t0: int):
         layout(e)
         al = talign(e)
         size = align_up(tsize(e) + 1, al)
+        m = is_managed(e)
+    else if k == .fixed:
+        e = int(types[t].elem)
+        layout(e)
+        al = talign(e)
+        size = tsize(e) * int(types[t].bits)
         m = is_managed(e)
     else if k == .tuple:
         off = 0
@@ -475,6 +484,7 @@ type_str = (t0: int) -> str:
             "f32"
         str_: "str"
         array: "{type_str_postfix(int(ti.elem))}[]"
+        fixed: "{type_str_postfix(int(ti.elem))}[{ti.bits}]"
         ptr: "*{type_str(int(ti.elem))}"
         opt: "{type_str_postfix(int(ti.elem))}?"
         null_: "null"

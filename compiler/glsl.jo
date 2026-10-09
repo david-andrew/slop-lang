@@ -39,6 +39,7 @@ gl_type = (t0: int, pos: int) -> str:
         gl_struct(t, pos)
         return "S_{gl_name(structs[si].name)}_{si}"
     if k == .void_: return "void"
+    if k == .fixed: return "{gl_type(int(types[t].elem), pos)}[{fixed_len(t)}]"
     gl_err(pos, "type {type_str(t)} cannot be used in shaders (use numbers, bools, vectors, matrices, structs and Texture)")
     ""
 
@@ -152,8 +153,21 @@ gl_stmt = (s: int, depth: int):
         gl_out.push("{pre}while ({gl_expr(int(nodes[s].a))}) \{\n")
         gl_block(int(nodes[s].b), depth + 1, false)
         gl_out.push("{pre}}\n")
+    else if k == .for_ and (nodes[s].aux == 1 or nodes[s].aux == 2) and tkind(ntype(int(nodes[s].a))) == .fixed:
+        # loop [mut] x in xs (a fixed-size array): an index loop; without `mut`, over a copy
+        ct = prune(ntype(int(nodes[s].a)))
+        iv = gl_local(int(nodes[s].c))
+        el = int(nodes[s].sym)
+        arr = ""
+        if nodes[s].aux == 1:
+            arr = gl_local(int(nodes[s].d))
+            gl_out.push("{pre}{gl_type(ct, nodes[s].pos)} {arr} = {gl_expr(int(nodes[s].a))};\n")
+        gl_out.push("{pre}for (int {iv} = 0; {iv} < {fixed_len(ct)}; {iv}++) \{\n")
+        if nodes[s].aux == 1: gl_out.push("{pre}    {gl_type(int(types[ct].elem), nodes[s].pos)} {gl_local(el)} = {arr}[{iv}];\n")
+        gl_block(int(nodes[s].b), depth + 1, false)
+        gl_out.push("{pre}}\n")
     else if k == .for_:
-        if nodes[s].aux != 0: gl_err(nodes[s].pos, "only `for i in a..b` loops are supported in shaders")
+        if nodes[s].aux != 0: gl_err(nodes[s].pos, "only `loop i in [a..b)` loops and loops over fixed-size arrays are supported in shaders")
         l = int(nodes[s].sym)
         it = int(nodes[s].a)
         v = gl_local(l)
@@ -192,6 +206,11 @@ gl_zero = (t0: int, pos: int) -> str:
         si = int(types[t].st)
         parts: str[]
         loop i in [0..int(structs[si].nfields)): parts.push(gl_zero(int(fields[int(structs[si].fields) + i].type), pos))
+        return "{gl_type(t, pos)}({join(parts, ", ")})"
+    if k == .fixed:
+        z = gl_zero(int(types[t].elem), pos)
+        parts: str[]
+        loop i in [0..fixed_len(t)): parts.push(z)
         return "{gl_type(t, pos)}({join(parts, ", ")})"
     gl_err(pos, "cannot zero-initialize {type_str(t)} in a shader")
     ""
@@ -238,7 +257,7 @@ gl_expr = (e: int) -> str:
         return "{gl_expr(a)}.{name_of(int(nodes[e].name))}_"
     if k == .index:
         bt = prune(ntype(int(nodes[e].a)))
-        if types[bt].kind != .vec: gl_err(nodes[e].pos, "only vectors and matrices can be indexed in shaders")
+        if types[bt].kind != .vec and types[bt].kind != .fixed: gl_err(nodes[e].pos, "only vectors, matrices and fixed-size arrays (T[N]) can be indexed in shaders")
         return "{gl_expr(int(nodes[e].a))}[{gl_expr(int(nodes[e].b))}]"
     if k == .binary:
         a = int(nodes[e].a)
@@ -314,6 +333,17 @@ gl_expr = (e: int) -> str:
             # prelude helpers written in Sloppy (e.g. vector math) are translated like user code
         gl_function(f)
         return "{gl_fn_name(f)}({join(args, ", ")})"
+    if k == .array and types[t].kind == .fixed:
+        # [a, b, c], [] or fill(v, N): an array constructor
+        parts: str[]
+        if nodes[e].b != 0:
+            v = gl_expr(kid(e, 0))
+            loop i in [0..fixed_len(t)): parts.push(v)
+        else if nkids(e) == 0: return gl_zero(t, nodes[e].pos)
+        else:
+            loop i in [0..nkids(e)): parts.push(gl_expr(kid(e, i)))
+        return "{gl_type(t, nodes[e].pos)}({join(parts, ", ")})"
+    if k == .array: gl_err(nodes[e].pos, "growable arrays (T[]) cannot be used in shaders; use a fixed-size array T[N]")
     gl_err(nodes[e].pos, "unsupported expression in shader")
     ""
 
@@ -347,7 +377,7 @@ uniform_kind = (t0: int, pos: int) -> str:
         if types[t].sign: return "I"
         return "v{types[t].bits}"
     if k == .struct_ and structs[int(types[t].st)].name == "Texture": return "t"
-    gl_err(pos, "uniform fields must be numbers, vectors, mat4 or Texture (found {type_str(t)})")
+    gl_err(pos, "uniform fields must be numbers, vectors, mat4 or Texture, or fixed-size arrays of them (found {type_str(t)})")
     ""
 
 # returns (vertex source, fragment source, layout description)
@@ -380,7 +410,12 @@ glsl_build = (vsf: int, fsf: int) -> (str, str, str):
     ustruct = gl_type(utype, vpos)
     loop i in 0.. and f in ufields:
         fo = int(fields[int(structs[usi].fields) + i].offset)
-        udesc += ";{f.0},{uniform_kind(f.1, vpos)},{fo}"
+        ft = prune(f.1)
+        if types[ft].kind == .fixed:
+            # an array: its element kind, then the count and the bytes per element
+            et = int(types[ft].elem)
+            udesc += ";{f.0},{uniform_kind(et, vpos)},{fo},{fixed_len(ft)},{tsize(et)}"
+        else: udesc += ";{f.0},{uniform_kind(f.1, vpos)},{fo}"
     # vertex attributes
     vfields = gl_struct_fields(vtype_)
     vsi = int(types[prune(vtype_)].st)

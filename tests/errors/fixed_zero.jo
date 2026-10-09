@@ -1,0 +1,2 @@
+# error: must be at least 1
+a: int[0] = []

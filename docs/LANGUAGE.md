@@ -120,6 +120,7 @@ Top-level statements in the main file run in order, like a script.
 | `bool` | `true` / `false` |
 | `str` | immutable UTF-8 string (`+` concatenates, `*` repeats) |
 | `T[]` | growable array (value semantics); `push pop insert remove extend len` ... (also `Array[T]`) |
+| `T[N]` | fixed-size array: N elements stored in place (in a struct, a variable, a shader's uniforms) |
 | `T[,]` | n-dimensional array (see section 8) |
 | `soa T[]` | array of structs stored as one array per field (see section 8) |
 | `{K: V}` | hash map, insertion ordered (value semantics) |
@@ -173,6 +174,29 @@ To modify array elements in a loop, use `loop mut`:
 loop mut p in particles:
     p.pos += p.vel * dt
 ```
+
+### Fixed-size arrays
+
+`T[N]` holds exactly N elements, stored in place: inside a struct, a variable or a shader's
+uniforms, with no separate allocation. N is a number or a constant (`const SLOTS = 8`, then
+`int[SLOTS]`). They are made from a literal with N elements, from `[]` (all zeros, which is also
+what a field or variable without a value starts as) or from `fill(x, N)`:
+
+```gdscript
+struct Inventory:
+    slots: int[8]                   # zeros
+    hands: str[2]                   # ""
+corners: vec2[4] = [vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1)]
+inv = Inventory()
+inv.slots[3] = 42                   # bounds-checked; a constant index is checked when compiling
+loop mut c in corners: c *= 2.0
+print(corners.len(), inv.slots == fill(0, 8))
+```
+
+They index, loop (`loop x in xs`, `loop mut x in xs`), compare with `==`, print and work as
+map keys like `T[]`. A copy copies the elements. Where a `T[]` is expected (`sum(xs)`, a
+parameter `xs: T[]`) a fixed-size array is passed as a new array holding a copy; `push`,
+`pop` and the other functions that change the length need a `T[]`.
 
 ## 5. Functions
 

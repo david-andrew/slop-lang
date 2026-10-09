@@ -118,8 +118,9 @@ parse_type_primary = () -> int:
         if accept(.dot):
             nodes[n].sval = nodes[n].name
             nodes[n].name = i32(expect_ident("type name"))
-        # generic arguments: Name[T, U] (but not T[] or T[,], which are array types)
-        if pk() == .lbrack and not space_before(ti) and pkn(1) != .rbrack and pkn(1) != .comma:
+        # generic arguments: Name[T, U] (but not T[], T[,] or T[4], which are array types; T[N]
+        # with N a constant is told apart from a generic type's argument by the checker)
+        if pk() == .lbrack and not space_before(ti) and pkn(1) != .rbrack and pkn(1) != .comma and pkn(1) != .int_lit:
             advance()
             args: int[]
             loop true:
@@ -180,11 +181,25 @@ parse_type_primary = () -> int:
     fatal(pos, "expected a type, found {tok_name(k)}")
     0
 
-# postfix type operators: T[] T[,] T?
+# postfix type operators: T[] T[,] T[N] T?
 parse_type_postfix = (t0: int) -> int:
     t = t0
     loop true:
-        if pk() == .question:
+        if pk() == .lbrack and (pkn(1) == .int_lit or pkn(1) == .ident) and pkn(2) == .rbrack:
+            # T[N]: a fixed-size array (b: its size, a number or a constant's name)
+            a = mk(.tarray, cur_pos())
+            advance()
+            if pk() == .int_lit:
+                nodes[a].b = i32(mk(.int_lit, cur_pos()))
+                nodes[int(nodes[a].b)].ival = toks[ti].ival
+                advance()
+            else:
+                nodes[a].b = i32(mk(.ident, cur_pos()))
+                nodes[int(nodes[a].b)].name = i32(expect_ident(""))
+            expect(.rbrack, "")
+            nodes[a].a = i32(t)
+            t = a
+        else if pk() == .question:
             o = mk(.topt, cur_pos())
             advance()
             nodes[o].a = i32(t)

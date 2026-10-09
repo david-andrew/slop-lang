@@ -207,6 +207,35 @@ def test_migrate(d):
         w.quit()
 
 
+FIXED = """\
+struct Inv:
+    slots: int[3]
+    pos: vec2[2]
+inv = Inv()
+loop i in [0..3): inv.slots[i] = 10 + i
+inv.pos[1] = vec2(5, 6)
+update = (dt: f64):
+    inv.pos[0].x += 1.0
+    if frame_number() % 10 == 0: print("tick {show()}")
+    sleep(0.005)
+show = () -> str: "slots={inv.slots} p1={inv.pos[1]} moved={inv.pos[0].x > 3.0}"
+draw = (): clear(BLACK)
+"""
+
+
+def test_migrate_fixed(d):
+    # fixed-size arrays in a struct whose layout changes: element by element, new ones zero
+    write(d, "g.jo", FIXED)
+    w = Watch(d, "g.jo")
+    try:
+        w.expect(r"tick slots=\[10, 11, 12\] p1=vec2\(5.0, 6.0\)")
+        write(d, "g.jo", FIXED.replace("slots: int[3]", "slots: f64[4]"))
+        w.expect(r"kept, in their new layout: inv")
+        w.expect(r"tick slots=\[10.0, 11.0, 12.0, 0.0\] p1=vec2\(5.0, 6.0\) moved=true")
+    finally:
+        w.quit()
+
+
 def test_assets(d):
     # a file a global's declaration names, and the functions a GPU program is made from
     src = open(os.path.join(root, "examples", "cube.jo")).read()
@@ -258,7 +287,7 @@ def test_program(d):
         w.quit()
 
 
-tests = [test_game, test_modules_release, test_migrate, test_assets, test_restarts, test_program]
+tests = [test_game, test_modules_release, test_migrate, test_migrate_fixed, test_assets, test_restarts, test_program]
 passed = failed = 0
 for t in tests:
     with tempfile.TemporaryDirectory() as d:

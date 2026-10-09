@@ -8,6 +8,11 @@
 #   prog = make_shader(shader(vs, fs))
 #   m = mesh(vertices)
 #   draw(prog, m, Params(mvp))
+#
+# Uniform fields are numbers, vectors, mat4 and Texture, or fixed-size arrays of them
+# (`bones: mat4[64]`, `lights: vec4[8]`). Shader code can use fixed-size arrays, `loop` over
+# them, and sample(), sample_lod(), texel(), texture_size(), discard() (fragment) and
+# vertex_id(), instance_id() (vertex).
 
 # produced by the compiler from shader(vs, fs)
 struct ShaderSource:
@@ -28,6 +33,8 @@ struct ShaderUniform:
     loc: int
     kind: u8
     offset: int
+    count: int            # an array (T[N] field): N, and the bytes per element
+    stride: int
 
 struct Shader:
     prog: int
@@ -72,10 +79,12 @@ make_shader = (src: ShaderSource) -> Shader:
             sh.usize = to_int(part[1..]) ?? 0
             continue
         f = split(part, ",")
-        loc = gl_uniform_location(prog, "u.{f[0]}_")
         kind = f[1][0]
         if kind == 'v': kind = f[1][1]
-        sh.uniforms.push(ShaderUniform(loc, kind, to_int(f[2]) ?? 0))
+        if f.len() > 3:
+            loc = gl_uniform_location(prog, "u.{f[0]}_[0]")
+            sh.uniforms.push(ShaderUniform(loc, kind, to_int(f[2]) ?? 0, to_int(f[3]) ?? 0, to_int(f[4]) ?? 0))
+        else: sh.uniforms.push(ShaderUniform(gl_uniform_location(prog, "u.{f[0]}_"), kind, to_int(f[2]) ?? 0))
     if __soft: __sw_program_info(prog, src)
     sh
 
@@ -120,6 +129,9 @@ __bind_uniforms = (sh: Shader, p: *u8):
         loc = i32(u.loc)
         k = u.kind
         f = q as *f32
+        if u.count > 0:
+            unit = __bind_uniform_array(u, loc, q, unit)
+            continue
         if k == 'f': glUniform1f(loc, f[0])
         else if k == 'd': glUniform1f(loc, f32((q as *f64)[0]))
         else if k == 'i': glUniform1i(loc, i32((q as *int)[0]))
@@ -128,11 +140,42 @@ __bind_uniforms = (sh: Shader, p: *u8):
         else if k == '3': glUniform3f(loc, f[0], f[1], f[2])
         else if k == '4': glUniform4f(loc, f[0], f[1], f[2], f[3])
         else if k == 'm': glUniformMatrix4fv(loc, 1, 0, q)
+        else if k == 'I': glUniform2iv(loc, 1, q)
         else if k == 't':
             glActiveTexture(GL_TEXTURE0 + u32(unit))
             glBindTexture(GL_TEXTURE_2D, u32((q as *int)[0]))
             glUniform1i(loc, i32(unit))
             unit += 1
+
+# a uniform array (a T[N] field): returns the next free texture unit
+__bind_uniform_array = (u: ShaderUniform, loc: i32, q: *u8, unit0: int) -> int:
+    n = i32(u.count)
+    k = u.kind
+    unit = unit0
+    if k == 'f': glUniform1fv(loc, n, q)
+    else if k == '2': glUniform2fv(loc, n, q)
+    else if k == '3': glUniform3fv(loc, n, q)
+    else if k == '4': glUniform4fv(loc, n, q)
+    else if k == 'm': glUniformMatrix4fv(loc, n, 0, q)
+    else if k == 'I': glUniform2iv(loc, n, q)
+    else if k == 'd':
+        fs = fill(f32(0), u.count)
+        loop j in [0..u.count): fs[j] = f32(((q + j * u.stride) as *f64)[0])
+        glUniform1fv(loc, n, data(fs) as *u8)
+    else if k == 'i' or k == 'b' or k == 't':
+        # (ints and bools are 32-bit in GLSL; textures get a unit each)
+        ints: i32[] = fill(i32(0), u.count)
+        loop j in [0..u.count):
+            p = q + j * u.stride
+            if k == 'i': ints[j] = i32((p as *int)[0])
+            else if k == 'b': ints[j] = i32(p[0])
+            else:
+                glActiveTexture(GL_TEXTURE0 + u32(unit))
+                glBindTexture(GL_TEXTURE_2D, u32((p as *int)[0]))
+                ints[j] = i32(unit)
+                unit += 1
+        glUniform1iv(loc, n, data(ints) as *u8)
+    unit
 
 # draw a mesh with a shader; `params` is the uniforms struct the shader functions take
 draw[U] = (sh: Shader, m: Mesh, params: U):

@@ -232,6 +232,7 @@ wk_sig = (t0: int, depth: int) -> str:
             out = "{out}|{name_of(int(variants[v].name))}"
         "{out})"
     else if k == .array or k == .opt or k == .ptr: "{k}({wk_sig(int(types[t].elem), depth + 1)})"
+    else if k == .fixed: "{k}{fixed_len(t)}({wk_sig(int(types[t].elem), depth + 1)})"
     else if k == .tuple:
         out = "("
         loop fo in field_list(t): out = "{out}{wk_sig(fo.0, depth + 1)},"
@@ -1070,6 +1071,7 @@ __write_all = (fd: int, b: u8[]) -> bool:
 # (when it is a literal; else zero).
 #
 # descriptions: i<size>; u<size>; f<size>; b; s; A<size of element>(<element>)
+# F<size of element>,<count>(<element>) (a fixed-size array)
 # O<size of value>(<value>) S<size><name>{field@offset:<description>,...} R<name>; (the struct
 # of that name enclosing it: recursion) T<size>{@offset:<description>,...} X<size><layout>;
 wd_path: str[]
@@ -1085,6 +1087,7 @@ wd_desc = (t0: int) -> str:
     if k == .bool_: return "b;"
     if k == .str_: return "s;"
     if k == .array: return "A{tsize(int(types[t].elem))}({wd_desc(int(types[t].elem))})"
+    if k == .fixed: return "F{tsize(int(types[t].elem))},{fixed_len(t)}({wd_desc(int(types[t].elem))})"
     if k == .opt: return "O{tsize(int(types[t].elem))}({wd_desc(int(types[t].elem))})"
     if k == .struct_:
         nm = type_str(t)
@@ -1106,7 +1109,7 @@ wd_desc = (t0: int) -> str:
 # where the description starting at i ends
 wd_end = (s: str, i: int) -> int:
     c = s[i]
-    if c == 'A' or c == 'O':
+    if c == 'A' or c == 'O' or c == 'F':
         j = find_byte(s, '(', i)
         e = wd_end(s, j + 1)
         return e + 1
@@ -1333,6 +1336,25 @@ wc_conv = (od: str, op: int, np: int, nt0: int):
         oe = e_bin(.add, VI, e_addi(oa, 24), e_bin(.mul, VI, i, e_iconst(oes)))
         ne = e_bin(.add, VI, e_addi(na, 24), e_bin(.mul, VI, i, e_iconst(nes)))
         wc_conv(ed, oe, ne, et)
+        e_mov(i, e_addi(i, 1))
+        br_to(ctl)
+        endc()
+        endc()
+        return
+    if c == 'F' and tk == .fixed:
+        # element by element, as many as both sizes have (the rest stays zero)
+        oes = wd_num(od, 1)
+        on = wd_num(od, find_byte(od, ',', 0) + 1)
+        ed = od[find_byte(od, '(', 0) + 1..len(od) - 1)
+        et = int(types[nt].elem)
+        nes = tsize(et)
+        n = min(on, fixed_len(nt))
+        i = vreg(VI)
+        e_mov(i, e_iconst(0))
+        blk()
+        lop()
+        brif_to(e_bin(.ges, VI, i, e_iconst(n)), ctl - 1)
+        wc_conv(ed, e_bin(.add, VI, op, e_bin(.mul, VI, i, e_iconst(oes))), e_bin(.add, VI, np, e_bin(.mul, VI, i, e_iconst(nes))), et)
         e_mov(i, e_addi(i, 1))
         br_to(ctl)
         endc()

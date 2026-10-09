@@ -109,6 +109,11 @@ when TARGET == "wasm":
     extern glUniform4f = (loc: i32, x: f32, y: f32, z: f32, w: f32)
     extern glUniformMatrix4fv = (loc: i32, count: i32, transpose: u8, v: *u8)
     extern glUniform4fv = (loc: i32, count: i32, v: *u8)
+    extern glUniform1fv = (loc: i32, count: i32, v: *u8)
+    extern glUniform2fv = (loc: i32, count: i32, v: *u8)
+    extern glUniform3fv = (loc: i32, count: i32, v: *u8)
+    extern glUniform1iv = (loc: i32, count: i32, v: *u8)
+    extern glUniform2iv = (loc: i32, count: i32, v: *u8)
     extern glCreateTexture = () -> u32
     extern glDeleteTexture = (t: u32)
     extern glBindTexture = (target: u32, t: u32)
@@ -313,6 +318,21 @@ else:
     @symbol("glUniform4fv")
     extern __glUniform4fv = (loc: i32, count: i32, v: *u8)
     @lib("libGLESv2.so.2")
+    @symbol("glUniform1fv")
+    extern __glUniform1fv = (loc: i32, count: i32, v: *u8)
+    @lib("libGLESv2.so.2")
+    @symbol("glUniform2fv")
+    extern __glUniform2fv = (loc: i32, count: i32, v: *u8)
+    @lib("libGLESv2.so.2")
+    @symbol("glUniform3fv")
+    extern __glUniform3fv = (loc: i32, count: i32, v: *u8)
+    @lib("libGLESv2.so.2")
+    @symbol("glUniform1iv")
+    extern __glUniform1iv = (loc: i32, count: i32, v: *u8)
+    @lib("libGLESv2.so.2")
+    @symbol("glUniform2iv")
+    extern __glUniform2iv = (loc: i32, count: i32, v: *u8)
+    @lib("libGLESv2.so.2")
     @symbol("glGenTextures")
     extern __glGenTextures = (n: i32, out: *u32)
     @lib("libGLESv2.so.2")
@@ -504,6 +524,21 @@ else:
     glUniformMatrix4fv = (loc: i32, count: i32, transpose: u8, v: *u8):
         if __soft: return
         __glUniformMatrix4fv(loc, count, transpose, v)
+    glUniform1fv = (loc: i32, count: i32, v: *u8):
+        if __soft: return
+        __glUniform1fv(loc, count, v)
+    glUniform2fv = (loc: i32, count: i32, v: *u8):
+        if __soft: return
+        __glUniform2fv(loc, count, v)
+    glUniform3fv = (loc: i32, count: i32, v: *u8):
+        if __soft: return
+        __glUniform3fv(loc, count, v)
+    glUniform1iv = (loc: i32, count: i32, v: *u8):
+        if __soft: return
+        __glUniform1iv(loc, count, v)
+    glUniform2iv = (loc: i32, count: i32, v: *u8):
+        if __soft: return
+        __glUniform2iv(loc, count, v)
     glUniform4fv = (loc: i32, count: i32, v: *u8):
         if __soft: return
         __glUniform4fv(loc, count, v)
