@@ -641,6 +641,7 @@ sloppy --web file.jo      compile for the web and open it in the browser
 sloppy build file.jo      write the executable / .html
 sloppy test file.jo       run `test` blocks
 sloppy check file.jo      type check only
+sloppy update             install the latest release (when this is not it)
 ```
 
 **Reloading while it runs.** `sloppy watch game.jo` runs the game and keeps watching the files it

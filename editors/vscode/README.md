@@ -1,6 +1,7 @@
 # Sloppy for VS Code
 
-Support for the [Sloppy](../../README.md) language:
+Support for [Sloppy](https://sloppy-lang.org), a small compiled language for making games that
+feels like a scripting language:
 
 - highlighting
 - errors as you type (several at once, when they are in different functions)
@@ -15,12 +16,23 @@ Support for the [Sloppy](../../README.md) language:
 The language features come from the compiler itself: `sloppy lsp` is a language server that any
 editor with LSP support can use.
 
-## Installing
+## The compiler
+
+The extension needs the `sloppy` compiler (Linux x86-64). If it cannot find one, it offers to
+install the latest release into `~/.sloppy`; or install it from a terminal, which also puts it
+on your PATH:
 
 ```
-tools/vsix.py                                  # writes build/sloppy-0.1.0.vsix
-code --install-extension build/sloppy-0.1.0.vsix
+curl -fsSL https://sloppy-lang.org/install | bash
 ```
 
-The extension runs `bin/sloppy` when the Sloppy repository is open in VS Code, otherwise `sloppy` from
-the PATH; the setting `sloppy.path` overrides both.
+`sloppy update` (or the command **Sloppy: Install or Update the Sloppy Compiler**) installs newer
+releases.
+
+The extension uses the setting `sloppy.path` if it is set, else `bin/sloppy` when the Sloppy
+repository is the open folder, else `sloppy` from the PATH, else `~/.sloppy/bin/sloppy`.
+
+## Links
+
+- [sloppy-lang.org](https://sloppy-lang.org): the language, its standard library, and a playground
+- [Source and issues](https://github.com/david-andrew/slop-lang)

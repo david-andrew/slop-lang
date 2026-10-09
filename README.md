@@ -87,7 +87,7 @@ draw = ():
 
 ## Getting started
 
-Install (Linux x86-64; into `~/.sloppy`, added to your PATH; run again, or `sloppy upgrade`, to upgrade):
+Install (Linux x86-64; into `~/.sloppy`, added to your PATH; `sloppy update` installs newer releases):
 
 ```
 curl -fsSL https://sloppy-lang.org/install | bash

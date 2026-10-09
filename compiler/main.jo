@@ -31,7 +31,7 @@ const SLOPPY_VERSION = "0.1.0"
 const SLOPPY_INSTALL_URL = "https://sloppy-lang.org/install"
 
 usage = ():
-    eprint("usage: sloppy   (an interactive prompt)\n       sloppy [--web] [--release] file.jo [args...]   (--web: build for the browser and open it there)\n       sloppy watch file.jo [args...]   (run it, and reload it while its files change)\n       sloppy test file.jo\n       sloppy check file.jo\n       sloppy lsp   (a language server for editors, on standard input and output)\n       sloppy --version\n       sloppy upgrade   (install the latest release)\n       sloppy build file.jo [-o output] [--target native|wasm] [--release] [--ir]")
+    eprint("usage: sloppy   (an interactive prompt)\n       sloppy [--web] [--release] file.jo [args...]   (--web: build for the browser and open it there)\n       sloppy watch file.jo [args...]   (run it, and reload it while its files change)\n       sloppy test file.jo\n       sloppy check file.jo\n       sloppy lsp   (a language server for editors, on standard input and output)\n       sloppy --version\n       sloppy update   (install the latest release, if this is not it)\n       sloppy build file.jo [-o output] [--target native|wasm] [--release] [--ir]")
     exit(2)
 
 find_lib_dir = () -> str:
@@ -47,6 +47,25 @@ find_lib_dir = () -> str:
         eprint("sloppy: cannot find the standard library next to {exe} (expected {d}/lib); set SLOPPY_LIB to its location")
         exit(2)
     "{d}/lib"
+
+# sloppy update [version]: install the latest release (or that one) over this installation, with
+# the install script as new users get it; it does nothing when this is already the latest
+self_update = (version: str):
+    exe = exe_path()
+    d = exe
+    loop _ in [0..2):
+        s = rfind(d, "/")
+        if s >= 0: d = d[..s)
+    if file_exists("{d}/compiler/main.jo"):
+        eprint("sloppy: {exe} was built from the source in {d}; to update it: cd {d} && git pull && tools/bootstrap.sh")
+        exit(1)
+    if not file_exists("{d}/lib/core/rt.jo"):
+        eprint("sloppy: {exe} is not in an installation (bin/sloppy with lib/ beside it); to install the latest release: curl -fsSL {SLOPPY_INSTALL_URL} | bash")
+        exit(1)
+    cmd = "s=$(curl -fsSL --connect-timeout 15 {SLOPPY_INSTALL_URL}) || \{ echo 'sloppy: could not download {SLOPPY_INSTALL_URL}' >&2; exit 1; }; printf '%s\\n' \"$s\" | SLOPPY_INSTALL='{d}' SLOPPY_CURRENT={SLOPPY_VERSION} bash -s '{version}'"
+    exec("/bin/sh", ["sh", "-c", cmd])
+    eprint("sloppy: could not run /bin/sh")
+    exit(1)
 
 dump = false
 cli_release = false
@@ -301,13 +320,10 @@ main = ():
         print("sloppy {SLOPPY_VERSION}")
         return
     if a.len() >= 2 and (a[1] == "--help" or a[1] == "help" or a[1] == "-h"): usage()
-    if a.len() >= 2 and a[1] == "upgrade":
-        # the install script, as it is given to new users (it replaces this installation)
-        cmd = "curl -fsSL {SLOPPY_INSTALL_URL} | bash"
-        if a.len() >= 3: cmd = "curl -fsSL {SLOPPY_INSTALL_URL} | bash -s {a[2]}"
-        exec("/bin/sh", ["sh", "-c", cmd])
-        eprint("sloppy: could not run /bin/sh")
-        exit(1)
+    if a.len() >= 2 and (a[1] == "update" or a[1] == "upgrade"):
+        version = ""
+        if a.len() >= 3: version = a[2]
+        self_update(version)
     lib_dir = find_lib_dir()
     # no file: the interactive prompt
     if a.len() < 2 or a[1] == "repl":

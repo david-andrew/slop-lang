@@ -11,6 +11,11 @@ pkg = json.load(open(os.path.join(src, "package.json")))
 out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "build", f"sloppy-{pkg['version']}.vsix")
 os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
 
+repo = pkg['repository']['url']
+# (as vsce does: the keywords, the languages and their file extensions)
+langs = pkg['contributes']['languages']
+tags = ','.join(dict.fromkeys(pkg.get('keywords', []) + [l['id'] for l in langs] + ['__ext_' + e.lstrip('.') for l in langs for e in l.get('extensions', [])]))
+
 files = []
 for dirpath, _, names in os.walk(src):
     for n in sorted(names):
@@ -24,7 +29,7 @@ manifest = f"""<?xml version="1.0" encoding="utf-8"?>
     <Identity Language="en-US" Id="{pkg['name']}" Version="{pkg['version']}" Publisher="{pkg['publisher']}" />
     <DisplayName>{escape(pkg['displayName'])}</DisplayName>
     <Description xml:space="preserve">{escape(pkg['description'])}</Description>
-    <Tags>sloppy</Tags>
+    <Tags>{escape(tags)}</Tags>
     <Categories>Programming Languages</Categories>
     <GalleryFlags>Public</GalleryFlags>
     <Properties>
@@ -34,6 +39,13 @@ manifest = f"""<?xml version="1.0" encoding="utf-8"?>
       <Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="workspace" />
       <Property Id="Microsoft.VisualStudio.Code.LocalizedLanguages" Value="" />
       <Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true" />
+      <Property Id="Microsoft.VisualStudio.Code.ExecutesCode" Value="true" />
+      <Property Id="Microsoft.VisualStudio.Services.Content.Pricing" Value="Free" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="{repo}" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Getstarted" Value="{pkg['homepage']}" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.GitHub" Value="{repo}" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Support" Value="{pkg['bugs']['url']}" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Learn" Value="{pkg['homepage']}" />
     </Properties>
     <License>extension/LICENSE</License>
     <Icon>extension/images/icon.png</Icon>
