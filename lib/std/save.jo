@@ -1,0 +1,76 @@
+# Data a program keeps between runs: saved games, settings, high scores.
+#
+#   save_data("progress", "{level}\n{coins}")
+#   if let s = load_data("progress"): ...
+#
+# Each program has its own place, named after it (PROGRAM_NAME: the build block's `name`, else
+# the main file's name): on Linux ~/.local/share/<name>/ (or $XDG_DATA_HOME), on Windows
+# %APPDATA%\<name>\, in a web page the browser's storage for the page (it survives reloads and
+# restarts of the browser). SLOPPY_SAVE_DIR puts it somewhere else (tests).
+
+when TARGET == "wasm":
+    extern __wasm_save_set = (key: *u8, n: int, p: *u8, len: int) -> int
+    extern __wasm_save_get = (key: *u8, n: int, out: *u8, cap: int) -> int
+
+# the directory a program's data goes to (made when first written; "" in a web page)
+save_dir = () -> str:
+    if let d = env("SLOPPY_SAVE_DIR"):
+        if len(d) > 0: return "{d}/{PROGRAM_NAME}"
+    when TARGET == "windows":
+        base = env("APPDATA") ?? ""
+        if len(base) == 0: base = (env("USERPROFILE") ?? ".") + "\\AppData\\Roaming"
+        return "{base}\\{PROGRAM_NAME}"
+    else when TARGET == "linux":
+        base = env("XDG_DATA_HOME") ?? ""
+        if len(base) == 0: base = (env("HOME") ?? ".") + "/.local/share"
+        return "{base}/{PROGRAM_NAME}"
+    else:
+        return ""
+
+# keep contents under name (a file name: no / or \); false if it could not be written
+save_data = (name: str, contents: str) -> bool:
+    if not __save_name_ok(name): return false
+    when TARGET == "wasm":
+        key = "{PROGRAM_NAME}/{name}"
+        return __wasm_save_set(data(key), len(key), data(contents), len(contents)) == 1
+    else:
+        d = save_dir()
+        __mkdirs(d)
+        # (written beside, then renamed over the old one: a crash midway leaves the old data)
+        path = "{d}/{name}"
+        if not write_file(path + ".new", contents): return false
+        return __rename(path + ".new", path)
+
+# what was kept under name; none if nothing was
+load_data = (name: str) -> str?:
+    if not __save_name_ok(name): return none
+    when TARGET == "wasm":
+        key = "{PROGRAM_NAME}/{name}"
+        b = __wasm_bytes((p: *u8, cap: int): __wasm_save_get(data(key), len(key), p, cap))
+        if b.len() == 0 and __wasm_save_get(data(key), len(key), data(b), 0) < 0: return none
+        return str_from_bytes(b)
+    else:
+        return read_file("{save_dir()}/{name}")
+
+__save_name_ok = (name: str) -> bool:
+    if len(name) == 0 or name == "." or name == "..": return false
+    loop c in name:
+        if c == '/' or c == '\\' or c == ':' or c < ' ': return false
+    true
+
+# make a directory and the ones it is in
+__mkdirs = (path: str):
+    if len(path) == 0 or file_exists(path): return
+    i = max(rfind(path, "/"), rfind(path, "\\"))
+    if i > 0: __mkdirs(path[..i))
+    mkdir(path)
+
+__rename = (from: str, to: str) -> bool:
+    when TARGET == "windows":
+        wf = __wide(from)
+        wt = __wide(to)
+        return MoveFileExW(data(wf), data(wt), u32(1)) != 0       # MOVEFILE_REPLACE_EXISTING
+    else when TARGET == "linux":
+        return syscall(82, data(__zstr(from)), data(__zstr(to))) == 0
+    else:
+        return false

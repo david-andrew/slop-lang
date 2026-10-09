@@ -151,6 +151,7 @@ update_fn = 0
 draw_fn = 0
 init_fns: int[]
 build_node = 0
+program_name = ""               # PROGRAM_NAME: the build block's name, else the main file's (set in check_program)
 global_ids: int[]
 
 new_sym = (name: int, kind: SK, r: int, decl: int) -> int:
@@ -1842,8 +1843,12 @@ check_build_block = ():
             if word != "debug" and word != "release": fatal(nodes[v].pos, "build option 'opt' is debug or release")
         else if key == "output":
             if nodes[v].kind != .str_lit or nodes[v].aux != 0 or len(word) == 0: fatal(nodes[v].pos, "build option 'output' is a file name in quotes: output = \"game\"")
+        else if key == "name":
+            if nodes[v].kind != .str_lit or nodes[v].aux != 0 or len(word) == 0: fatal(nodes[v].pos, "build option 'name' is the program's name in quotes: name = \"Star Garden\"")
+            loop c in word:
+                if c == '/' or c == '\\' or c == ':' or c < ' ': fatal(nodes[v].pos, "the program's name is also its save folder's: it cannot contain / \\ or :")
         else:
-            fatal(nodes[int(nodes[s].a)].pos, "unknown build option '{key}' (the options are target, opt and output)")
+            fatal(nodes[int(nodes[s].a)].pos, "unknown build option '{key}' (the options are target, opt, output and name)")
 
 # ---------------- program ----------------
 want_cpu_flag = false           # (release builds for x86-64: the vectorizer may use __cpu_avx2)
@@ -1882,7 +1887,9 @@ add_universe = ():
     fl = mk(.bool_lit, 0)
     wv = mk(.bool_lit, 0)
     if watch_build: nodes[wv].ival = 1
-    consts = [("TARGET", tv, T_STR), ("DEBUG", tr, T_BOOL), ("BOOTSTRAP", fl, T_BOOL), ("WATCH", wv, T_BOOL)]
+    pn = mk(.str_lit, 0)
+    nodes[pn].sval = i32(intern(program_name))
+    consts = [("TARGET", tv, T_STR), ("DEBUG", tr, T_BOOL), ("BOOTSTRAP", fl, T_BOOL), ("WATCH", wv, T_BOOL), ("PROGRAM_NAME", pn, T_STR)]
     loop c in consts:
         nm = intern(c.0)
         globals.push(Global(name = i32(nm), is_const = true, init = i32(c.1), state = 2, type = i32(c.2)))
@@ -1931,6 +1938,11 @@ synth_str = (s: str, pos: int) -> int:
     n
 
 check_program = (main_path: str):
+    if len(program_name) == 0:
+        program_name = main_path
+        s = rfind(program_name, "/")
+        if s >= 0: program_name = program_name[s + 1..]
+        program_name = strip_ext(program_name)
     add_universe()
     load_prelude()
     mainm = load_module(main_path, false, -1)

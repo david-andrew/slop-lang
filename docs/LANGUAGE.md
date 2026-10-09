@@ -575,11 +575,13 @@ the game/graphics/audio API) is always available without importing.
 build:                          # build options live in the source
     target = wasm               # native (default: this machine) | linux | windows | wasm
     opt = release               # debug | release
-    output = "mygame"
+    output = "mygame"           # the file `sloppy build` writes (beside the program)
+    name = "My Game"            # PROGRAM_NAME: window title, and where save_data keeps data
 
 when TARGET == "wasm":          # compile-time conditional; the dead branch is not compiled
     ...
-else when TARGET == "windows":  # (TARGET is "linux", "windows" or "wasm")
+else when TARGET == "windows":  # (TARGET is "linux", "windows" or "wasm"; also DEBUG,
+                                #  and PROGRAM_NAME: the build block's name, else the file's)
     ...
 else:
     ...

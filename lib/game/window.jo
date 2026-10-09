@@ -187,17 +187,11 @@ is_mouse_locked = () -> bool: __mouse_lock_want and __platform_mouse_locked()
 
 __mouse_lock_want = false
 
-# the program's name (shapes for shapes.jo), for a window without a title of its own
+# the program's name (shapes for shapes.jo, or the build block's name), for a window without a
+# title of its own
 __program_name = () -> str:
-    a = args()
-    if a.len() == 0: return "sloppy"
-    n = a[0]
-    s = rfind(n, "/")
-    if s >= 0: n = n[s + 1..]
-    loop ext in [".bin", ".test", ".html"]:
-        if ends_with(n, ext): n = n[..len(n) - len(ext))
-    if len(n) == 0: return "sloppy"
-    n
+    if len(PROGRAM_NAME) == 0: return "sloppy"
+    PROGRAM_NAME
 
 # Open the game window (called automatically when the program defines update/draw).
 window = (title: str = "", width: int = 1280, height: int = 720):

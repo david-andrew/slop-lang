@@ -24,6 +24,8 @@ tests = sorted(glob.glob(os.path.join(root, "tests", "t", "*.jo")))
 tests = [t for t in tests if pattern in os.path.basename(t)]
 passed = failed = 0
 os.makedirs(tmp, exist_ok=True)
+import shutil
+shutil.rmtree(os.path.join(tmp, "saved-data"), ignore_errors=True)     # (save_data: tests start with nothing saved)
 for t in tests:
     name = os.path.basename(t)[:-3]
     exp_path = t[:-3] + ".out"
@@ -61,7 +63,8 @@ for t in tests:
     else:
         run = [exe]
     try:
-        r = subprocess.run(run, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
+        r = subprocess.run(run, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
+                           env=dict(os.environ, SLOPPY_SAVE_DIR=os.path.join(tmp, "saved-data")))
     except subprocess.TimeoutExpired:
         print(f"FAIL {name}: timed out")
         failed += 1

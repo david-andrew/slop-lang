@@ -139,6 +139,7 @@ scan_build_block = (path: str):
         if len(val) >= 2 and val[0] == '"': val = val[1..len(val) - 1)
         if key == "target": build_target = val
         else if key == "output": build_output = val
+        else if key == "name": program_name = val
         else if key == "opt": opt_release = val == "release"
 
 lower_only = false      # (the language server: what lowering finds wrong, without code)

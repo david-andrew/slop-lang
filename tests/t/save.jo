@@ -1,0 +1,9 @@
+# save_data / load_data: data kept between runs, in the program's own place
+# requires: sloppy
+print(PROGRAM_NAME)
+print(load_data("never saved"))
+print(save_data("progress", "level 3\ncoins 120"), load_data("progress"))
+print(save_data("progress", "level 4"), load_data("progress"))
+print(save_data("bad/name", "x"), load_data("../progress"))
+b = [u8(0), 255, 10, 13, 128]
+print(save_data("bytes", str_from_bytes(b)), bytes(load_data("bytes") ?? ""))

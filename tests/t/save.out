@@ -1,0 +1,6 @@
+save
+none
+true "level 3\ncoins 120"
+true "level 4"
+false none
+true [0, 255, 10, 13, 128]

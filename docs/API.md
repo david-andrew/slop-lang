@@ -294,6 +294,24 @@ norm = (a: f64[]) -> f64
 (-)[T] = (a: NDArray[T], b: NDArray[T]) -> NDArray[T]
 ```
 
+### save.jo
+
+Data a program keeps between runs: saved games, settings, high scores.  
+  
+save_data("progress", "{level}\n{coins}")  
+if let s = load_data("progress"): ...  
+  
+Each program has its own place, named after it (PROGRAM_NAME: the build block's `name`, else  
+the main file's name): on Linux ~/.local/share/<name>/ (or $XDG_DATA_HOME), on Windows  
+%APPDATA%\<name>\, in a web page the browser's storage for the page (it survives reloads and  
+restarts of the browser). SLOPPY_SAVE_DIR puts it somewhere else (tests).  
+
+```gdscript
+save_dir = () -> str    # the directory a program's data goes to (made when first written; "" in a web page)
+save_data = (name: str, contents: str) -> bool    # keep contents under name (a file name: no / or \); false if it could not be written
+load_data = (name: str) -> str?    # what was kept under name; none if nothing was
+```
+
 ### thread.jo
 
 Data parallelism on a pool of worker threads (fork-join).  
@@ -350,7 +368,7 @@ sfx_whoosh = () -> Sound
 sfx_chime = () -> Sound
 note_freq = (name: str) -> f64    # note name ("C4", "F#3", "Bb5") to frequency in Hz
 melody = (notes: str, bpm: f64 = 120.0, wave: Wave = .triangle, volume: f64 = 0.3, step: f64 = 0.5) -> Sound    # render a melody: notes separated by spaces, "-" holds the previous note, "." is a rest
-load_wav = (file: u8[]) -> Sound
+load_wav = (file: u8[]) -> Sound    # a WAV file's sound: integer samples of 8, 16, 24 or 32 bits or floats of 32 or 64, any number of channels (the first two are used; mono plays on both), any rate (resampled to MIX_RATE). Other files are an error that says what they are.
 ```
 
 ### dl.jo
