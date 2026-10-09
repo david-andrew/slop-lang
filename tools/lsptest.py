@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Test the language server (sloppy lsp) the way an editor uses it.
 usage: tools/lsptest.py [path/to/sloppy]        (default: bin/sloppy)"""
-import json, os, subprocess, sys, tempfile
+import json, os, pathlib, subprocess, sys, tempfile, urllib.parse
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sloppy = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(root, "bin", "sloppy")
+sloppy = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(root, "bin", "sloppy.exe" if os.name == "nt" else "sloppy")
+to_uri = lambda p: pathlib.Path(p).as_uri()
+# (the same file: Windows URIs may differ in a drive letter's case and in how its colon is written)
+same_uri = lambda a, b: a == b or os.name == "nt" and urllib.parse.unquote(a).lower() == urllib.parse.unquote(b).lower()
 
 
 class Client:
@@ -112,8 +115,8 @@ main = ():
     print(d, n, t, xs, p.dist(q), xs.len(), p.x, dir)
 '''
 path = os.path.join(tmp, "prog.jo")
-open(path, "w").write(prog)
-uri = "file://" + path
+open(path, "w", encoding="utf-8").write(prog)
+uri = to_uri(path)
 c.set_text(uri, prog)
 check("no errors", c.diagnostics(uri), [])
 
@@ -171,7 +174,7 @@ check("symbols", [(s["name"], s["kind"], [k["name"] for k in s.get("children", [
 
 # ---- completion ----
 cpath = os.path.join(tmp, "comp.jo")
-curi = "file://" + cpath
+curi = to_uri(cpath)
 base = '''struct Ship:
     pos: vec2
     hp: int
@@ -213,7 +216,7 @@ check("nothing in comments", complete("x = 1  # s.|"), [])
 
 # ---- errors ----
 epath = os.path.join(tmp, "errs.jo")
-euri = "file://" + epath
+euri = to_uri(epath)
 c.set_text(euri, '''helper = (x: int) -> int:
     y = x +
     y
@@ -240,9 +243,9 @@ check("lowering: first the checker's", c.diagnostics(euri), [])
 check("lowering: then lowering's", [(d["range"]["start"]["line"], d["message"][:39]) for d in c.diagnostics(euri)], [(3, "parallel_map runs this function on many")])
 
 # ---- several files: use, errors in another file ----
-open(os.path.join(tmp, "util.jo"), "w").write("# doubles\ndouble = (x: int) -> int: x * 2\n")
+open(os.path.join(tmp, "util.jo"), "w", encoding="utf-8").write("# doubles\ndouble = (x: int) -> int: x * 2\n")
 mpath = os.path.join(tmp, "main.jo")
-muri = "file://" + mpath
+muri = to_uri(mpath)
 msrc = "use 'util.jo'\nprint(double(21))\n"
 c.set_text(muri, msrc)
 check("multi-file: no errors", c.diagnostics(muri), [])
@@ -255,20 +258,20 @@ check("multi-file: references", sorted(where(refs)), [("main.jo", 1, 6), ("util.
 ren = c.request("textDocument/rename", {"textDocument": {"uri": muri}, "position": lc(msrc, msrc.index("double")), "newName": "twice"})
 check("multi-file: rename", sorted((os.path.basename(u), len(es)) for u, es in ren["changes"].items()), [("main.jo", 1), ("util.jo", 1)])
 # an error in the used file (not open): reported on that file
-open(os.path.join(tmp, "util.jo"), "w").write("double = (x: int) -> int: x.nope\n")
-uuri = "file://" + os.path.join(tmp, "util.jo")
+open(os.path.join(tmp, "util.jo"), "w", encoding="utf-8").write("double = (x: int) -> int: x.nope\n")
+uuri = to_uri(os.path.join(tmp, "util.jo"))
 c.set_text(muri, msrc + "\n")
 check("multi-file: none in the main file", c.diagnostics(muri), [])
-errs = [m["params"]["diagnostics"] for m in c.notes if m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uuri]
+errs = [m["params"]["diagnostics"] for m in c.notes if m.get("method") == "textDocument/publishDiagnostics" and same_uri(m["params"]["uri"], uuri)]
 check("multi-file: error in the used file", [[(d["range"]["start"]["line"], d["message"]) for d in e] for e in errs][-1:], [[(0, "int has no field 'nope'")]])
-open(os.path.join(tmp, "util.jo"), "w").write("double = (x: int) -> int: x * 2\n")
+open(os.path.join(tmp, "util.jo"), "w", encoding="utf-8").write("double = (x: int) -> int: x * 2\n")
 c.set_text(muri, msrc)
 c.diagnostics(muri)
-errs = [m["params"]["diagnostics"] for m in c.notes if m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uuri]
+errs = [m["params"]["diagnostics"] for m in c.notes if m.get("method") == "textDocument/publishDiagnostics" and same_uri(m["params"]["uri"], uuri)]
 check("multi-file: fixed", errs[-1:], [[]])
 
 # ---- from m import names ----
-open(os.path.join(tmp, "util.jo"), "w").write("# doubles\ndouble = (x: int) -> int: x * 2\n_secret = 3\n")
+open(os.path.join(tmp, "util.jo"), "w", encoding="utf-8").write("# doubles\ndouble = (x: int) -> int: x * 2\n_secret = 3\n")
 fsrc = "from 'util.jo' import double as twice, _secret\nprint(twice(_secret))\n"
 c.set_text(muri, fsrc)
 check("from-import: no errors", c.diagnostics(muri), [])
@@ -285,8 +288,8 @@ c.diagnostics(muri)
 
 # ---- a library file ----
 lpath = os.path.join(root, "lib", "game", "stats.jo")
-luri = "file://" + lpath
-lsrc = open(lpath).read()
+luri = to_uri(lpath)
+lsrc = open(lpath, encoding="utf-8").read()
 c.set_text(luri, lsrc)
 check("library file: no errors", c.diagnostics(luri), [])
 h = c.request("textDocument/hover", {"textDocument": {"uri": luri}, "position": lc(lsrc, lsrc.index("__stats_summary(120)"))})

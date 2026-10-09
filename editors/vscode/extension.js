@@ -125,7 +125,10 @@ const zlib = require('zlib');
 const crypto = require('crypto');
 
 const RELEASES = 'https://github.com/david-andrew/sloppy-lang/releases/latest/download/';
-const installDir = () => process.env.SLOPPY_INSTALL || path.join(os.homedir(), '.sloppy');
+const windows = process.platform === 'win32';
+const EXE = windows ? 'sloppy.exe' : 'sloppy';
+const installDir = () => process.env.SLOPPY_INSTALL ||
+    (windows ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'sloppy') : path.join(os.homedir(), '.sloppy'));
 
 const isExe = (p) => { try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch (e) { return false; } };
 
@@ -135,13 +138,13 @@ function findSloppy() {
     const configured = vscode.workspace.getConfiguration('sloppy').get('path');
     if (configured) return configured;
     for (const folder of vscode.workspace.workspaceFolders || []) {
-        const p = path.join(folder.uri.fsPath, 'bin', 'sloppy');
+        const p = path.join(folder.uri.fsPath, 'bin', EXE);
         if (isExe(p) && fs.existsSync(path.join(folder.uri.fsPath, 'lib', 'core', 'rt.jo'))) return p;
     }
     for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-        if (dir && isExe(path.join(dir, 'sloppy'))) return path.join(dir, 'sloppy');
+        if (dir && isExe(path.join(dir, EXE))) return path.join(dir, EXE);
     }
-    const installed = path.join(installDir(), 'bin', 'sloppy');
+    const installed = path.join(installDir(), 'bin', EXE);
     return isExe(installed) ? installed : null;
 }
 
@@ -193,11 +196,34 @@ function untar(buf) {
     return files;
 }
 
+// (Windows: tools/install.ps1 does it, in PowerShell)
+function installSloppyWindows() {
+    return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Installing Sloppy' }, () => new Promise((resolve) => {
+        const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+        const p = cp.spawn(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'irm https://sloppy-lang.org/install.ps1 | iex'], { windowsHide: true });
+        let log = '';
+        p.stdout.on('data', (d) => { log += d; });
+        p.stderr.on('data', (d) => { log += d; });
+        p.on('error', (e) => { vscode.window.showErrorMessage(`Could not install Sloppy: ${e.message}`); resolve(false); });
+        p.on('exit', (code) => {
+            output.appendLine(log);
+            if (code === 0 && isExe(path.join(installDir(), 'bin', EXE))) {
+                vscode.window.showInformationMessage(`Sloppy was installed to ${path.join(installDir(), 'bin')} (and added to your PATH for new terminals).`);
+                resolve(true);
+            } else {
+                vscode.window.showErrorMessage('Could not install Sloppy (see the Sloppy output). In PowerShell: irm https://sloppy-lang.org/install.ps1 | iex');
+                resolve(false);
+            }
+        });
+    }));
+}
+
 async function installSloppy() {
-    if (process.platform !== 'linux' || process.arch !== 'x64') {
-        vscode.window.showErrorMessage('Sloppy runs on Linux x86-64. (Its programs run in any browser: try the playground.)');
+    if (process.arch !== 'x64' || (process.platform !== 'linux' && !windows)) {
+        vscode.window.showErrorMessage('Sloppy runs on Linux and Windows, on x86-64. (Its programs run in any browser: try the playground.)');
         return false;
     }
+    if (windows) return installSloppyWindows();
     try {
         await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Installing Sloppy' }, async (progress) => {
             progress.report({ message: 'downloading the latest release\u2026' });
@@ -303,8 +329,16 @@ function runInTerminal(args) {
         let term = vscode.window.terminals.find((t) => t.name === 'Sloppy');
         if (!term) term = vscode.window.createTerminal('Sloppy');
         term.show(true);
-        const quote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
-        term.sendText([sloppyCommand(), ...args, doc.uri.fsPath].map(quote).join(' '));
+        const words = [sloppyCommand(), ...args, doc.uri.fsPath];
+        const shell = (vscode.env.shell || '').toLowerCase();
+        if (/cmd(\.exe)?$/.test(shell)) {
+            term.sendText(words.map((s) => `"${s}"`).join(' '));
+        } else if (/pwsh|powershell/.test(shell) || (windows && !/(ba|z|fi)?sh(\.exe)?$/.test(shell))) {
+            // (PowerShell: '' inside quotes, and & to run a quoted command)
+            term.sendText('& ' + words.map((s) => `'${s.replace(/'/g, "''")}'`).join(' '));
+        } else {
+            term.sendText(words.map((s) => `'${s.replace(/'/g, `'\\''`)}'`).join(' '));
+        }
     });
 }
 

@@ -36,7 +36,10 @@ __backtrace_from = (fp0: int, pc: int):
             # (frames of callers are above; another stack -- a thread's parent -- is not followed)
             if next <= fp or next - fp > (1 << 23): break
             fp = next
-        if let exe = read_bytes("/proc/self/exe"): __backtrace_print(rets, counts, exe)
+        when TARGET == "windows":
+            __backtrace_print_pe(rets, counts)
+        else:
+            if let exe = read_bytes("/proc/self/exe"): __backtrace_print(rets, counts, exe)
         __in_backtrace = false
 
 # ---------------- crashes ----------------
@@ -44,7 +47,43 @@ __backtrace_from = (fp0: int, pc: int):
 # another fatal signal is told like a panic, with a backtrace. The handler runs on a stack of
 # its own, since a stack overflow leaves none.
 # (the compiler puts a call of __crash_install first in a native program)
-when TARGET != "wasm":
+when TARGET == "windows":
+    # (an exception nothing handled: on the stack it happened on, so for a stack overflow a guard
+    # page 64 KB above the end of the main thread's stack leaves room to tell it)
+    __crash_install = () -> bool:
+        if env("SLOPPY_NO_CRASH_HANDLER") != none: return false
+        f: cfn(*u8) -> i32 = __w32_crash
+        SetUnhandledExceptionFilter(f as *u8)
+        lo = [0]
+        hi = [0]
+        GetCurrentThreadStackLimits(data(lo), data(hi))
+        old: u32[] = [0]
+        if lo[0] != 0: VirtualProtect((lo[0] + (64 << 10)) as *u8, 4096, u32(0x104), data(old))   # PAGE_READWRITE | PAGE_GUARD
+        true
+
+    # (EXCEPTION_POINTERS: the record (code at 0, address at 32 + 8) and the registers (CONTEXT:
+    # rsp at 0x98, rbp at 0xA0, rip at 0xF8))
+    @cabi
+    __w32_crash = (ep: *u8) -> i32:
+        rec = (ep as **u8)[0]
+        ctx = (ep as **u8)[1]
+        code = int((rec as *u32)[0])
+        rsp = ((ctx + 0x98) as *int)[0]
+        rbp = ((ctx + 0xA0) as *int)[0]
+        rip = ((ctx + 0xF8) as *int)[0]
+        what = "crashed (exception 0x{code:x})"
+        if code == 0x80000001 or code == 0xC00000FD: what = "stack overflow (a function calls itself without end, or too deeply?)"
+        else if code == 0xC0000005:
+            a = ((rec + 40) as *int)[0]
+            if a < rsp + 4096 and a > rsp - (1 << 20): what = "stack overflow (a function calls itself without end, or too deeply?)"
+            else: what = "crashed: memory access at 0x{a:x} (a bad pointer, in code using raw pointers or C?)"
+        else if code == 0xC0000094 or code == 0xC0000095: what = "arithmetic error (division of the smallest integer by -1?)"
+        else if code == 0xC000001D or code == 0xC0000096: what = "illegal instruction"
+        __write_err("panic: {what}\n")
+        __backtrace_from(rbp, rip)
+        __exit(101)
+        0
+else when TARGET != "wasm":
     __crash_install = () -> bool:
         if env("SLOPPY_NO_CRASH_HANDLER") != none: return false
         size = 1 << 16
@@ -89,6 +128,7 @@ __cstr_at = (b: u8[], o: int) -> str:
     loop e < b.len() and b[e] != 0: e += 1
     str_from_bytes(b[o..e))
 
+# the function each return address is in, from the program file's .symtab; then the report
 __backtrace_print = (rets: int[], counts: int[], exe: u8[]):
     if exe.len() < 64 or exe[0] != 0x7F: return
     shoff = __u64_at(exe, 0x28)
@@ -100,7 +140,6 @@ __backtrace_print = (rets: int[], counts: int[], exe: u8[]):
     sym_size = 0
     str_off = 0
     lines_off = 0
-    lines_size = 0
     text_addr = 0
     loop i in [0..shnum):
         h = shoff + i * 64
@@ -109,21 +148,75 @@ __backtrace_print = (rets: int[], counts: int[], exe: u8[]):
             sym_off = __u64_at(exe, h + 24)
             sym_size = __u64_at(exe, h + 32)
         else if nm == ".strtab": str_off = __u64_at(exe, h + 24)
-        else if nm == ".sloppy_lines":
-            lines_off = __u64_at(exe, h + 24)
-            lines_size = __u64_at(exe, h + 32)
+        else if nm == ".sloppy_lines": lines_off = __u64_at(exe, h + 24)
         else if nm == ".text": text_addr = __u64_at(exe, h + 16)
     if sym_off == 0 or lines_off == 0: return
+    fnames: str[]
+    loop ret in rets:
+        fname = ""
+        s = sym_off
+        loop s + 24 <= sym_off + sym_size:
+            v = __u64_at(exe, s + 8)
+            sz = __u64_at(exe, s + 16)
+            if ret > v and ret <= v + sz:
+                fname = __cstr_at(exe, str_off + __u32_at(exe, s))
+                break
+            s += 24
+        fnames.push(fname)
+    __backtrace_report(rets, counts, fnames, exe, lines_off, text_addr)
+
+# (Windows: the program's .sloppy section, where it is loaded: compiler/pe.jo, pe_backtrace_info)
+__backtrace_print_pe = (rets: int[], counts: int[]):
+    base = 0x400000 as *u8
+    pe = base + int(((base + 0x3C) as *u32)[0])
+    nsec = int(((pe + 6) as *u16)[0])
+    sects = pe + 24 + int(((pe + 20) as *u16)[0])
+    text_addr = 0
+    info: u8[]
+    loop i in [0..nsec):
+        h = sects + i * 40
+        nm = __cstr(h)
+        if len(nm) > 8: nm = nm[..8)
+        rva = int(((h + 12) as *u32)[0])
+        size = int(((h + 8) as *u32)[0])
+        if nm == ".text": text_addr = 0x400000 + rva
+        else if nm == ".sloppy":
+            info = fill(u8(0), size)
+            mem_copy(data(info), base + rva, size)
+    if info.len() < 8 or info[0] != 'S' or info[3] != '1': return
+    n = __u32_at(info, 4)
+    p = 8
+    starts = fill(0, n)
+    ends = fill(0, n)
+    names: str[]
+    loop k in [0..n):
+        starts[k] = text_addr + __u32_at(info, p)
+        ends[k] = starts[k] + __u32_at(info, p + 4)
+        ln = __u32_at(info, p + 8)
+        names.push(str_from_bytes(info[p + 12..p + 12 + ln)))
+        p += 12 + ln
+    fnames: str[]
+    loop ret in rets:
+        fname = ""
+        loop k in [0..n):
+            if ret > starts[k] and ret <= ends[k]:
+                fname = names[k]
+                break
+        fnames.push(fname)
+    if p + 4 <= info.len(): __backtrace_report(rets, counts, fnames, info, p, text_addr)
+
+# the frames shown, with the lines of the calls from the line table at b[lines_off..]
+__backtrace_report = (rets: int[], counts: int[], fnames: str[], b: u8[], lines_off: int, text_addr: int):
     # the line table: return address -> (file, line)
     files: str[]
     p = lines_off + 4
-    nf = __u32_at(exe, p)
+    nf = __u32_at(b, p)
     p += 4
     loop k in [0..nf):
-        n = __u32_at(exe, p)
-        files.push(str_from_bytes(exe[p + 4..p + 4 + n)))
+        n = __u32_at(b, p)
+        files.push(str_from_bytes(b[p + 4..p + 4 + n)))
         p += 4 + n
-    ne = __u32_at(exe, p)
+    ne = __u32_at(b, p)
     p += 4
     addrs = fill(0, ne)
     fis = fill(0, ne)
@@ -135,7 +228,7 @@ __backtrace_print = (rets: int[], counts: int[], exe: u8[]):
             x = 0
             sh = 0
             loop true:
-                c = int(exe[p])
+                c = int(b[p])
                 p += 1
                 x |= (c & 127) << sh
                 sh += 7
@@ -146,22 +239,10 @@ __backtrace_print = (rets: int[], counts: int[], exe: u8[]):
         a += v
         addrs[k] = a
     shown = 0
-    hidden = 0
     loop ri in 0.. and ret in rets:
-        # the function the return address is in
-        fname = ""
-        s = sym_off
-        loop s + 24 <= sym_off + sym_size:
-            v = __u64_at(exe, s + 8)
-            sz = __u64_at(exe, s + 16)
-            if ret > v and ret <= v + sz:
-                fname = __cstr_at(exe, str_off + __u32_at(exe, s))
-                break
-            s += 24
+        fname = fnames[ri]
         # (runtime and library internals are left out)
-        if len(fname) == 0 or starts_with(fname, "__") or fname == "_start":
-            hidden += 1
-            continue
+        if len(fname) == 0 or starts_with(fname, "__") or fname == "_start": continue
         lo = 0
         hi = ne - 1
         found = -1

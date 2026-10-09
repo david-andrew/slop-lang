@@ -18,12 +18,18 @@ editor with LSP support can use.
 
 ## The compiler
 
-The extension needs the `sloppy` compiler (Linux x86-64). If it cannot find one, it offers to
-install the latest release into `~/.sloppy`; or install it from a terminal, which also puts it
-on your PATH:
+The extension needs the `sloppy` compiler (Linux or Windows, x86-64). If it cannot find one, it
+offers to install the latest release (into `~/.sloppy`, or `%LOCALAPPDATA%\sloppy` on Windows); or
+install it from a terminal, which also puts it on your PATH:
 
 ```sh
 curl -fsSL https://sloppy-lang.org/install | bash
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://sloppy-lang.org/install.ps1 | iex
 ```
 
 `sloppy update` (or the command **Sloppy: Install or Update the Sloppy Compiler**) installs newer

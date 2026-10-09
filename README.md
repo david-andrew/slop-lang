@@ -11,14 +11,14 @@
   <a href="https://github.com/david-andrew/sloppy-lang/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/david-andrew/sloppy-lang/test.yml?label=tests"></a>
   <a href="https://sloppy-lang.org/"><img alt="Website" src="https://img.shields.io/github/actions/workflow/status/david-andrew/sloppy-lang/site.yml?label=website"></a>
   <a href="https://sloppy-lang.org/playground/"><img alt="Try it in the browser" src="https://img.shields.io/badge/playground-try%20it%20in%20the%20browser-2f6a7a"></a>
-  <img alt="Platform: Linux x86-64 and the web" src="https://img.shields.io/badge/platform-linux%20x86--64%20%7C%20web-555">
+  <img alt="Platform: Linux and Windows on x86-64, and the web" src="https://img.shields.io/badge/platform-linux%20%7C%20windows%20%7C%20web-555">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-555"></a>
 </p>
 
 Sloppy is a small, compiled, statically typed language that feels like a scripting language,
 built for making games. `sloppy game.jo` compiles the whole program and runs it in a blink;
-`sloppy build game.jo` writes a fully static Linux executable, and with `target = wasm` a
-single self-contained `.html` file that runs in a browser straight from disk.
+`sloppy build game.jo` writes a standalone executable for Linux or Windows, and with
+`target = wasm` a single self-contained `.html` file that runs in a browser straight from disk.
 
 ```gdscript
 # hello.jo
@@ -87,11 +87,19 @@ draw = ():
 
 ## Getting started
 
-Install (Linux x86-64; into `~/.sloppy`, added to your PATH; `sloppy update` installs newer releases):
+Install on Linux (x86-64; into `~/.sloppy`, added to your PATH; `sloppy update` installs newer releases):
 
 ```sh
 curl -fsSL https://sloppy-lang.org/install | bash
 ```
+
+On Windows (10 or 11, x64; into `%LOCALAPPDATA%\sloppy`, added to your PATH), in PowerShell:
+
+```powershell
+irm https://sloppy-lang.org/install.ps1 | iex
+```
+
+(On Windows, the interactive prompt and `sloppy watch` are not there yet; everything else is.)
 
 Or try it in the browser: [the playground](https://sloppy-lang.org/playground/).
 
@@ -208,7 +216,13 @@ propagation, common-subexpression and redundant-load elimination keyed by memory
 bounds-check and copy-on-write-check elimination, inlining of small functions, and folding of
 array indexing into x86 addressing modes.
 
-Native programs are static executables that make Linux system calls directly. Programs that
+Windows programs (`--target windows`, the default on Windows) are PE executables that import
+only what finds everything else (LoadLibraryA, GetProcAddress and three more from kernel32.dll):
+the rest of Windows is looked up as it is first used, as C libraries are on Linux. Games open a
+Win32 window and draw with OpenGL through WGL (the same shaders: a core 4.3 context accepts them),
+or with the software renderer; gamepads are XInput's, sound goes through waveOut.
+
+On Linux, native programs are static executables that make system calls directly. Programs that
 open a window load the system's libraries for it at run time with a tiny in-process loader (the
 static binary maps the system dynamic linker and asks it for the libraries): libwayland-client
 and libdecor in a Wayland session (so windows get the desktop's own decorations; frames are

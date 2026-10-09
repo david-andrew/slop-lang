@@ -107,6 +107,12 @@ when TARGET == "windows":
     @lib("kernel32.dll")
     extern GetLastError = () -> u32
     @lib("kernel32.dll")
+    extern SetUnhandledExceptionFilter = (f: *u8) -> *u8
+    @lib("kernel32.dll")
+    extern GetCurrentThreadStackLimits = (low: *int, high: *int)
+    @lib("kernel32.dll")
+    extern VirtualProtect = (p: *u8, size: int, protect: u32, old: *u32) -> i32
+    @lib("kernel32.dll")
     extern GetCurrentDirectoryW = (n: u32, buf: *u16) -> u32
     @lib("kernel32.dll")
     extern GetTempPathW = (n: u32, buf: *u16) -> u32

@@ -29,3 +29,37 @@ jobs:
         with:
           name: rendered-frames
           path: /tmp/sloppy-render/*.png
+
+  # the compiler for Windows (made on Linux) and its tests on Windows itself
+  windows-compiler:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the compiler, then the compiler for Windows
+        run: |
+          tools/bootstrap.sh
+          bin/sloppy build --target windows compiler/main.jo -o bin/sloppy.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sloppy-exe
+          path: bin/sloppy.exe
+  windows:
+    needs: windows-compiler
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sloppy-exe
+          path: bin
+      - name: Test
+        shell: bash
+        run: |
+          python tools/runtests.py --compiler sloppy
+          python tools/runtests.py --compiler sloppy --release
+          python tools/lsptest.py
+      - name: The compiler compiles itself on Windows to the same program
+        shell: bash
+        run: |
+          bin/sloppy.exe build compiler/main.jo -o sloppy2.exe
+          cmp bin/sloppy.exe sloppy2.exe

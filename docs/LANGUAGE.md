@@ -11,8 +11,9 @@ Design goals, in priority order:
    statements are a program, no build system, batteries included for games.
 3. **Predictable performance.** Values are plain data laid out like C. No GC, no hidden
    allocations behind your back, no virtual dispatch you did not ask for.
-4. **Programs keep working.** Native executables are fully static (they make Linux
-   syscalls directly), web builds are a single self-contained `.html` file.
+4. **Programs keep working.** Native executables stand alone (on Linux they are fully static and
+   make system calls directly; on Windows they import nothing but kernel32.dll), web builds are a
+   single self-contained `.html` file.
 
 ---
 
@@ -724,6 +725,10 @@ sloppy check file.jo      type check only
 sloppy update             install the latest release (when this is not it)
 ```
 
+On Windows, `sloppy` is `sloppy.exe` and programs are Windows executables (`sloppy build game.jo`
+writes `game.exe`); `sloppy build --target windows` makes them on Linux too, and `--target linux`
+Linux ones on Windows. The interactive prompt and `sloppy watch` are Linux-only for now.
+
 **Reloading while it runs.** `sloppy watch game.jo` runs the game and keeps watching the files it
 is built from. Each time one is saved the game is rebuilt and the running game takes the new
 code between two frames, without starting over: the window stays open and every global keeps
@@ -750,7 +755,8 @@ change to how something moves or looks shows at once.
   loses `update` or `draw` is started again by itself.
 - A program without `update`/`draw` is run again from the start each time its files change.
 
-`sloppy watch` runs native builds (Linux), in debug or release mode as the build block says.
+`sloppy watch` runs native builds (Linux; not on Windows yet), in debug or release mode as the build
+block says.
 
 ## 13. Calling C
 
@@ -768,4 +774,6 @@ extern gl_clear_native = (mask: u32)
 ```
 
 Arguments and results must be scalars or pointers; `cfn(...) -> T` is the type of a C function
-pointer, and `@cabi` makes a Sloppy function callable from C.
+pointer, and `@cabi` makes a Sloppy function callable from C. Windows programs name DLLs
+(`@lib("user32.dll")`) and are called with the Windows x64 convention; the same code can serve
+both systems under `when TARGET == "windows":`.

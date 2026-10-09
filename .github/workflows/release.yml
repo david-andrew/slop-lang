@@ -1,5 +1,6 @@
 # A release: push a tag vX.Y.Z (the compiler's SLOPPY_VERSION) and this builds, tests and publishes
-# sloppy-linux-x86_64.tar.gz (what tools/install.sh installs), its checksum and the editor extension.
+# sloppy-linux-x86_64.tar.gz (what tools/install.sh installs), sloppy-windows-x86_64.zip
+# (tools/install.ps1), their checksums and the editor extension.
 name: Release
 on:
   push:
@@ -37,5 +38,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" --title "Sloppy ${GITHUB_REF_NAME#v}" --generate-notes \
-            --notes "Install or upgrade: \`curl -fsSL https://sloppy-lang.org/install | bash\`" \
+            --notes "Install or upgrade (or run \`sloppy update\`): on Linux \`curl -fsSL https://sloppy-lang.org/install | bash\`; on Windows, in PowerShell, \`irm https://sloppy-lang.org/install.ps1 | iex\`" \
             build/release/*

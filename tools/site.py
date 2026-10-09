@@ -169,7 +169,7 @@ def nav(here_page, prefix):
 
 SITE = "https://sloppy-lang.org"
 DESCRIPTION = ("A small, statically typed language for making games that feels like Python and runs like C. "
-               "It compiles in milliseconds, to a native Linux executable or a single web page.")
+               "It compiles in milliseconds, to a native Linux or Windows executable or a single web page.")
 
 # what chat apps and social sites show for a link (Open Graph, and Twitter's cards); the
 # image is assets/social.png (1200x630)
@@ -222,8 +222,11 @@ HOME = """
   <div>
     <h1><span>sloppy</span>: a simple game dev language</h1>
     <p class="lead">A small, statically typed language that feels like Python and runs like C. One command
-    compiles and runs your program in milliseconds, as a native Linux executable or as a single web page.</p>
-    <pre class="install"><code>curl -fsSL https://sloppy-lang.org/install | bash</code></pre>
+    compiles and runs your program in milliseconds, as a native Linux or Windows executable or as a single web page.</p>
+    <pre class="install"><code><span class="c"># Linux</span>
+curl -fsSL https://sloppy-lang.org/install | bash
+<span class="c"># Windows (PowerShell)</span>
+irm https://sloppy-lang.org/install.ps1 | iex</code></pre>
     <div class="buttons"><a class="btn primary" href="playground/">Try it in your browser</a>
     <a class="btn" href="docs/start.html">Get started</a><a class="btn" href="docs/language.html">The language</a></div>
   </div>
@@ -280,6 +283,8 @@ def main():
     open(pg, "w").write(t)
     # curl -fsSL .../install | bash
     shutil.copy(os.path.join(root, "tools", "install.sh"), os.path.join(out, "install"))
+    # irm https://sloppy-lang.org/install.ps1 | iex
+    shutil.copy(os.path.join(root, "tools", "install.ps1"), os.path.join(out, "install.ps1"))
     open(os.path.join(out, ".nojekyll"), "w").close()
     print(out)
 

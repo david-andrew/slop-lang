@@ -325,7 +325,7 @@ compile = (path: str, out0: str) -> str:
         img_ro_addr = PE_BASE + ro_rva
         img_data_addr = PE_BASE + data_rva + idata_size
         x64_resolve(img_text_addr, img_ro_addr, img_data_addr)
-        ok = write_pe(out, code, entry, rodata, data_size + 8 + bss_reserve, update_fn != 0 or draw_fn != 0)
+        ok = write_pe(out, code, entry, rodata, data_size + 8 + bss_reserve, update_fn != 0 or draw_fn != 0, pe_backtrace_info())
         size = code.len()
     else:
         x64_stubs()

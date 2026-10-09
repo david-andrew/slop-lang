@@ -24,7 +24,11 @@ fail() { printf '%serror%s: %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 # ---- what this machine is ----
 os="$(uname -s)"
 arch="$(uname -m)"
-[ "$os" = "Linux" ] || fail "Sloppy runs on Linux (this is $os). Its programs also run in any browser: see https://sloppy-lang.org/playground/"
+case "$os" in
+    Linux) ;;
+    MINGW*|MSYS*|CYGWIN*) fail "on Windows, install Sloppy from PowerShell: irm https://sloppy-lang.org/install.ps1 | iex" ;;
+    *) fail "Sloppy runs on Linux and Windows (this is $os). Its programs also run in any browser: see https://sloppy-lang.org/playground/" ;;
+esac
 case "$arch" in
     x86_64|amd64) ;;
     *) fail "Sloppy's compiler makes x86-64 programs and runs on x86-64 (this machine is $arch)" ;;
