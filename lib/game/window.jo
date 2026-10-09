@@ -402,6 +402,7 @@ else when TARGET == "windows":
 
     __platform_open = ():
         __soft = (env("SLOPPY_SOFTWARE") ?? "") == "1"
+        __w32_any_size = env("SLOPPY_SCREENSHOT") != none
         SetProcessDPIAware()
         inst = GetModuleHandleW(null)
         cls = __wide("SloppyWindow")
@@ -428,7 +429,7 @@ else when TARGET == "windows":
         __w32_msg = fill(u8(0), 48)
         cr: i32[] = [0, 0, 0, 0]
         GetClientRect(__w32_hwnd, data(cr))
-        if cr[2] > 0 and cr[3] > 0:
+        if cr[2] > 0 and cr[3] > 0 and not __w32_any_size:
             __win_w = int(cr[2])
             __win_h = int(cr[3])
         if not __soft:
@@ -499,6 +500,8 @@ else when TARGET == "windows":
     __w32_lo = (v: int) -> int: int(i16(v & 0xFFFF))
     __w32_hi = (v: int) -> int: int(i16((v >> 16) & 0xFFFF))
 
+    __w32_any_size = false
+
     @cabi
     __w32_wndproc = (hwnd: *u8, msg: u32, wp: int, lp: int) -> int:
         m = int(msg)
@@ -508,7 +511,8 @@ else when TARGET == "windows":
         if m == 0x5:                                            # WM_SIZE
             w = lp & 0xFFFF
             h = (lp >> 16) & 0xFFFF
-            if w > 0 and h > 0:
+            # (screenshots keep the size asked for: Windows shrinks a window to fit the screen)
+            if w > 0 and h > 0 and not __w32_any_size:
                 __win_w = w
                 __win_h = h
             return 0
