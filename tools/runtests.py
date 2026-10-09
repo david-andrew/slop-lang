@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Run Jot test programs and compare output with .out files.
-usage: runtests.py [--compiler jot0|jot|path] [--release] [--target native|wasm] [pattern]"""
+"""Run Sloppy test programs and compare output with .out files.
+usage: runtests.py [--compiler sloppy0|sloppy|path] [--release] [--target native|wasm] [pattern]"""
 import os, subprocess, sys, glob, time
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 args = sys.argv[1:]
-compiler = "jot0"
+compiler = "sloppy0"
 release = False
 target = "native"
 pattern = ""
@@ -16,25 +16,25 @@ while i < len(args):
     elif args[i] == "--target": target = args[i + 1]; i += 2
     else: pattern = args[i]; i += 1
 
-tests = sorted(glob.glob(os.path.join(root, "tests", "t", "*.jot")))
+tests = sorted(glob.glob(os.path.join(root, "tests", "t", "*.jo")))
 tests = [t for t in tests if pattern in os.path.basename(t)]
 passed = failed = 0
-os.makedirs("/tmp/jot-tests", exist_ok=True)
+os.makedirs("/tmp/sloppy-tests", exist_ok=True)
 for t in tests:
-    name = os.path.basename(t)[:-4]
-    exp_path = t[:-4] + ".out"
+    name = os.path.basename(t)[:-3]
+    exp_path = t[:-3] + ".out"
     expected = open(exp_path).read() if os.path.exists(exp_path) else None
-    exe = f"/tmp/jot-tests/{name}"
-    if compiler == "jot0" and "# requires: jot" in open(t).read(2000):
+    exe = f"/tmp/sloppy-tests/{name}"
+    if compiler == "sloppy0" and "# requires: sloppy" in open(t).read(2000):
         continue
-    if compiler == "jot0":
-        cmd = [os.path.join(root, "stage0", "jot0"), t, "-o", exe]
+    if compiler == "sloppy0":
+        cmd = [os.path.join(root, "stage0", "sloppy0"), t, "-o", exe]
     else:
-        jot = os.path.join(root, "bin", "jot") if compiler == "jot" else os.path.abspath(compiler)
-        cmd = [jot, "build", t, "-o", exe] + (["--target", "wasm"] if target == "wasm" else []) + (["--release"] if release else [])
-        env = dict(os.environ, JOT_LIB=os.path.join(root, "lib"))
+        sloppy = os.path.join(root, "bin", "sloppy") if compiler == "sloppy" else os.path.abspath(compiler)
+        cmd = [sloppy, "build", t, "-o", exe] + (["--target", "wasm"] if target == "wasm" else []) + (["--release"] if release else [])
+        env = dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib"))
     t0 = time.time()
-    r = subprocess.run(cmd, capture_output=True, text=True, env=dict(os.environ, JOT_LIB=os.path.join(root, "lib")))
+    r = subprocess.run(cmd, capture_output=True, text=True, env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")))
     if r.returncode != 0:
         print(f"FAIL {name}: compile error\n{r.stderr}")
         failed += 1
@@ -67,36 +67,36 @@ for t in tests:
         failed += 1
     else:
         passed += 1
-# `test` blocks in tests/unit, run with `jot test` (native, self-hosted compiler only)
-if compiler != "jot0" and target == "native":
-    jot = os.path.join(root, "bin", "jot") if compiler == "jot" else os.path.abspath(compiler)
-    for t in sorted(glob.glob(os.path.join(root, "tests", "unit", "*.jot"))):
-        name = "unit/" + os.path.basename(t)[:-4]
+# `test` blocks in tests/unit, run with `sloppy test` (native, self-hosted compiler only)
+if compiler != "sloppy0" and target == "native":
+    sloppy = os.path.join(root, "bin", "sloppy") if compiler == "sloppy" else os.path.abspath(compiler)
+    for t in sorted(glob.glob(os.path.join(root, "tests", "unit", "*.jo"))):
+        name = "unit/" + os.path.basename(t)[:-3]
         if pattern not in name: continue
-        r = subprocess.run([jot, "test", t], capture_output=True, text=True,
-                           env=dict(os.environ, JOT_LIB=os.path.join(root, "lib")), timeout=60)
+        r = subprocess.run([sloppy, "test", t], capture_output=True, text=True,
+                           env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")), timeout=60)
         if r.returncode == 0 and "tests passed" in r.stdout: passed += 1
         else:
             print(f"FAIL {name}\n{r.stdout}{r.stderr}")
             failed += 1
-    # programs the compiler must reject: tests/errors/*.jot start with `# error: <part of the message>`
-    for t in sorted(glob.glob(os.path.join(root, "tests", "errors", "*.jot"))):
-        name = "errors/" + os.path.basename(t)[:-4]
+    # programs the compiler must reject: tests/errors/*.jo start with `# error: <part of the message>`
+    for t in sorted(glob.glob(os.path.join(root, "tests", "errors", "*.jo"))):
+        name = "errors/" + os.path.basename(t)[:-3]
         if pattern not in name: continue
         want = open(t).readline().split("# error:", 1)[-1].strip()
-        r = subprocess.run([jot, "build", t, "-o", "/tmp/jot-tests/error_case"], capture_output=True, text=True,
-                           env=dict(os.environ, JOT_LIB=os.path.join(root, "lib")), timeout=60)
+        r = subprocess.run([sloppy, "build", t, "-o", "/tmp/sloppy-tests/error_case"], capture_output=True, text=True,
+                           env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")), timeout=60)
         if r.returncode != 0 and want in r.stderr: passed += 1
         else:
             print(f"FAIL {name}: expected an error containing {want!r}\n{r.stderr}")
             failed += 1
-    # the interactive prompt: tests/repl/*.in typed at `jot` (stdout and stderr) against .out
+    # the interactive prompt: tests/repl/*.in typed at `sloppy` (stdout and stderr) against .out
     for t in sorted(glob.glob(os.path.join(root, "tests", "repl", "*.in"))):
         name = "repl/" + os.path.basename(t)[:-3]
         if pattern not in name: continue
         exp_path = t[:-3] + ".out"
-        r = subprocess.run([jot], stdin=open(t), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                           env=dict(os.environ, JOT_LIB=os.path.join(root, "lib")), timeout=60, cwd=os.path.dirname(t))
+        r = subprocess.run([sloppy], stdin=open(t), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                           env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")), timeout=60, cwd=os.path.dirname(t))
         out = r.stdout + (f"[exit {r.returncode}]\n" if r.returncode != 0 else "")
         if not os.path.exists(exp_path):
             print(f"NEW  {name}:\n{out}")

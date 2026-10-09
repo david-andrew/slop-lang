@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Package the VS Code extension (editors/vscode) as a .vsix, without vsce or npm.
-usage: tools/vsix.py [output.vsix]        (default: build/jot-<version>.vsix)
-then:  code --install-extension build/jot-<version>.vsix"""
+usage: tools/vsix.py [output.vsix]        (default: build/sloppy-<version>.vsix)
+then:  code --install-extension build/sloppy-<version>.vsix"""
 import json, os, sys, zipfile
 from xml.sax.saxutils import escape
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 src = os.path.join(root, "editors", "vscode")
 pkg = json.load(open(os.path.join(src, "package.json")))
-out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "build", f"jot-{pkg['version']}.vsix")
+out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "build", f"sloppy-{pkg['version']}.vsix")
 os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
 
 files = []
@@ -24,7 +24,7 @@ manifest = f"""<?xml version="1.0" encoding="utf-8"?>
     <Identity Language="en-US" Id="{pkg['name']}" Version="{pkg['version']}" Publisher="{pkg['publisher']}" />
     <DisplayName>{escape(pkg['displayName'])}</DisplayName>
     <Description xml:space="preserve">{escape(pkg['description'])}</Description>
-    <Tags>jot</Tags>
+    <Tags>sloppy</Tags>
     <Categories>Programming Languages</Categories>
     <GalleryFlags>Public</GalleryFlags>
     <Properties>

@@ -1,4 +1,4 @@
-#include "jot0.h"
+#include "sloppy0.h"
 
 typedef struct {
   Token *t; int n, i;
@@ -1215,14 +1215,14 @@ static Node *parse_toplevel(void) {
     d = new_node(N_IMPORT, pos);
     if (use) d->aux = 1;
     if (pk() == TK_STR) {
-      // use 'path/to/file.jot': relative to this file
+      // use 'path/to/file.jo': relative to this file
       Token *t = next();
       Str path = decode_str(t->start, t->len, t->pos, false);
       d->sval = path;
       d->aux2 = 1;
       const char *b = path.p, *e = path.p + path.len;
       for (const char *q = path.p; q < e; q++) if (*q == '/') b = q + 1;
-      if (e - b > 4 && memcmp(e - 4, ".jot", 4) == 0) e -= 4;
+      if (e - b > 3 && memcmp(e - 3, ".jo", 3) == 0) e -= 3;
       d->name = intern(b, e - b);
       if (accept(TK_AS)) d->name = expect_ident("alias");
       break;

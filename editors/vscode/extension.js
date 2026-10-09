@@ -1,4 +1,4 @@
-// The Jot extension: a language client for `jot lsp` (written out here instead of depending on
+// The Sloppy extension: a language client for `sloppy lsp` (written out here instead of depending on
 // vscode-languageclient: the protocol subset it needs is small), and commands to run files.
 
 const vscode = require('vscode');
@@ -23,8 +23,8 @@ class Connection {
         this.proc.stdout.on('data', (chunk) => this.receive(chunk));
         this.proc.stderr.on('data', (chunk) => output.append(chunk.toString()));
         this.proc.on('error', (err) => {
-            output.appendLine(`jot: cannot start '${command} lsp': ${err.message}`);
-            vscode.window.showErrorMessage(`Jot: cannot start the language server (${command}). Set jot.path to the jot compiler.`);
+            output.appendLine(`sloppy: cannot start '${command} lsp': ${err.message}`);
+            vscode.window.showErrorMessage(`Sloppy: cannot start the language server (${command}). Set sloppy.path to the sloppy compiler.`);
         });
         this.proc.on('exit', (code, signal) => {
             for (const [, p] of this.pending) p.resolve(null);
@@ -110,14 +110,14 @@ function onNotification(method, params) {
     if (method === 'textDocument/publishDiagnostics') {
         const ds = params.diagnostics.map((d) => {
             const diag = new vscode.Diagnostic(toRange(d.range), d.message, (d.severity || 1) - 1);
-            diag.source = d.source || 'jot';
+            diag.source = d.source || 'sloppy';
             return diag;
         });
         diagnostics.set(vscode.Uri.parse(params.uri), ds);
     }
 }
 
-// ---- which jot ----
+// ---- which sloppy ----
 
 const os = require('os');
 const https = require('https');
@@ -125,33 +125,33 @@ const zlib = require('zlib');
 const crypto = require('crypto');
 
 const RELEASES = 'https://github.com/david-andrew/slop-lang/releases/latest/download/';
-const installDir = () => process.env.JOT_INSTALL || path.join(os.homedir(), '.jot');
+const installDir = () => process.env.SLOPPY_INSTALL || path.join(os.homedir(), '.sloppy');
 
 const isExe = (p) => { try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch (e) { return false; } };
 
-// the jot compiler to use, or null: the setting, the Jot repository's own (working on Jot), the
+// the sloppy compiler to use, or null: the setting, the Sloppy repository's own (working on Sloppy), the
 // PATH, or where the install script (and this extension) put it
-function findJot() {
-    const configured = vscode.workspace.getConfiguration('jot').get('path');
+function findSloppy() {
+    const configured = vscode.workspace.getConfiguration('sloppy').get('path');
     if (configured) return configured;
     for (const folder of vscode.workspace.workspaceFolders || []) {
-        const p = path.join(folder.uri.fsPath, 'bin', 'jot');
-        if (isExe(p) && fs.existsSync(path.join(folder.uri.fsPath, 'lib', 'core', 'rt.jot'))) return p;
+        const p = path.join(folder.uri.fsPath, 'bin', 'sloppy');
+        if (isExe(p) && fs.existsSync(path.join(folder.uri.fsPath, 'lib', 'core', 'rt.jo'))) return p;
     }
     for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-        if (dir && isExe(path.join(dir, 'jot'))) return path.join(dir, 'jot');
+        if (dir && isExe(path.join(dir, 'sloppy'))) return path.join(dir, 'sloppy');
     }
-    const installed = path.join(installDir(), 'bin', 'jot');
+    const installed = path.join(installDir(), 'bin', 'sloppy');
     return isExe(installed) ? installed : null;
 }
 
-function jotCommand() { return findJot() || 'jot'; }
+function sloppyCommand() { return findSloppy() || 'sloppy'; }
 
-// ---- installing jot (as tools/install.sh does: the latest release, into ~/.jot) ----
+// ---- installing sloppy (as tools/install.sh does: the latest release, into ~/.sloppy) ----
 
 function download(url, redirects = 5) {
     return new Promise((resolve, reject) => {
-        https.get(url, { headers: { 'User-Agent': 'jot-vscode' } }, (res) => {
+        https.get(url, { headers: { 'User-Agent': 'sloppy-vscode' } }, (res) => {
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
                 res.resume();
                 resolve(download(new URL(res.headers.location, url).toString(), redirects - 1));
@@ -193,16 +193,16 @@ function untar(buf) {
     return files;
 }
 
-async function installJot() {
+async function installSloppy() {
     if (process.platform !== 'linux' || process.arch !== 'x64') {
-        vscode.window.showErrorMessage('Jot runs on Linux x86-64. (Its programs run in any browser: try the playground.)');
+        vscode.window.showErrorMessage('Sloppy runs on Linux x86-64. (Its programs run in any browser: try the playground.)');
         return false;
     }
     try {
-        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Installing Jot' }, async (progress) => {
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Installing Sloppy' }, async (progress) => {
             progress.report({ message: 'downloading the latest release\u2026' });
-            const tgz = await download(RELEASES + 'jot-linux-x86_64.tar.gz');
-            const sum = (await download(RELEASES + 'jot-linux-x86_64.tar.gz.sha256')).toString().split(/\s+/)[0];
+            const tgz = await download(RELEASES + 'sloppy-linux-x86_64.tar.gz');
+            const sum = (await download(RELEASES + 'sloppy-linux-x86_64.tar.gz.sha256')).toString().split(/\s+/)[0];
             if (crypto.createHash('sha256').update(tgz).digest('hex') !== sum) throw new Error('the download is damaged (checksum)');
             progress.report({ message: 'unpacking\u2026' });
             const files = untar(zlib.gunzipSync(tgz));
@@ -210,52 +210,52 @@ async function installJot() {
             const tmp = dest + '.new';
             fs.rmSync(tmp, { recursive: true, force: true });
             for (const f of files) {
-                const rel = f.name.split('/').slice(1).join('/');          // (without jot-<version>/)
+                const rel = f.name.split('/').slice(1).join('/');          // (without sloppy-<version>/)
                 if (!rel || rel.split('/').includes('..')) continue;
                 const p = path.join(tmp, rel);
                 fs.mkdirSync(path.dirname(p), { recursive: true });
                 fs.writeFileSync(p, f.data, { mode: f.mode & 0o777 });
             }
-            if (!isExe(path.join(tmp, 'bin', 'jot'))) throw new Error('the release does not hold bin/jot');
+            if (!isExe(path.join(tmp, 'bin', 'sloppy'))) throw new Error('the release does not hold bin/sloppy');
             fs.rmSync(dest + '.old', { recursive: true, force: true });
             if (fs.existsSync(dest)) fs.renameSync(dest, dest + '.old');
             fs.renameSync(tmp, dest);
             fs.rmSync(dest + '.old', { recursive: true, force: true });
         });
     } catch (e) {
-        vscode.window.showErrorMessage(`Could not install Jot: ${e.message}`);
+        vscode.window.showErrorMessage(`Could not install Sloppy: ${e.message}`);
         return false;
     }
     const bin = path.join(installDir(), 'bin');
-    vscode.window.showInformationMessage(`Jot was installed to ${bin.replace(os.homedir(), '~')}. For terminals, add it to your PATH (or run the install script, which does): curl -fsSL https://david-andrew.github.io/slop-lang/install | bash`);
+    vscode.window.showInformationMessage(`Sloppy was installed to ${bin.replace(os.homedir(), '~')}. For terminals, add it to your PATH (or run the install script, which does): curl -fsSL https://sloppy-lang.org/install | bash`);
     return true;
 }
 
-// no jot: offer to install it
+// no sloppy: offer to install it
 async function offerInstall() {
     const choice = await vscode.window.showInformationMessage(
-        'Jot is not installed: the language server and the run commands need the jot compiler.',
-        'Install Jot', 'Set jot.path', 'Not now');
-    if (choice === 'Install Jot') {
-        if (await installJot()) vscode.commands.executeCommand('jot.restartServer');
-    } else if (choice === 'Set jot.path') {
-        vscode.commands.executeCommand('workbench.action.openSettings', 'jot.path');
+        'Sloppy is not installed: the language server and the run commands need the sloppy compiler.',
+        'Install Sloppy', 'Set sloppy.path', 'Not now');
+    if (choice === 'Install Sloppy') {
+        if (await installSloppy()) vscode.commands.executeCommand('sloppy.restartServer');
+    } else if (choice === 'Set sloppy.path') {
+        vscode.commands.executeCommand('workbench.action.openSettings', 'sloppy.path');
     }
 }
 
 // ---- starting, stopping ----
 
-function isJot(doc) { return doc.languageId === 'jot' && doc.uri.scheme === 'file'; }
+function isSloppy(doc) { return doc.languageId === 'sloppy' && doc.uri.scheme === 'file'; }
 
 function start() {
-    if (!findJot()) {
+    if (!findSloppy()) {
         offerInstall();
         return;
     }
-    const conn = new Connection(jotCommand(), onNotification, (code, signal) => {
+    const conn = new Connection(sloppyCommand(), onNotification, (code, signal) => {
         if (client !== conn) return;
         client = null;
-        output.appendLine(`jot lsp exited (${signal || code})`);
+        output.appendLine(`sloppy lsp exited (${signal || code})`);
         if (restarts < 5) {
             restarts++;
             setTimeout(start, 500 * restarts);
@@ -273,9 +273,9 @@ function start() {
 }
 
 function open(doc) {
-    if (!client || !isJot(doc)) return;
+    if (!client || !isSloppy(doc)) return;
     client.notify('textDocument/didOpen', {
-        textDocument: { uri: doc.uri.toString(), languageId: 'jot', version: doc.version, text: doc.getText() },
+        textDocument: { uri: doc.uri.toString(), languageId: 'sloppy', version: doc.version, text: doc.getText() },
     });
 }
 
@@ -293,44 +293,44 @@ async function ask(method, params, token) {
 
 function runInTerminal(args) {
     const editor = vscode.window.activeTextEditor;
-    if (!editor || editor.document.languageId !== 'jot') return;
+    if (!editor || editor.document.languageId !== 'sloppy') return;
     const doc = editor.document;
-    if (!findJot()) {
+    if (!findSloppy()) {
         offerInstall();
         return;
     }
     doc.save().then(() => {
-        let term = vscode.window.terminals.find((t) => t.name === 'Jot');
-        if (!term) term = vscode.window.createTerminal('Jot');
+        let term = vscode.window.terminals.find((t) => t.name === 'Sloppy');
+        if (!term) term = vscode.window.createTerminal('Sloppy');
         term.show(true);
         const quote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
-        term.sendText([jotCommand(), ...args, doc.uri.fsPath].map(quote).join(' '));
+        term.sendText([sloppyCommand(), ...args, doc.uri.fsPath].map(quote).join(' '));
     });
 }
 
 // ---- the extension ----
 
 function activate(context) {
-    output = vscode.window.createOutputChannel('Jot');
-    diagnostics = vscode.languages.createDiagnosticCollection('jot');
+    output = vscode.window.createOutputChannel('Sloppy');
+    diagnostics = vscode.languages.createDiagnosticCollection('sloppy');
     context.subscriptions.push(output, diagnostics);
-    const selector = { language: 'jot', scheme: 'file' };
+    const selector = { language: 'sloppy', scheme: 'file' };
     const L = vscode.languages;
 
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument(open),
         vscode.workspace.onDidChangeTextDocument((e) => {
-            if (!client || !isJot(e.document) || e.contentChanges.length === 0) return;
+            if (!client || !isSloppy(e.document) || e.contentChanges.length === 0) return;
             client.notify('textDocument/didChange', {
                 textDocument: { uri: e.document.uri.toString(), version: e.document.version },
                 contentChanges: [{ text: e.document.getText() }],
             });
         }),
         vscode.workspace.onDidSaveTextDocument((doc) => {
-            if (client && isJot(doc)) client.notify('textDocument/didSave', { textDocument: textDocument(doc) });
+            if (client && isSloppy(doc)) client.notify('textDocument/didSave', { textDocument: textDocument(doc) });
         }),
         vscode.workspace.onDidCloseTextDocument((doc) => {
-            if (!client || !isJot(doc)) return;
+            if (!client || !isSloppy(doc)) return;
             client.notify('textDocument/didClose', { textDocument: textDocument(doc) });
             diagnostics.delete(doc.uri);
         }),
@@ -364,7 +364,7 @@ function activate(context) {
         }),
         L.registerRenameProvider(selector, {
             async prepareRename(doc, pos, token) {
-                if (!client) throw new Error('the Jot language server is not running');
+                if (!client) throw new Error('the Sloppy language server is not running');
                 const r = await client.request('textDocument/prepareRename', at(doc, pos), token);
                 return toRange(r);
             },
@@ -420,13 +420,13 @@ function activate(context) {
             },
         }),
 
-        vscode.commands.registerCommand('jot.run', () => runInTerminal([])),
-        vscode.commands.registerCommand('jot.runWeb', () => runInTerminal(['--web'])),
-        vscode.commands.registerCommand('jot.test', () => runInTerminal(['test'])),
-        vscode.commands.registerCommand('jot.install', async () => {
-            if (await installJot()) vscode.commands.executeCommand('jot.restartServer');
+        vscode.commands.registerCommand('sloppy.run', () => runInTerminal([])),
+        vscode.commands.registerCommand('sloppy.runWeb', () => runInTerminal(['--web'])),
+        vscode.commands.registerCommand('sloppy.test', () => runInTerminal(['test'])),
+        vscode.commands.registerCommand('sloppy.install', async () => {
+            if (await installSloppy()) vscode.commands.executeCommand('sloppy.restartServer');
         }),
-        vscode.commands.registerCommand('jot.restartServer', () => {
+        vscode.commands.registerCommand('sloppy.restartServer', () => {
             restarts = 0;
             const old = client;
             client = null;
@@ -434,7 +434,7 @@ function activate(context) {
             start();
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('jot.path')) vscode.commands.executeCommand('jot.restartServer');
+            if (e.affectsConfiguration('sloppy.path')) vscode.commands.executeCommand('sloppy.restartServer');
         }),
     );
     start();

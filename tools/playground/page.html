@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Jot playground</title>
+<title>Sloppy playground</title>
 <style>
 :root {
   color-scheme: dark;
@@ -58,7 +58,7 @@ a { color: var(--accent); }
 </head>
 <body>
 <header>
-  <h1><span>Jot</span> playground</h1>
+  <h1><span>Sloppy</span> playground</h1>
   <select id="examples" title="Examples"></select>
   <button class="run" id="run" title="Run (ctrl+enter)">&#9654; Run</button>
   <button id="stop" title="Stop the program">&#9632; Stop</button>
@@ -69,7 +69,7 @@ a { color: var(--accent); }
   <section id="left">
     <div id="editor">
       <div id="gutter">1</div>
-      <div id="code"><pre id="hl" aria-hidden="true"></pre><textarea id="src" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Jot source"></textarea></div>
+      <div id="code"><pre id="hl" aria-hidden="true"></pre><textarea id="src" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Sloppy source"></textarea></div>
     </div>
     <div id="msgs"></div>
   </section>
@@ -79,15 +79,15 @@ a { color: var(--accent); }
   </section>
 </main>
 <script>
-const JOT_COMPILER = "/*JOT_COMPILER*/";
-const JOT_LIB = "/*JOT_LIB*/";
-const JOT_EXAMPLES = /*JOT_EXAMPLES*/;
+const SLOPPY_COMPILER = "/*SLOPPY_COMPILER*/";
+const SLOPPY_LIB = "/*SLOPPY_LIB*/";
+const SLOPPY_EXAMPLES = /*SLOPPY_EXAMPLES*/;
 </script>
 <script>
-/*JOT_HIGHLIGHT*/
+/*SLOPPY_HIGHLIGHT*/
 </script>
 <script id="host-src">
-/*JOT_HOST*/
+/*SLOPPY_HOST*/
 </script>
 <script>
 "use strict";
@@ -95,7 +95,7 @@ const $ = (id) => document.getElementById(id);
 const src = $("src"), hl = $("hl"), gutter = $("gutter"), msgs = $("msgs"), statusEl = $("status"), out = $("out");
 
 // ---- syntax highlighting: highlight.js ----
-const highlight = jotHighlight;
+const highlight = sloppyHighlight;
 
 let errLine = 0;
 function refresh() {
@@ -117,7 +117,7 @@ src.addEventListener("input", () => {
   if (errLine) errLine = 0;
   refresh();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => localStorage.setItem("jot-playground-source", src.value), 400);
+  saveTimer = setTimeout(() => localStorage.setItem("sloppy-playground-source", src.value), 400);
 });
 
 // ---- editing: indentation ----
@@ -172,17 +172,17 @@ src.addEventListener("keydown", (e) => {
 
 // ---- examples ----
 const exSel = $("examples");
-for (const name of Object.keys(JOT_EXAMPLES)) {
+for (const name of Object.keys(SLOPPY_EXAMPLES)) {
   const o = document.createElement("option");
   o.value = name;
   o.textContent = name;
   exSel.appendChild(o);
 }
 exSel.addEventListener("change", () => {
-  src.value = JOT_EXAMPLES[exSel.value];
+  src.value = SLOPPY_EXAMPLES[exSel.value];
   errLine = 0;
   refresh();
-  localStorage.setItem("jot-playground-source", src.value);
+  localStorage.setItem("sloppy-playground-source", src.value);
   run();
 });
 
@@ -225,17 +225,17 @@ async function startCompiler() {
         if (w) { waiting.delete(ev.data.id); w(ev.data); }
       };
       worker.onerror = (e) => reject(e);
-      worker.postMessage({ init: [JOT_COMPILER, JOT_LIB] });
+      worker.postMessage({ init: [SLOPPY_COMPILER, SLOPPY_LIB] });
     });
   } catch (e) {
-    // (no worker here: the compiler runs on the page; host-src defined jotHost here too)
+    // (no worker here: the compiler runs on the page; host-src defined sloppyHost here too)
     worker = null;
-    await jotHost.init(JOT_COMPILER, JOT_LIB);
+    await sloppyHost.init(SLOPPY_COMPILER, SLOPPY_LIB);
   }
   ready = true;
 }
 function compile(source) {
-  if (!worker) return Promise.resolve(jotHost.compile(source));
+  if (!worker) return Promise.resolve(sloppyHost.compile(source));
   const id = nextId++;
   return new Promise((resolve) => {
     waiting.set(id, resolve);
@@ -263,14 +263,14 @@ function showMessages(log) {
   msgs.style.display = text ? "block" : "none";
   for (const l of text.split("\n")) {
     const div = document.createElement("div");
-    const m = l.match(/^\/play\/main\.jot:(\d+):(\d+): (error|warning): (.*)$/);
+    const m = l.match(/^\/play\/main\.jo:(\d+):(\d+): (error|warning): (.*)$/);
     if (m) {
       div.className = "e";
       div.textContent = `line ${m[1]}: ${m[3]}: ${m[4]}`;
       const line = Number(m[1]), col = Number(m[2]);
       if (!errLine && m[3] === "error") errLine = line;
       div.addEventListener("click", () => goTo(line, col));
-    } else div.textContent = l.replace(/\/play\/main\.jot/g, "main.jot").replace(/\/jot\/lib\//g, "lib/");
+    } else div.textContent = l.replace(/\/play\/main\.jo/g, "main.jo").replace(/\/sloppy\/lib\//g, "lib/");
     msgs.appendChild(div);
   }
   refresh();
@@ -293,8 +293,8 @@ $("stop").addEventListener("click", () => { out.srcdoc = "<body style='backgroun
   let text = null;
   const m = location.hash.match(/#code=([A-Za-z0-9_-]+)/);
   if (m) { try { text = await inflate(m[1]); } catch (e) { text = null; } }
-  if (text === null) text = localStorage.getItem("jot-playground-source");
-  if (text === null) text = JOT_EXAMPLES[Object.keys(JOT_EXAMPLES)[0]];
+  if (text === null) text = localStorage.getItem("sloppy-playground-source");
+  if (text === null) text = SLOPPY_EXAMPLES[Object.keys(SLOPPY_EXAMPLES)[0]];
   src.value = text;
   refresh();
   try {

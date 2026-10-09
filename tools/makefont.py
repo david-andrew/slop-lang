@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bake the default SDF font atlas (ASCII 32..126) used by Jot's text rendering.
+"""Bake the default SDF font atlas (ASCII 32..126) used by Sloppy's text rendering.
 Output: lib/game/assets/font.png (grayscale SDF atlas) + font.txt (metrics)."""
 import sys, math
 from PIL import Image, ImageDraw, ImageFont

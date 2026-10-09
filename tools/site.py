@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build Jot's website into build/site: a home page, the docs (from the Markdown files) and the
+"""Build Sloppy's website into build/site: a home page, the docs (from the Markdown files) and the
 playground. Static files only: serve the directory anywhere (GitHub Pages: .github/workflows).
-usage: tools/site.py [output-dir]          (needs bin/jot, for the playground)"""
+usage: tools/site.py [output-dir]          (needs bin/sloppy, for the playground)"""
 import html, os, re, shutil, subprocess, sys
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -94,7 +94,7 @@ def markdown(src):
                 body.append(lines[i])
                 i += 1
             i += 1
-            cls = "jot" if lang in ("", "jot") else lang
+            cls = "sloppy" if lang in ("", "sloppy") else lang
             out.append(f'<pre><code class="{cls}">' + html.escape("\n".join(body)) + "</code></pre>")
             continue
         m = re.match(r"^(#{1,4})\s+(.*)$", l)
@@ -162,7 +162,7 @@ def nav(here_page, prefix):
     items = [("Docs", "docs/start.html"), ("Language", "docs/language.html"), ("Library", "docs/api.html"),
              ("Playground", "playground/"), ("Report", "docs/report.html")]
     links = "".join(f'<a class="{"on" if p == here_page else ""}" href="{prefix}{p}">{n}</a>' for n, p in items)
-    return (f'<nav class="top"><a class="brand" href="{prefix}index.html"><img src="{prefix}icon-64.png" alt="">Jot</a>'
+    return (f'<nav class="top"><a class="brand" href="{prefix}index.html"><img src="{prefix}icon-64.png" alt="">Sloppy</a>'
             f'<div class="links">{links}</div><div class="spacer"></div><a href="{REPO}">GitHub</a></nav>')
 
 def page(title, body, here_page, prefix, extra_head=""):
@@ -171,9 +171,9 @@ def page(title, body, here_page, prefix, extra_head=""):
 <title>{html.escape(title)}</title><link rel="icon" href="{prefix}icon-32.png"><link rel="stylesheet" href="{prefix}style.css">{extra_head}
 </head><body>{nav(here_page, prefix)}
 {body}
-<footer>Jot &middot; <a href="{REPO}">source on GitHub</a> &middot; <a href="{REPO}/blob/master/LICENSE">MIT license</a></footer>
+<footer>Sloppy &middot; <a href="{REPO}">source on GitHub</a> &middot; <a href="{REPO}/blob/master/LICENSE">MIT license</a></footer>
 <script src="{prefix}highlight.js"></script>
-<script>for (const c of document.querySelectorAll("pre code.jot")) c.innerHTML = jotHighlight(c.textContent, 0).replace(/\\n$/, "");</script>
+<script>for (const c of document.querySelectorAll("pre code.jo")) c.innerHTML = sloppyHighlight(c.textContent, 0).replace(/\\n$/, "");</script>
 </body></html>
 """
 
@@ -189,20 +189,20 @@ def build_docs():
         tocs = "".join(f'<a class="h{n}" href="#{s}">{t}</a>' for n, s, t in toc)
         main = f'<div class="doc"><aside><div class="pages">{pages}</div><div class="toc">{tocs}</div></aside><main>{body}</main></div>'
         here_page = "docs/start.html" if name == "start.html" else "docs/" + name
-        open(os.path.join(out, "docs", name), "w").write(page(f"{title} | Jot", main, here_page, "../"))
+        open(os.path.join(out, "docs", name), "w").write(page(f"{title} | Sloppy", main, here_page, "../"))
 
 HOME = """
 <section class="hero">
   <div>
-    <h1><span>jot</span>: a simple game dev language</h1>
+    <h1><span>sloppy</span>: a simple game dev language</h1>
     <p class="lead">A small, statically typed language that feels like Python and runs like C. One command
     compiles and runs your program in milliseconds, as a native Linux executable or as a single web page.</p>
-    <pre class="install"><code>curl -fsSL https://david-andrew.github.io/slop-lang/install | bash</code></pre>
+    <pre class="install"><code>curl -fsSL https://sloppy-lang.org/install | bash</code></pre>
     <div class="buttons"><a class="btn primary" href="playground/">Try it in your browser</a>
     <a class="btn" href="docs/start.html">Get started</a><a class="btn" href="docs/language.html">The language</a></div>
   </div>
   <div class="art"><img class="logo" src="logo-512.png" alt="a white clover blossom">
-  <pre><code class="jot">pos = vec2(400, 300)
+  <pre><code class="sloppy">pos = vec2(400, 300)
 
 update = (dt: f64):
     pos += input_axis() * f32(300 * dt)
@@ -216,13 +216,13 @@ draw = ():
   <div class="feature"><h3>Instant compiles</h3><p>About 250,000 lines a second. Hello world compiles and runs in about 10 ms; there is no build system, options live in the source.</p></div>
   <div class="feature"><h3>Fast programs</h3><p>Release builds run within about 1.5&times; of gcc -O2, with bounds checks on. <code>parallel_map</code> uses every core; GPU arrays run on the GPU.</p></div>
   <div class="feature"><h3>Easy</h3><p>Type inference everywhere, indentation syntax, closures, partial application, generics without ceremony, unions, value semantics with no garbage collector.</p></div>
-  <div class="feature"><h3>Made for games</h3><p>Windows, input, 2D drawing, a 3D renderer with shadows and bloom, shaders written in Jot, audio, pixel art and any screen shape, all built in.</p></div>
+  <div class="feature"><h3>Made for games</h3><p>Windows, input, 2D drawing, a 3D renderer with shadows and bloom, shaders written in Sloppy, audio, pixel art and any screen shape, all built in.</p></div>
   <div class="feature"><h3>Runs anywhere it lands</h3><p>Native programs are static executables with no dependencies; web builds are one HTML file. Graphics drivers are optional: there is a software renderer.</p></div>
-  <div class="feature"><h3>Self-hosted</h3><p>The compiler is written in Jot and compiles itself, even in this site's playground, where it runs as WebAssembly.</p></div>
+  <div class="feature"><h3>Self-hosted</h3><p>The compiler is written in Sloppy and compiles itself, even in this site's playground, where it runs as WebAssembly.</p></div>
 </section>
 <section class="strip">
   <h2>Numbers, arrays, and the rest</h2>
-  <pre><code class="jot">fib = (n: int) -> int:
+  <pre><code class="sloppy">fib = (n: int) -> int:
     if n < 2: return n
     fib(n - 1) + fib(n - 2)
 
@@ -231,7 +231,7 @@ nums.sort()
 add = (a: int, b: int): a + b
 print(nums.map((x): x * x), add(1, _)(41), fib(30))
 print(nums .* 2.5 .+ 1, sqrt.([4.0 9.0]), [1 2; 3 4] * [1 0; 0 1])</code></pre>
-  <p>Editors: <code>jot lsp</code> is a language server (VS Code and Cursor extension in the repository). An interactive prompt: run <code>jot</code> with no file.</p>
+  <p>Editors: <code>sloppy lsp</code> is a language server (VS Code and Cursor extension in the repository). An interactive prompt: run <code>sloppy</code> with no file.</p>
 </section>
 """
 
@@ -242,14 +242,14 @@ def main():
     for f in ["icon-32.png", "icon-64.png", "logo-512.png"]: shutil.copy(os.path.join(root, "assets", f), out)
     shutil.copytree(os.path.join(root, "assets"), os.path.join(out, "assets"))
     shutil.copy(os.path.join(root, "tools", "playground", "highlight.js"), out)
-    open(os.path.join(out, "index.html"), "w").write(page("Jot programming language", HOME, "index.html", ""))
+    open(os.path.join(out, "index.html"), "w").write(page("Sloppy programming language", HOME, "index.html", ""))
     build_docs()
     os.makedirs(os.path.join(out, "playground"))
     subprocess.run([sys.executable, os.path.join(root, "tools", "playground.py"), os.path.join(out, "playground", "index.html")], check=True)
     # (the playground's title leads back to the site)
     pg = os.path.join(out, "playground", "index.html")
-    t = open(pg).read().replace('<h1><span>Jot</span> playground</h1>', '<h1><a href="../" style="color:inherit"><span>Jot</span></a> playground</h1>', 1)
-    t = t.replace('<title>Jot playground</title>', '<title>Jot playground</title><link rel="icon" href="../icon-32.png">', 1)
+    t = open(pg).read().replace('<h1><span>Sloppy</span> playground</h1>', '<h1><a href="../" style="color:inherit"><span>Sloppy</span></a> playground</h1>', 1)
+    t = t.replace('<title>Sloppy playground</title>', '<title>Sloppy playground</title><link rel="icon" href="../icon-32.png">', 1)
     open(pg, "w").write(t)
     # curl -fsSL .../install | bash
     shutil.copy(os.path.join(root, "tools", "install.sh"), os.path.join(out, "install"))

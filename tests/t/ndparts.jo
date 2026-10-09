@@ -1,0 +1,22 @@
+# requires: sloppy
+# parts of n-dimensional arrays (m[i, ..], m[.., j], ranges) and reductions along an axis
+m = [1.0 2.0 3.0; 4.0 5.0 6.0; 7.0 8.0 9.0]
+print(m[1, ..], m[.., 2], m[0..1, 1..], m[..1, ..1], m[1..])
+print(m[1..2), m[2, 0..1])
+c = reshape([loop i in [0..24): f64(i)], 2, 3, 4)
+print(c[1, .., 0], c[.., 1, 1..2], c[0, ..], c[1, 2, ..].shape)
+m[.., 0] = [10.0, 20.0, 30.0]
+m[2, ..] = 0.0
+print(m)
+m[0..1, 1..2] = [1.0 1.0; 1.0 1.0]
+print(m)
+print(sum(m, 0), sum(m, 1), mean(m, 0), max(m, 1), min(m, 0), max(m))
+print(sum(c, 2), sum(c, 0).shape)
+r = m[1, ..]
+r[0] = 99.0                       # a part is a copy
+print(m[1, 0], r)
+im = [1 2 3; 4 5 6]
+print(im[.., 1], sum(im, 0), max(im, 1))
+# open ranges to the end of an axis
+grid = zeros(2, 3)
+print(grid[1, 1..2], grid[.., 2..])

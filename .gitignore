@@ -1,4 +1,4 @@
-stage0/jot0
+stage0/sloppy0
 bin/
 *.o
 /tmp/
@@ -7,4 +7,4 @@ bench/big.*
 tools/icount
 build/
 __pycache__/
-bin/jot-dev
+bin/sloppy-dev

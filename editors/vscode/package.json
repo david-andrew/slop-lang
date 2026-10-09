@@ -1,9 +1,9 @@
 {
-  "name": "jot",
-  "displayName": "Jot",
-  "description": "The Jot language: highlighting, errors as you type, hover, go to definition, references, rename, completion, signature help, inlay type hints, outline; run files in a terminal or the browser",
+  "name": "sloppy",
+  "displayName": "Sloppy",
+  "description": "The Sloppy language: highlighting, errors as you type, hover, go to definition, references, rename, completion, signature help, inlay type hints, outline; run files in a terminal or the browser",
   "version": "0.1.2",
-  "publisher": "jot-lang",
+  "publisher": "sloppy-lang",
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -12,18 +12,18 @@
   ],
   "main": "./extension.js",
   "activationEvents": [
-    "onLanguage:jot"
+    "onLanguage:sloppy"
   ],
   "contributes": {
     "languages": [
       {
-        "id": "jot",
+        "id": "sloppy",
         "aliases": [
-          "Jot",
-          "jot"
+          "Sloppy",
+          "sloppy"
         ],
         "extensions": [
-          ".jot"
+          ".jo"
         ],
         "configuration": "./language-configuration.json",
         "icon": {
@@ -34,88 +34,88 @@
     ],
     "grammars": [
       {
-        "language": "jot",
-        "scopeName": "source.jot",
-        "path": "./syntaxes/jot.tmLanguage.json",
+        "language": "sloppy",
+        "scopeName": "source.sloppy",
+        "path": "./syntaxes/sloppy.tmLanguage.json",
         "unbalancedBracketScopes": [
-          "punctuation.definition.range.end.jot",
-          "keyword.operator.arrow.jot",
-          "keyword.operator.comparison.jot"
+          "punctuation.definition.range.end.sloppy",
+          "keyword.operator.arrow.sloppy",
+          "keyword.operator.comparison.sloppy"
         ]
       }
     ],
     "commands": [
       {
-        "command": "jot.run",
-        "title": "Jot: Run File",
+        "command": "sloppy.run",
+        "title": "Sloppy: Run File",
         "icon": "$(play)"
       },
       {
-        "command": "jot.runWeb",
-        "title": "Jot: Run File in the Browser",
+        "command": "sloppy.runWeb",
+        "title": "Sloppy: Run File in the Browser",
         "icon": "$(globe)"
       },
       {
-        "command": "jot.test",
-        "title": "Jot: Run the File's Tests",
+        "command": "sloppy.test",
+        "title": "Sloppy: Run the File's Tests",
         "icon": "$(beaker)"
       },
       {
-        "command": "jot.restartServer",
-        "title": "Jot: Restart the Language Server"
+        "command": "sloppy.restartServer",
+        "title": "Sloppy: Restart the Language Server"
       },
       {
-        "command": "jot.install",
-        "title": "Jot: Install or Upgrade the Jot Compiler"
+        "command": "sloppy.install",
+        "title": "Sloppy: Install or Upgrade the Sloppy Compiler"
       }
     ],
     "menus": {
       "editor/title/run": [
         {
-          "command": "jot.run",
-          "when": "resourceLangId == jot",
+          "command": "sloppy.run",
+          "when": "resourceLangId == sloppy",
           "group": "navigation@1"
         },
         {
-          "command": "jot.runWeb",
-          "when": "resourceLangId == jot",
+          "command": "sloppy.runWeb",
+          "when": "resourceLangId == sloppy",
           "group": "navigation@2"
         },
         {
-          "command": "jot.test",
-          "when": "resourceLangId == jot",
+          "command": "sloppy.test",
+          "when": "resourceLangId == sloppy",
           "group": "navigation@3"
         }
       ],
       "commandPalette": [
         {
-          "command": "jot.run",
-          "when": "editorLangId == jot"
+          "command": "sloppy.run",
+          "when": "editorLangId == sloppy"
         },
         {
-          "command": "jot.runWeb",
-          "when": "editorLangId == jot"
+          "command": "sloppy.runWeb",
+          "when": "editorLangId == sloppy"
         },
         {
-          "command": "jot.test",
-          "when": "editorLangId == jot"
+          "command": "sloppy.test",
+          "when": "editorLangId == sloppy"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "jot.run",
+        "command": "sloppy.run",
         "key": "ctrl+f5",
-        "when": "editorLangId == jot"
+        "when": "editorLangId == sloppy"
       }
     ],
     "configuration": {
-      "title": "Jot",
+      "title": "Sloppy",
       "properties": {
-        "jot.path": {
+        "sloppy.path": {
           "type": "string",
           "default": "",
-          "description": "The jot compiler. Empty: bin/jot in a workspace folder that has one (the Jot repository), else jot on the PATH."
+          "description": "The sloppy compiler. Empty: bin/sloppy in a workspace folder that has one (the Sloppy repository), else sloppy on the PATH."
         }
       }
     }

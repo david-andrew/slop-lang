@@ -1,0 +1,28 @@
+# texture sampling: nearest and linear filtering, repeat wrapping, 2D sprites and Sloppy shaders
+img = image(8, 8, vec4(0, 0, 0, 1))
+loop y in [0..8):
+    loop x in [0..8):
+        if (x + y) % 2 == 0: img.set(x, y, vec4(f32(x) / 7.0, f32(y) / 7.0, 1, 1))
+sharp = texture(img, false)
+smooth = texture(img, true)
+tiled = texture(img, false)
+set_repeat(tiled, true)
+struct V:
+    pos: vec3
+    uv: vec2
+struct U:
+    mvp: mat4
+    tex: Texture
+struct O:
+    pos: vec4
+    uv: vec2
+vs = (v: V, u: U) -> O: O(u.mvp * vec4(v.pos, 1), v.uv)
+fs = (i: O, u: U) -> vec4: sample(u.tex, i.uv)
+sh = make_shader(shader(vs, fs))
+quad = mesh([V(vec3(0.1, -0.9, 0), vec2(0, 0)), V(vec3(0.9, -0.9, 0), vec2(3, 0)), V(vec3(0.9, -0.1, 0), vec2(3, 3)),
+              V(vec3(0.1, -0.9, 0), vec2(0, 0)), V(vec3(0.9, -0.1, 0), vec2(3, 3)), V(vec3(0.1, -0.1, 0), vec2(0, 3))])
+draw = ():
+    clear(vec4(0.2, 0.2, 0.2, 1))
+    sprite(sharp, vec2(200, 180), vec2(256, 256))
+    sprite(smooth, vec2(480, 180), vec2(256, 256), vec4(1, 0.8, 0.8, 1), 0.3)
+    draw(sh, quad, U(mat4(), tiled))

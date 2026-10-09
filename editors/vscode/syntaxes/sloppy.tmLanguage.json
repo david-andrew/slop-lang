@@ -1,0 +1,623 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Sloppy",
+  "scopeName": "source.sloppy",
+  "patterns": [
+    {
+      "include": "#statement"
+    }
+  ],
+  "repository": {
+    "statement": {
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#declaration"
+        },
+        {
+          "include": "#expression"
+        }
+      ]
+    },
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.sloppy",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "declaration": {
+      "patterns": [
+        {
+          "begin": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)(\\[[^\\]]*\\])?\\s*(:)",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.sloppy"
+            },
+            "2": {
+              "name": "entity.name.type.sloppy"
+            },
+            "3": {
+              "patterns": [
+                {
+                  "include": "#type-params"
+                }
+              ]
+            },
+            "4": {
+              "name": "punctuation.separator.sloppy"
+            }
+          },
+          "end": "$",
+          "patterns": [
+            {
+              "include": "#comment"
+            },
+            {
+              "include": "#number"
+            },
+            {
+              "name": "constant.other.enum.sloppy",
+              "match": "[A-Za-z_][A-Za-z0-9_]*"
+            },
+            {
+              "include": "#operator"
+            },
+            {
+              "include": "#bracket"
+            }
+          ]
+        },
+        {
+          "match": "\\b(struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.sloppy"
+            },
+            "2": {
+              "name": "entity.name.type.sloppy"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(type)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*(\\[[^\\]]*\\])?\\s*=)",
+          "captures": {
+            "1": {
+              "name": "storage.type.sloppy"
+            },
+            "2": {
+              "name": "entity.name.type.sloppy"
+            }
+          }
+        },
+        {
+          "match": "\\b(const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.sloppy"
+            },
+            "2": {
+              "name": "variable.other.constant.sloppy"
+            }
+          }
+        },
+        {
+          "match": "\\b(extern)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.sloppy"
+            },
+            "2": {
+              "name": "entity.name.function.sloppy"
+            }
+          }
+        },
+        {
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(\\[[^\\]]*\\])?\\s*(=)\\s*(?=\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\)\\s*(->|:))",
+          "captures": {
+            "1": {
+              "name": "entity.name.function.sloppy"
+            },
+            "2": {
+              "patterns": [
+                {
+                  "include": "#type-params"
+                }
+              ]
+            },
+            "3": {
+              "name": "keyword.operator.assignment.sloppy"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(use|import)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.sloppy"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(test)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.other.test.sloppy"
+            }
+          }
+        },
+        {
+          "match": "^(build)(?=\\s*:)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.build.sloppy"
+            }
+          }
+        },
+        {
+          "match": "(@)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.decorator.sloppy"
+            },
+            "2": {
+              "name": "entity.name.function.decorator.sloppy"
+            }
+          }
+        }
+      ]
+    },
+    "type-params": {
+      "patterns": [
+        {
+          "name": "entity.name.type.parameter.sloppy",
+          "match": "[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "expression": {
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#keyword"
+        },
+        {
+          "include": "#type"
+        },
+        {
+          "include": "#parameter"
+        },
+        {
+          "include": "#call"
+        },
+        {
+          "include": "#variant"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#bracket"
+        }
+      ]
+    },
+    "bracket": {
+      "patterns": [
+        {
+          "begin": "\\(",
+          "end": "\\)",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.parenthesis.begin.sloppy"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.parenthesis.end.sloppy"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#expression"
+            }
+          ]
+        },
+        {
+          "begin": "\\[",
+          "end": "(\\])|(\\))",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.list.begin.sloppy"
+            }
+          },
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.list.end.sloppy"
+            },
+            "2": {
+              "name": "punctuation.definition.range.end.sloppy"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#expression"
+            }
+          ]
+        },
+        {
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.dict.begin.sloppy"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.dict.end.sloppy"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#expression"
+            }
+          ]
+        }
+      ]
+    },
+    "string": {
+      "patterns": [
+        {
+          "name": "string.quoted.raw.sloppy",
+          "begin": "r\"\"\"",
+          "end": "\"\"\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.sloppy"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.sloppy"
+            }
+          },
+          "patterns": []
+        },
+        {
+          "name": "string.quoted.raw.sloppy",
+          "begin": "r\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.sloppy"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.sloppy"
+            }
+          },
+          "patterns": []
+        },
+        {
+          "name": "string.quoted.triple.sloppy",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.sloppy"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.sloppy"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.sloppy",
+              "match": "\\\\(x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]+\\}|.)"
+            },
+            {
+              "name": "constant.character.escape.sloppy",
+              "match": "\\{\\{|\\}\\}"
+            },
+            {
+              "name": "meta.interpolation.sloppy",
+              "begin": "\\{",
+              "end": "(:[^{}\\\"']*)?\\}",
+              "beginCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.begin.sloppy"
+                }
+              },
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.end.sloppy"
+                },
+                "1": {
+                  "name": "storage.modifier.format.sloppy"
+                }
+              },
+              "contentName": "source.sloppy",
+              "patterns": [
+                {
+                  "include": "#expression"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.sloppy",
+          "begin": "\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.sloppy"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.sloppy"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.sloppy",
+              "match": "\\\\(x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]+\\}|.)"
+            },
+            {
+              "name": "constant.character.escape.sloppy",
+              "match": "\\{\\{|\\}\\}"
+            },
+            {
+              "name": "meta.interpolation.sloppy",
+              "begin": "\\{",
+              "end": "(:[^{}\\\"']*)?\\}",
+              "beginCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.begin.sloppy"
+                }
+              },
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.end.sloppy"
+                },
+                "1": {
+                  "name": "storage.modifier.format.sloppy"
+                }
+              },
+              "contentName": "source.sloppy",
+              "patterns": [
+                {
+                  "include": "#expression"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.sloppy",
+          "begin": "'",
+          "end": "'",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.sloppy"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.sloppy"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.sloppy",
+              "match": "\\\\(x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]+\\}|.)"
+            },
+            {
+              "name": "constant.character.escape.sloppy",
+              "match": "\\{\\{|\\}\\}"
+            },
+            {
+              "name": "meta.interpolation.sloppy",
+              "begin": "\\{",
+              "end": "(:[^{}\\\"']*)?\\}",
+              "beginCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.begin.sloppy"
+                }
+              },
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.end.sloppy"
+                },
+                "1": {
+                  "name": "storage.modifier.format.sloppy"
+                }
+              },
+              "contentName": "source.sloppy",
+              "patterns": [
+                {
+                  "include": "#expression"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.sloppy",
+          "match": "\\b0[xX][0-9A-Fa-f_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.sloppy",
+          "match": "\\b0[bB][01_]+\\b"
+        },
+        {
+          "match": "\\b(\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?)([A-Za-z_\\u00b5\\u00b0]+)?",
+          "captures": {
+            "1": {
+              "name": "constant.numeric.sloppy"
+            },
+            "2": {
+              "name": "keyword.other.unit.sloppy"
+            }
+          }
+        }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "name": "keyword.control.sloppy",
+          "match": "\\b(if|else|loop|in|break|continue|return|match|when|defer|pass)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.sloppy",
+          "match": "\\b(and|or|not|xor|is|as)\\b"
+        },
+        {
+          "name": "storage.modifier.sloppy",
+          "match": "\\b(mut|let|soa)\\b"
+        },
+        {
+          "name": "storage.type.sloppy",
+          "match": "\\b(struct|enum|type|const|extern)\\b"
+        },
+        {
+          "name": "keyword.control.import.sloppy",
+          "match": "\\b(use|import)\\b"
+        },
+        {
+          "name": "constant.language.sloppy",
+          "match": "\\b(true|false|none|null)\\b"
+        },
+        {
+          "name": "variable.language.sloppy",
+          "match": "\\b(TARGET|DEBUG)\\b"
+        },
+        {
+          "name": "variable.language.hole.sloppy",
+          "match": "\\b_\\b"
+        }
+      ]
+    },
+    "type": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.sloppy",
+          "match": "\\b(int|i8|i16|i32|i64|u8|u16|u32|u64|byte|f32|f64|bool|str|void|never|vec2|vec3|vec4|ivec2|mat4|cfn)\\b(?!\\s*\\()"
+        },
+        {
+          "name": "entity.name.type.sloppy",
+          "match": "\\b[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "parameter": {
+      "patterns": [
+        {
+          "match": "(?<=[(,]|^)\\s*(mut\\s+)?(?!(?:_|if|else|loop|match|when|defer|test|build|struct|enum|return|in|and|or|not)\\b)([A-Za-z_][A-Za-z0-9_]*)\\s*(?=:(?!=))",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.sloppy"
+            },
+            "2": {
+              "name": "variable.parameter.sloppy"
+            }
+          }
+        }
+      ]
+    },
+    "call": {
+      "patterns": [
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(\\.)?(?=\\()",
+          "captures": {
+            "1": {
+              "name": "entity.name.function.call.sloppy"
+            },
+            "2": {
+              "name": "keyword.operator.broadcast.sloppy"
+            }
+          }
+        }
+      ]
+    },
+    "variant": {
+      "patterns": [
+        {
+          "match": "(?<![\\w)\\]}\\\"'])(\\.)([a-z_][A-Za-z0-9_]*)\\b(?!\\s*\\()",
+          "captures": {
+            "1": {
+              "name": "punctuation.accessor.sloppy"
+            },
+            "2": {
+              "name": "constant.other.enum.sloppy"
+            }
+          }
+        }
+      ]
+    },
+    "operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.sloppy",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.range.sloppy",
+          "match": "\\.\\.\\.?"
+        },
+        {
+          "name": "keyword.operator.broadcast.sloppy",
+          "match": "\\.(\\*\\*|[-+*/%^<>=!&|]=?|==)"
+        },
+        {
+          "name": "keyword.operator.comparison.sloppy",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.assignment.compound.sloppy",
+          "match": "(\\+|-|\\*|/|%|&|\\||\\^|<<|>>)="
+        },
+        {
+          "name": "keyword.operator.assignment.sloppy",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.optional.sloppy",
+          "match": "\\?\\?|\\?|!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.sloppy",
+          "match": "\\*\\*|[-+*/%]|<<|>>|[&|^~]"
+        },
+        {
+          "name": "punctuation.accessor.sloppy",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.separator.sloppy",
+          "match": "[,;:]"
+        }
+      ]
+    }
+  }
+}

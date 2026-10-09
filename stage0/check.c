@@ -159,13 +159,13 @@ static void register_decls(Module *m, NodeList *decls, NodeList *init_stmts) {
     }
     case N_IMPORT: {
       char path[1024];
-      if (d->aux2) { // use 'file.jot': relative to the importing file
+      if (d->aux2) { // use 'file.jo': relative to the importing file
         if (d->sval.len && d->sval.p[0] == '/') snprintf(path, sizeof path, "%.*s", d->sval.len, d->sval.p);
         else snprintf(path, sizeof path, "%s/%.*s", m->dir, d->sval.len, d->sval.p);
         if (access(path, R_OK) != 0) fatal(d->pos, "cannot find '%.*s' (looked for %s)", d->sval.len, d->sval.p, path);
       } else {
-        snprintf(path, sizeof path, "%s/%.*s.jot", m->dir, d->sval.len, d->sval.p);
-        if (access(path, R_OK) != 0) snprintf(path, sizeof path, "%s/%.*s.jot", g_lib_dir, d->sval.len, d->sval.p);
+        snprintf(path, sizeof path, "%s/%.*s.jo", m->dir, d->sval.len, d->sval.p);
+        if (access(path, R_OK) != 0) snprintf(path, sizeof path, "%s/%.*s.jo", g_lib_dir, d->sval.len, d->sval.p);
         if (access(path, R_OK) != 0) fatal(d->pos, "cannot find module '%.*s'", d->sval.len, d->sval.p);
       }
       Module *im = load_module(path, false, d->pos);
@@ -239,7 +239,7 @@ static Module *load_module(const char *path, bool is_prelude, Pos from) {
   m->is_prelude = is_prelude;
   m->order = modules.len;
   const char *base = strrchr(rp, '/'); base = base ? base + 1 : rp;
-  m->name = intern(base, strlen(base) - 4);
+  m->name = intern(base, strlen(base) - 3);
   m->scope = is_prelude ? prelude_scope : scope_new(prelude_scope, 0, NULL);
   vpush(modules, m);
   if (modules.len >= 256) fatal(from, "too many modules");
@@ -1200,12 +1200,12 @@ FnInst *runtime_fn(const char *name) {
   for (int i = 0; runtime_names[i]; i++) if (strcmp(runtime_names[i], name) == 0) {
     if (!runtime_insts[i]) {
       Sym *s = scope_lookup_here(prelude_scope, internc(name));
-      if (!s || s->kind != S_FNS) { fprintf(stderr, "jot0: missing runtime function %s\n", name); exit(1); }
+      if (!s || s->kind != S_FNS) { fprintf(stderr, "sloppy0: missing runtime function %s\n", name); exit(1); }
       runtime_insts[i] = get_fn_inst(s->decl, NULL, 0, s->decl->pos);
     }
     return runtime_insts[i];
   }
-  fprintf(stderr, "jot0: unknown runtime function %s\n", name);
+  fprintf(stderr, "sloppy0: unknown runtime function %s\n", name);
   exit(1);
 }
 
@@ -1241,12 +1241,12 @@ static void load_prelude(void) {
   char dirpath[1024];
   snprintf(dirpath, sizeof dirpath, "%s/core", g_lib_dir);
   DIR *d = opendir(dirpath);
-  if (!d) { fprintf(stderr, "jot0: cannot open library directory %s\n", dirpath); exit(1); }
+  if (!d) { fprintf(stderr, "sloppy0: cannot open library directory %s\n", dirpath); exit(1); }
   struct dirent *e;
   char *names[256]; int n = 0;
   while ((e = readdir(d))) {
     int l = strlen(e->d_name);
-    if (l > 4 && strcmp(e->d_name + l - 4, ".jot") == 0 && n < 256) names[n++] = strdup(e->d_name);
+    if (l > 3 && strcmp(e->d_name + l - 3, ".jo") == 0 && n < 256) names[n++] = strdup(e->d_name);
   }
   closedir(d);
   // deterministic order

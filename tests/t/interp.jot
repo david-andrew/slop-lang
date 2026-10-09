@@ -1,5 +1,0 @@
-# requires: jot (string interpolation with nested brackets and strings)
-x = 3
-print("{(if x > 2: 1 else: 0)} {[1, 2][0]:5} {x:3} {"in{x}ner"}")
-m = {"k": 2}
-print("{m["k"]:4}|")

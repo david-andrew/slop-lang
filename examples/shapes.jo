@@ -1,0 +1,23 @@
+# A tour of the 2D drawing API.
+t = 0.0
+
+update = (dt: f64):
+    t += dt
+    if key_pressed(.escape): quit()
+
+draw = ():
+    clear(rgb(0.08, 0.09, 0.14))
+    rect_gradient(0, 0, 1280, 720, rgb(0.1, 0.12, 0.25), rgb(0.35, 0.18, 0.3))
+    loop i in [0..12):
+        a = t * 0.5 + f64(i) * TAU / 12.0
+        p = vec2(640, 360) + from_angle(a) * 220.0
+        circle(p, 26, hsv(f64(i) / 12.0, 0.6, 0.95))
+    blend(.add)
+    circle_gradient(vec2(640, 360), 180, rgba(1, 0.8, 0.4, 0.5), rgba(1, 0.4, 0.2, 0))
+    blend(.alpha)
+    rect(100, 560, 300, 80, rgba(0.2, 0.8, 0.5, 0.8))
+    line(vec2(100, 100), mouse_pos(), 4, YELLOW)
+    triangle(vec2(1000, 600), vec2(1150, 600), vec2(1075, 470), CYAN)
+    ring(vec2(1075, 200), 70, 10, MAGENTA)
+    text("Hello from Sloppy!", vec2(40, 30), 48, WHITE)
+    text("fps {fps():.0}  t = {t:.2}", vec2(40, 90), 20, rgba(1, 1, 1, 0.7))

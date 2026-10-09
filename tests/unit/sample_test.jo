@@ -1,0 +1,20 @@
+# `sloppy test tests/unit/sample_test.jo` runs the test blocks below
+clamp = (x: int, lo: int, hi: int) -> int:
+    if x < lo: return lo
+    if x > hi: return hi
+    x
+
+table = [3, 1, 2]
+
+test "clamp keeps values in range":
+    assert(clamp(5, 0, 10) == 5)
+    assert(clamp(-5, 0, 10) == 0)
+    assert(clamp(50, 0, 10) == 10)
+
+test "top-level code ran first":
+    assert(table.len() == 3)
+    sorted_ = table.sorted()
+    assert(sorted_ == [1, 2, 3])
+
+test "strings":
+    assert("a,b".split(",").len() == 2)

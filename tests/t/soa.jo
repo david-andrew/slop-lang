@@ -1,0 +1,58 @@
+# requires: sloppy
+# soa T[]: an array of structs stored as one array per field
+struct P:
+    x: f64
+    y: f64
+    alive: bool = true
+
+main = ():
+    ps: soa P[]
+    ps.push(P(1.0, 2.0))
+    ps.push(P(3.0, 4.0, false))
+    ps.push(P(x = 5.0, y = 6.0))
+    print(ps.len(), len(ps), ps[1], ps[2].x)
+    ps[0].x += 10.0
+    ps[1] = P(-1.0, -2.0)
+    print(ps.x, ps.y, ps.alive)
+    total = 0.0
+    loop p in ps: total += p.x * p.y
+    print(total)
+    loop i in 0.. and p in ps: print(i, p.y)
+    ps.x = ps.x .+ ps.y .* 0.5
+    print(ps.x)
+    last = ps.pop()
+    print(last, ps.len())
+    first = ps.remove(0)
+    print(first, ps.len(), ps[0])
+    qs: soa P[] = [P(7.0, 8.0), P(9.0, 10.0)]
+    print(qs.len(), qs[1].y)
+    qs.clear()
+    print(qs.len())
+
+struct V2:
+    x: f64
+    y: f64
+struct PV:
+    pos: V2
+    vel: V2
+    alive: bool = true
+
+alias_demo = ():
+    ps: soa PV[]
+    loop i in [0..4): ps.push(PV(V2(f64(i), 0.0), V2(1.0, 2.0)))
+    loop mut p in ps:
+        p.pos.x += p.vel.x * 0.5
+        p.pos.y = p.vel.y
+        if p.pos.x > 2.5: p.alive = false
+    total = 0.0
+    loop p in ps: total += p.pos.x
+    print(total, ps.alive)
+    loop mut p in ps:
+        if not p.alive: p = PV(V2(0.0, 0.0), V2(0.0, 0.0))
+    loop i in 0.. and p in ps: print(i, p)
+    keep = (p: PV) -> bool: p.alive
+    n = 0
+    loop p in ps:
+        if keep(p): n += 1
+    print(n)
+alias_demo()

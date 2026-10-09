@@ -1,5 +1,5 @@
-// Jot syntax highlighting for web pages (the playground's editor, the site's code blocks):
-// jotHighlight(text, errLine) -> HTML with <span class="c|k|s|n|t|f|d|v|o"> around tokens
+// Sloppy syntax highlighting for web pages (the playground's editor, the site's code blocks):
+// sloppyHighlight(text, errLine) -> HTML with <span class="c|k|s|n|t|f|d|v|o"> around tokens
 // (errLine: a line to mark with class "errline", or 0).
 "use strict";
 const KW = new Set("if else loop in break continue return match when defer pass struct enum type const extern use import as and or not xor is mut let soa test build".split(" "));
@@ -7,7 +7,7 @@ const CONSTS = new Set(["true", "false", "none", "null", "TARGET", "DEBUG"]);
 const TYPES = new Set("int i8 i16 i32 i64 u8 u16 u32 u64 byte f32 f64 bool str void never vec2 vec3 vec4 ivec2 mat4 cfn".split(" "));
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const TOKEN = /(#.*)|(r?"""[\s\S]*?(?:"""|$))|(r?"(?:\\.|[^"\\\n])*"?)|('(?:\\.|[^'\\\n])*'?)|(\b0[xX][0-9a-fA-F_]+\b|\b\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?[A-Za-z_]*)|([A-Za-z_][A-Za-z0-9_]*)|(->|\.\.\.?|[-+*/%^&|<>=!~?:.,;@]+)|(\s+)|(.)/g;
-function jotHighlight(text, errLine) {
+function sloppyHighlight(text, errLine) {
   let html = "", m, line = 1, lineStart = true, prev = "", lineText = "";
   const lines = text.split("\n");
   const defs = new Set();

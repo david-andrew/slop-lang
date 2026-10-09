@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Install Jot:
-#   curl -fsSL https://david-andrew.github.io/slop-lang/install | bash
-#   curl -fsSL https://david-andrew.github.io/slop-lang/install | bash -s v0.1.0     (a version)
-# Installs to ~/.jot (or $JOT_INSTALL): bin/jot and the standard library beside it, and puts
-# ~/.jot/bin on your PATH (in your shell's startup file). Running it again upgrades.
+# Install Sloppy:
+#   curl -fsSL https://sloppy-lang.org/install | bash
+#   curl -fsSL https://sloppy-lang.org/install | bash -s v0.1.0     (a version)
+# Installs to ~/.sloppy (or $SLOPPY_INSTALL): bin/sloppy and the standard library beside it, and puts
+# ~/.sloppy/bin on your PATH (in your shell's startup file). Running it again upgrades.
 set -euo pipefail
 
 REPO="david-andrew/slop-lang"
-ASSET="jot-linux-x86_64.tar.gz"
+ASSET="sloppy-linux-x86_64.tar.gz"
 VERSION="${1:-latest}"
-INSTALL="${JOT_INSTALL:-$HOME/.jot}"
+INSTALL="${SLOPPY_INSTALL:-$HOME/.sloppy}"
 
 if [ -t 1 ]; then
     BOLD=$'\033[1m'; DIM=$'\033[2m'; GREEN=$'\033[32m'; RED=$'\033[31m'; CYAN=$'\033[36m'; RESET=$'\033[0m'
@@ -22,10 +22,10 @@ fail() { printf '%serror%s: %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 # ---- what this machine is ----
 os="$(uname -s)"
 arch="$(uname -m)"
-[ "$os" = "Linux" ] || fail "Jot runs on Linux (this is $os). Its programs also run in any browser: see https://david-andrew.github.io/slop-lang/playground/"
+[ "$os" = "Linux" ] || fail "Sloppy runs on Linux (this is $os). Its programs also run in any browser: see https://sloppy-lang.org/playground/"
 case "$arch" in
     x86_64|amd64) ;;
-    *) fail "Jot's compiler makes x86-64 programs and runs on x86-64 (this machine is $arch)" ;;
+    *) fail "Sloppy's compiler makes x86-64 programs and runs on x86-64 (this machine is $arch)" ;;
 esac
 command -v tar >/dev/null || fail "tar is needed"
 if command -v curl >/dev/null; then
@@ -43,8 +43,8 @@ else
     base="https://github.com/$REPO/releases/download/$VERSION"
 fi
 
-# (JOT_DOWNLOAD_BASE: somewhere else holding the release files, for testing)
-base="${JOT_DOWNLOAD_BASE:-$base}"
+# (SLOPPY_DOWNLOAD_BASE: somewhere else holding the release files, for testing)
+base="${SLOPPY_DOWNLOAD_BASE:-$base}"
 
 # ---- download and check ----
 tmp="$(mktemp -d)"
@@ -58,8 +58,8 @@ if get "$base/$ASSET.sha256" "$tmp/$ASSET.sha256" 2>/dev/null; then
     [ "$want" = "$have" ] || fail "the download is damaged (checksum $have, expected $want)"
 fi
 tar -xzf "$tmp/$ASSET" -C "$tmp"
-src="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -name 'jot-*' | head -n 1)"
-[ -n "$src" ] && [ -x "$src/bin/jot" ] || fail "the download does not hold bin/jot"
+src="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -name 'sloppy-*' | head -n 1)"
+[ -n "$src" ] && [ -x "$src/bin/sloppy" ] || fail "the download does not hold bin/sloppy"
 
 # ---- install (replacing an earlier one whole: no stale library files) ----
 mkdir -p "$(dirname "$INSTALL")"
@@ -69,7 +69,7 @@ if [ -d "$INSTALL" ]; then
 fi
 mv "$src" "$INSTALL"
 rm -rf "$INSTALL.old"
-installed="$("$INSTALL/bin/jot" --version 2>/dev/null)" || fail "$INSTALL/bin/jot does not run on this machine"
+installed="$("$INSTALL/bin/sloppy" --version 2>/dev/null)" || fail "$INSTALL/bin/sloppy does not run on this machine"
 
 # ---- on the PATH ----
 bin="$INSTALL/bin"
@@ -82,7 +82,7 @@ if ! $on_path; then
     shell_name="$(basename "${SHELL:-bash}")"
     case "$shell_name" in
         fish)
-            rc="$HOME/.config/fish/conf.d/jot.fish"
+            rc="$HOME/.config/fish/conf.d/sloppy.fish"
             mkdir -p "$(dirname "$rc")"
             line="fish_add_path \"$bin\""
             ;;
@@ -95,7 +95,7 @@ if ! $on_path; then
         *) rc="$HOME/.profile"; line="export PATH=\"$bin:\$PATH\"" ;;
     esac
     if ! grep -qsF "$bin" "$rc"; then
-        printf '\n# jot\n%s\n' "$line" >> "$rc"
+        printf '\n# sloppy\n%s\n' "$line" >> "$rc"
         note="added $shown to your PATH in ${rc/#$HOME/\~}"
     fi
 fi
@@ -111,16 +111,16 @@ if ! $on_path; then
     say ""
 fi
 say "Then:"
-say "  ${CYAN}jot${RESET}                 an interactive prompt"
-say "  ${CYAN}jot game.jot${RESET}        compile and run a program"
-say "  ${CYAN}jot --web game.jot${RESET}  the same in the browser"
+say "  ${CYAN}sloppy${RESET}                 an interactive prompt"
+say "  ${CYAN}sloppy game.jo${RESET}        compile and run a program"
+say "  ${CYAN}sloppy --web game.jo${RESET}  the same in the browser"
 editor=""
 command -v cursor >/dev/null && editor="cursor"
 command -v code >/dev/null && [ -z "$editor" ] && editor="code"
 if [ -n "$editor" ]; then
     say ""
     say "Editor support (highlighting, errors as you type, completion...):"
-    say "  ${CYAN}$editor --install-extension $home_shown/editors/jot.vsix${RESET}"
+    say "  ${CYAN}$editor --install-extension $home_shown/editors/sloppy.vsix${RESET}"
 fi
 say ""
-say "${DIM}Docs: https://david-andrew.github.io/slop-lang  ·  upgrade: jot upgrade  ·  uninstall: rm -rf $home_shown${RESET}"
+say "${DIM}Docs: https://sloppy-lang.org  ·  upgrade: sloppy upgrade  ·  uninstall: rm -rf $home_shown${RESET}"

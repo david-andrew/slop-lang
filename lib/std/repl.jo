@@ -1,0 +1,91 @@
+# The program side of the interactive prompt (`sloppy` with no file, see compiler/repl.jo). The
+# compiler builds a program whose main is __repl_serve, and runs it; then for each input it
+# compiles new machine code that uses this program's functions and globals, and sends it here.
+# Each input runs in a copy of this process (fork): if it fails (a panic, a crash), the copy is
+# gone and the state before it is still here; if it finishes, the copy carries on as the session.
+#
+# Messages from the compiler (fd 3), each a header of three words:
+#   1 addr len, then len bytes: copy them to addr (in the region __repl_region reserved)
+#   2 entry 0: run the code at entry (a function taking and returning nothing)
+#   3 0 0: quit
+# Replies (fd 4): one word per run: 0 finished; 256 + signal number if it crashed; 512 + status
+# if it exited (101: a panic).
+
+const __REPL_IN = 3
+const __REPL_OUT = 4
+
+__repl_read_all = (fd: int, p: *u8, n: int) -> bool:
+    got = 0
+    loop got < n:
+        r = syscall(0, fd, p + got, n - got)
+        if r <= 0: return false
+        got += r
+    true
+
+__repl_reply = (v: int):
+    w = [v]
+    __write_fd(__REPL_OUT, data(w) as *u8, 8)
+
+# (only the thread that forked is in the copy: a thread pool must be started again there)
+__repl_after_fork = ():
+    __pool_ctl = null
+    __tstack_base = null
+    __pool_workers = 0
+
+# ignore ctrl-c (SIGINT) or not: the prompt and the session ignore it; the input running stops
+__repl_sigint = (ignore: bool):
+    when TARGET != "wasm":
+        act = [0, 0, 0, 0]                                           # struct sigaction
+        if ignore: act[0] = 1                                        # SIG_IGN (else SIG_DFL)
+        syscall(13, 2, data(act), 0, 8)                              # rt_sigaction(SIGINT)
+
+__repl_serve = (region: int, size: int):
+    when TARGET != "wasm":
+        __repl_sigint(true)
+        # the code of later inputs goes here (read, write, execute; pages are touched as needed)
+        r = syscall(9, region, size, 7, 0x22 | 0x4000 | 0x100000, -1, 0)     # MAP_FIXED_NOREPLACE
+        if r != region:
+            __repl_reply(-1)
+            exit(1)
+        __repl_reply(0)
+        hdr = [0, 0, 0]
+        loop true:
+            if not __repl_read_all(__REPL_IN, data(hdr) as *u8, 24): exit(0)
+            op = hdr[0]
+            if op == 1:
+                if not __repl_read_all(__REPL_IN, hdr[1] as *u8, hdr[2]): exit(0)
+            else if op == 2:
+                # run it in a copy; the copy tells us (through a pipe) when it finished
+                fds: i32[] = [-1, -1]
+                syscall(293, data(fds), 0x80000)                    # pipe2(O_CLOEXEC)
+                pid = syscall(57)                                    # fork
+                if pid == 0:
+                    syscall(3, int(fds[0]))
+                    __repl_sigint(false)
+                    __repl_after_fork()
+                    entry = (hdr[1] as *u8) as cfn()
+                    entry()
+                    __repl_sigint(true)
+                    __repl_reply(0)
+                    one = [1]
+                    syscall(1, int(fds[1]), data(one), 1)
+                    syscall(3, int(fds[1]))
+                    continue                                         # the copy is the session now
+                syscall(3, int(fds[1]))
+                b = [0]
+                n = syscall(0, int(fds[0]), data(b), 1)
+                syscall(3, int(fds[0]))
+                if n == 1:
+                    # finished: the copy carries on; this process is done
+                    syscall(231, 0)
+                status = [0]
+                syscall(61, pid, data(status), 0, 0)                # wait4
+                st = status[0] & 0xFFFF
+                how = 512 + (st >> 8)
+                if st & 0x7F != 0: how = 256 + (st & 0x7F)
+                __repl_reply(how)
+            else: exit(0)
+
+# what the prompt shows for an expression's value
+__repl_show = (x): print(x)
+__repl_show = (x: str): print("\"{x}\"")

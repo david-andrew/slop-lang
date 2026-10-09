@@ -1,0 +1,9 @@
+# requires: sloppy
+# `loop a, b in` unpacks: key and value of a map, or the pairs of an array of pairs
+m = {"a": 1, "b": 2}
+loop k, v in m: print(k, v)
+ps = [(1, "one"), (2, "two")]
+loop n, s in ps: print(n, s)
+# counting the elements is `i in 0.. and x in xs`
+loop i in 0.. and p in ps: print(i, p)
+loop i in 1.. and x in [10, 20] and i < 2: print(i, x)

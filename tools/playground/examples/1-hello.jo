@@ -1,0 +1,19 @@
+# Welcome to Sloppy. Edit this program and press Run (ctrl+enter).
+# The compiler runs right here in the page: it compiles the program to WebAssembly.
+
+print("hello, world")
+
+fib = (n: int) -> int:
+    if n < 2: return n
+    fib(n - 1) + fib(n - 2)
+
+loop i in [0..10):
+    print("fib({i}) = {fib(i)}")
+
+nums = [5 3 9 1]
+nums.sort()
+squares = nums.map((x): x * x)
+add = (a: int, b: int): a + b
+inc = add(1, _)                     # partial application
+print(squares, inc(41))
+print(nums .* 2.5 .+ 1, sqrt.([4.0 9.0]))

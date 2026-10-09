@@ -1,4 +1,4 @@
-// x86-64 code generator for jot0: emits GNU assembler (Intel syntax).
+// x86-64 code generator for sloppy0: emits GNU assembler (Intel syntax).
 // Calling convention (internal): arguments are pushed left to right (hidden sret pointer
 // first, then closure env, then user args), callee reads arg k of n at [rbp+16+8*(n-1-k)].
 // Scalars return in rax/xmm0; aggregates are written through the sret pointer.
@@ -265,7 +265,7 @@ static void reg_temp(int off, Type *t) {
 static void borrow(Val v, Type *t) {
   if (!v.owned || !is_managed(t)) return;
   if (vclass(t) == VC_AGG) {
-    if (!v.slot) { fprintf(stderr, "jot0: internal: owned aggregate without slot\n"); exit(1); }
+    if (!v.slot) { fprintf(stderr, "sloppy0: internal: owned aggregate without slot\n"); exit(1); }
     reg_temp(v.slot, t);
   } else {
     int off = new_temp(t);
@@ -828,7 +828,7 @@ static Val gen_intrinsic(Node *e) {
     gen_expr(a[0]);
     return V(false); // borrowed reinterpretation (shares object, COW protects the string)
   case IN_ARGV:
-    E("mov rax, qword ptr [rip+__jot_sp0]");
+    E("mov rax, qword ptr [rip+__sloppy_sp0]");
     return V(false);
   case IN_SQRT:
     gen_expr(a[0]);
@@ -902,7 +902,7 @@ static Val gen_intrinsic(Node *e) {
     return V(false);
   }
   default:
-    fatal(e->pos, "jot0: intrinsic not supported in codegen");
+    fatal(e->pos, "sloppy0: intrinsic not supported in codegen");
   }
 }
 
@@ -1251,7 +1251,7 @@ static Val gen_expr(Node *e) {
       load_rax(t);
       return V(false);
     }
-    fatal(e->pos, "jot0: cannot generate identifier");
+    fatal(e->pos, "sloppy0: cannot generate identifier");
   }
   case N_FIELD:
     if (e->aux != -3 && prune(e->a->type)->kind != TY_PTR && vclass(e->a->type) == VC_AGG && e->a->kind != N_IDENT) {
@@ -1534,7 +1534,7 @@ static Val gen_expr(Node *e) {
     return V(false);
   }
   default:
-    fatal(e->pos, "jot0: unsupported expression in codegen (kind %d)", e->kind);
+    fatal(e->pos, "sloppy0: unsupported expression in codegen (kind %d)", e->kind);
   }
 }
 
@@ -1842,7 +1842,7 @@ static void gen_stmt(Node *s) {
     break;
   case N_CONST: break;
   default:
-    fatal(s->pos, "jot0: unsupported statement");
+    fatal(s->pos, "sloppy0: unsupported statement");
   }
 }
 
@@ -2295,7 +2295,7 @@ void gen_program(FILE *out) {
   L("  .text");
   L("  .globl _start");
   L("_start:");
-  E("mov qword ptr [rip+__jot_sp0], rsp");
+  E("mov qword ptr [rip+__sloppy_sp0], rsp");
   E("and rsp, -16");
   for (int i = 0; i < prog.init_stmts.len; i++) E("call %s", fn_sym(prog.init_stmts.data[i]->sym));
   if (prog.main_fn) E("call %s", fn_sym(prog.main_fn));
@@ -2303,7 +2303,7 @@ void gen_program(FILE *out) {
   fwrite(text.p, 1, text.len, out);
   fprintf(out, "  .section .rodata\n");
   if (rodata.len) fwrite(rodata.p, 1, rodata.len, out);
-  fprintf(out, "  .bss\n  .balign 16\n__jot_sp0: .zero 8\n");
+  fprintf(out, "  .bss\n  .balign 16\n__sloppy_sp0: .zero 8\n");
   for (int i = 0; i < prog.globals.len; i++) {
     Global *g = prog.globals.data[i];
     if (g->state != 2 || !g->type) continue;

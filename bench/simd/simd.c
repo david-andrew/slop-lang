@@ -1,4 +1,4 @@
-// bench/simd/simd.jot in C (gcc -O2 vectorizes these loops itself, with SSE2: it does not
+// bench/simd/simd.jo in C (gcc -O2 vectorizes these loops itself, with SSE2: it does not
 // assume more of the processor than the x86-64 baseline unless told to).
 #include <stdio.h>
 #include <stdlib.h>

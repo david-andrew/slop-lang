@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure how well Jot meets its requirements and write docs/REPORT.md.
+"""Measure how well Sloppy meets its requirements and write docs/REPORT.md.
 
 usage: tools/report.py [--quick]      (--quick skips the bootstrap and the browser checks)
 
@@ -13,8 +13,8 @@ from pngutil import png_rows, png_colors, png_diff
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
-JOT = os.path.join(ROOT, "bin", "jot")
-ENV = dict(os.environ, JOT_LIB=os.path.join(ROOT, "lib"), JOT_NO_AUDIO="1")
+SLOPPY = os.path.join(ROOT, "bin", "sloppy")
+ENV = dict(os.environ, SLOPPY_LIB=os.path.join(ROOT, "lib"), SLOPPY_NO_AUDIO="1")
 QUICK = "--quick" in sys.argv
 BUILD = os.path.join(ROOT, "build", "report")
 os.makedirs(BUILD, exist_ok=True)
@@ -69,7 +69,7 @@ def fmt_ratio(x):
 
 
 # ---------------------------------------------------------------------------
-say("# Jot requirements report")
+say("# Sloppy requirements report")
 say()
 say(f"Generated {time.strftime('%Y-%m-%d %H:%M')} on {platform.machine()} Linux "
     f"({os.cpu_count()} hardware threads). Load average at start: {os.getloadavg()[0]:.1f}. "
@@ -82,13 +82,13 @@ say()
 if not QUICK:
     r = run(["sh", "tools/bootstrap.sh"])
     ok = r.returncode == 0 and "fixed point" in r.stdout
-    say(f"- C bootstrap -> jot1 -> jot2 -> jot3, jot2 == jot3 byte for byte: **{'yes' if ok else 'NO'}**")
+    say(f"- C bootstrap -> sloppy1 -> sloppy2 -> sloppy3, sloppy2 == sloppy3 byte for byte: **{'yes' if ok else 'NO'}**")
 else:
     say("- (bootstrap skipped with --quick)")
-src_lines = sum(len(open(f).read().splitlines()) for f in glob.glob("compiler/*.jot"))
-lib_lines = sum(len(open(f).read().splitlines()) for f in glob.glob("lib/*/*.jot"))
-say(f"- compiler: {src_lines} lines of Jot; standard library: {lib_lines} lines of Jot")
-say(f"- `bin/jot` size: {os.path.getsize(JOT) // 1024} KB, built by itself in release mode")
+src_lines = sum(len(open(f).read().splitlines()) for f in glob.glob("compiler/*.jo"))
+lib_lines = sum(len(open(f).read().splitlines()) for f in glob.glob("lib/*/*.jo"))
+say(f"- compiler: {src_lines} lines of Sloppy; standard library: {lib_lines} lines of Sloppy")
+say(f"- `bin/sloppy` size: {os.path.getsize(SLOPPY) // 1024} KB, built by itself in release mode")
 say()
 
 # ---------------- tests ----------------
@@ -100,12 +100,12 @@ for label, args in [("native, debug", []), ("native, release", ["--release"]),
                     ("web (wasm under node), debug", ["--target", "wasm"]),
                     ("web (wasm under node), release", ["--target", "wasm", "--release"]),
                     ("C bootstrap compiler", None)]:
-    cmd = ["python3", "tools/runtests.py"] + (["--compiler", "jot0"] if args is None else ["--compiler", "jot"] + args)
+    cmd = ["python3", "tools/runtests.py"] + (["--compiler", "sloppy0"] if args is None else ["--compiler", "sloppy"] + args)
     r = run(cmd)
     last = (r.stdout.strip().splitlines() or ["?"])[-1]
     say(f"| {label} | {last} |")
-r = run(["python3", "tools/lsptest.py", JOT], timeout=300)
-say(f"| language server (`jot lsp`, driven as an editor would) | {(r.stdout.strip().splitlines() or ['?'])[-1]} |")
+r = run(["python3", "tools/lsptest.py", SLOPPY], timeout=300)
+say(f"| language server (`sloppy lsp`, driven as an editor would) | {(r.stdout.strip().splitlines() or ['?'])[-1]} |")
 r = run(["python3", "tools/rendertest.py"], timeout=1200)
 say(f"| rendering (software renderer vs references; also on the GPU when there is a display) | {(r.stdout.strip().splitlines() or ['?'])[-1]} |")
 if not QUICK:
@@ -116,21 +116,21 @@ say()
 # ---------------- compile speed ----------------
 say("## 3. Compile speed")
 say()
-if not os.path.exists("bench/big.jot"):
+if not os.path.exists("bench/big.jo"):
     run(["python3", "tools/genbench.py"])
-lines = len(open("bench/big.jot").read().splitlines())
+lines = len(open("bench/big.jo").read().splitlines())
 clines = len(open("bench/big.c").read().splitlines())
-dbg = cpu_time([JOT, "build", "bench/big.jot", "-o", f"{BUILD}/big"])
-rel = cpu_time([JOT, "build", "bench/big.jot", "-o", f"{BUILD}/big_r", "--release"], n=3)
-di = instructions([JOT, "build", "bench/big.jot", "-o", f"{BUILD}/big"])
-ri = instructions([JOT, "build", "bench/big.jot", "-o", f"{BUILD}/big_r", "--release"])
-say(f"Generated program `bench/big.jot`: {lines} lines (2000 functions, loops, structs, strings, floats), "
+dbg = cpu_time([SLOPPY, "build", "bench/big.jo", "-o", f"{BUILD}/big"])
+rel = cpu_time([SLOPPY, "build", "bench/big.jo", "-o", f"{BUILD}/big_r", "--release"], n=3)
+di = instructions([SLOPPY, "build", "bench/big.jo", "-o", f"{BUILD}/big"])
+ri = instructions([SLOPPY, "build", "bench/big.jo", "-o", f"{BUILD}/big_r", "--release"])
+say(f"Generated program `bench/big.jo`: {lines} lines (2000 functions, loops, structs, strings, floats), "
     f"and the equivalent C program `bench/big.c` ({clines} lines).")
 say()
 say("| compiler | CPU time | lines / second | instructions |")
 say("|---|---|---|---|")
-say(f"| jot (debug build) | {dbg:.3f} s | {lines / dbg:,.0f} | {di:.2f} G |")
-say(f"| jot (release build) | {rel:.3f} s | {lines / rel:,.0f} | {ri:.2f} G |")
+say(f"| sloppy (debug build) | {dbg:.3f} s | {lines / dbg:,.0f} | {di:.2f} G |")
+say(f"| sloppy (release build) | {rel:.3f} s | {lines / rel:,.0f} | {ri:.2f} G |")
 tcc = shutil.which("tcc") or ("/tmp/tcc-install/bin/tcc" if os.path.exists("/tmp/tcc-install/bin/tcc") else None)
 if tcc:
     t = cpu_time([tcc, "bench/big.c", "-o", f"{BUILD}/bigc_tcc", "-lm"])
@@ -144,37 +144,37 @@ say(f"Release builds take {rel / dbg:.1f}x the time of debug builds (requirement
 say()
 
 # ---------------- script latency ----------------
-say("## 4. Script workflow (`jot file.jot`: compile + run)")
+say("## 4. Script workflow (`sloppy file.jo`: compile + run)")
 say()
 say("| program | lines | compile + run (wall) |")
 say("|---|---|---|")
-hello = os.path.join(BUILD, "hello.jot")
+hello = os.path.join(BUILD, "hello.jo")
 open(hello, "w").write('print("hello, world")\n')
-t = wall_time([JOT, hello])
+t = wall_time([SLOPPY, hello])
 say(f"| hello world | 1 | {t * 1000:.0f} ms |")
-for g in ["examples/lumen/lumen.jot", "examples/dunes/dunes.jot"]:
+for g in ["examples/lumen/lumen.jo", "examples/dunes/dunes.jo"]:
     n = len(open(g).read().splitlines())
-    t = wall_time([JOT, "build", g, "-o", f"{BUILD}/g"])
+    t = wall_time([SLOPPY, "build", g, "-o", f"{BUILD}/g"])
     say(f"| {g} (compile only) | {n} | {t * 1000:.0f} ms |")
 say()
 
 # ---------------- runtime performance ----------------
 say("## 5. Runtime performance vs C")
 say()
-say("Each benchmark exists as Jot and as equivalent C (`bench/rt`). Ratios are Jot time / C time (lower is better).")
+say("Each benchmark exists as Sloppy and as equivalent C (`bench/rt`). Ratios are Sloppy time / C time (lower is better).")
 say()
-say("| benchmark | C -O2 | C -O0 | Jot release | Jot debug | release / C -O2 |")
+say("| benchmark | C -O2 | C -O0 | Sloppy release | Sloppy debug | release / C -O2 |")
 say("|---|---|---|---|---|---|")
 ratios = []
-for src in sorted(glob.glob("bench/rt/*.jot")):
-    name = os.path.basename(src)[:-4]
-    csrc = src[:-4] + ".c"
+for src in sorted(glob.glob("bench/rt/*.jo")):
+    name = os.path.basename(src)[:-3]
+    csrc = src[:-3] + ".c"
     if not os.path.exists(csrc):
         continue
     run(["gcc", "-O2", "-o", f"{BUILD}/{name}_c2", csrc, "-lm"])
     run(["gcc", "-O0", "-o", f"{BUILD}/{name}_c0", csrc, "-lm"])
-    run([JOT, "build", src, "-o", f"{BUILD}/{name}_jd"])
-    run([JOT, "build", src, "-o", f"{BUILD}/{name}_jr", "--release"])
+    run([SLOPPY, "build", src, "-o", f"{BUILD}/{name}_jd"])
+    run([SLOPPY, "build", src, "-o", f"{BUILD}/{name}_jr", "--release"])
     outs = {v: run([f"{BUILD}/{name}_{v}"]).stdout for v in ["c2", "jr", "jd"]}
     same = outs["c2"] == outs["jr"] == outs["jd"]
     c2 = cpu_time([f"{BUILD}/{name}_c2"], n=3)
@@ -189,15 +189,15 @@ if ratios:
         geo *= r_
     geo **= 1.0 / len(ratios)
     say()
-    say(f"Geometric mean, Jot release / C -O2: **{fmt_ratio(geo)}**.")
+    say(f"Geometric mean, Sloppy release / C -O2: **{fmt_ratio(geo)}**.")
 say()
-say("Hot loops of a game (`bench/loops`): nanoseconds per element, Jot release vs C -O2 (the C dotted "
+say("Hot loops of a game (`bench/loops`): nanoseconds per element, Sloppy release vs C -O2 (the C dotted "
     "expression also makes a new array each time):")
 say()
-say("| loop | C -O2 | Jot release | ratio |")
+say("| loop | C -O2 | Sloppy release | ratio |")
 say("|---|---|---|---|")
 run(["gcc", "-O2", "-o", f"{BUILD}/loops_c", "bench/loops/loops.c", "-lm"])
-run([JOT, "build", "bench/loops/loops.jot", "-o", f"{BUILD}/loops_j"])
+run([SLOPPY, "build", "bench/loops/loops.jo", "-o", f"{BUILD}/loops_j"])
 def loop_times(exe):
     best = {}
     for _ in range(3):
@@ -212,11 +212,11 @@ for k in lc:
 say()
 
 say("Loops the compiler vectorizes (`bench/simd`, arrays that fit in the cache): nanoseconds per element. "
-    "Jot uses AVX2 where the processor has it and SSE2 otherwise (`JOT_NO_AVX=1` forces SSE2), from one "
+    "Sloppy uses AVX2 where the processor has it and SSE2 otherwise (`SLOPPY_NO_AVX=1` forces SSE2), from one "
     "executable; gcc -O2 vectorizes with SSE2, the x86-64 baseline:")
 say()
 run(["gcc", "-O2", "-o", f"{BUILD}/simd_c", "bench/simd/simd.c"])
-run([JOT, "build", "bench/simd/simd.jot", "-o", f"{BUILD}/simd_j"])
+run([SLOPPY, "build", "bench/simd/simd.jo", "-o", f"{BUILD}/simd_j"])
 def simd_times(cmd, env=None):
     best = {}
     vals = {}
@@ -229,9 +229,9 @@ def simd_times(cmd, env=None):
     return best, vals
 sc, scv = simd_times([f"{BUILD}/simd_c"])
 sa, sav = simd_times([f"{BUILD}/simd_j"])
-ss, ssv = simd_times([f"{BUILD}/simd_j"], dict(os.environ, JOT_NO_AVX="1"))
+ss, ssv = simd_times([f"{BUILD}/simd_j"], dict(os.environ, SLOPPY_NO_AVX="1"))
 avx = " avx2" in open("/proc/cpuinfo").read()
-say(f"| loop | C -O2 | Jot (AVX2{'' if avx else ': not on this machine, so SSE2'}) | Jot (SSE2) | same results |")
+say(f"| loop | C -O2 | Sloppy (AVX2{'' if avx else ': not on this machine, so SSE2'}) | Sloppy (SSE2) | same results |")
 say("|---|---|---|---|---|")
 for k in sc:
     if k in sa:
@@ -244,8 +244,8 @@ say("Game logic (`bench/game/swarm`: 3000 agents flocking, a spatial hash, shoot
     "what a C programmer would write (buffers reused, its own random numbers):")
 say()
 run(["gcc", "-O2", "-o", f"{BUILD}/swarm_c", "bench/game/swarm.c", "-lm"])
-run([JOT, "build", "bench/game/swarm.jot", "-o", f"{BUILD}/swarm_jr", "--release"])
-run([JOT, "build", "bench/game/swarm.jot", "-o", f"{BUILD}/swarm_jd"])
+run([SLOPPY, "build", "bench/game/swarm.jo", "-o", f"{BUILD}/swarm_jr", "--release"])
+run([SLOPPY, "build", "bench/game/swarm.jo", "-o", f"{BUILD}/swarm_jd"])
 def frame_ms(exe):
     best = 1e9
     for _ in range(3):
@@ -255,7 +255,7 @@ def frame_ms(exe):
 fc = frame_ms(f"{BUILD}/swarm_c")
 fr = frame_ms(f"{BUILD}/swarm_jr")
 fd = frame_ms(f"{BUILD}/swarm_jd")
-say("| C -O2 | Jot release | Jot debug | release / C |")
+say("| C -O2 | Sloppy release | Sloppy debug | release / C |")
 say("|---|---|---|---|")
 say(f"| {fc:.2f} ms | {fr:.2f} ms | {fd:.2f} ms | {fmt_ratio(fr / fc)} |")
 say()
@@ -263,7 +263,7 @@ say()
 # ---------------- parallelism ----------------
 say("## 6. CPU parallelism")
 say()
-par = os.path.join(BUILD, "par.jot")
+par = os.path.join(BUILD, "par.jo")
 open(par, "w").write('''build:
     opt = release
 collatz = (n0: int) -> int:
@@ -283,7 +283,7 @@ main = ():
     t2 = time()
     print(a == b, cpu_count(), (t1 - t0) / (t2 - t1))
 ''')
-r = run([JOT, par])
+r = run([SLOPPY, par])
 try:
     same, cpus, speed = r.stdout.split()
     say(f"`parallel_map` over 1M Collatz lengths on {cpus} hardware threads: **{float(speed):.1f}x** faster than "
@@ -295,13 +295,13 @@ say()
 # ---------------- static binaries ----------------
 say("## 7. Native executables are static")
 say()
-run([JOT, "build", hello, "-o", f"{BUILD}/hello"])
+run([SLOPPY, "build", hello, "-o", f"{BUILD}/hello"])
 ph = run(["readelf", "-lW", f"{BUILD}/hello"]).stdout
 dy = run(["readelf", "-dW", f"{BUILD}/hello"]).stdout
 static = "INTERP" not in ph and "NEEDED" not in dy
 say(f"- hello world: {os.path.getsize(f'{BUILD}/hello')} bytes; no program interpreter and no shared library "
     f"dependencies: **{'yes' if static else 'NO'}**")
-run([JOT, "build", "examples/dunes/dunes.jot", "-o", f"{BUILD}/dunes"])
+run([SLOPPY, "build", "examples/dunes/dunes.jo", "-o", f"{BUILD}/dunes"])
 ph = run(["readelf", "-lW", f"{BUILD}/dunes"]).stdout
 dy = run(["readelf", "-dW", f"{BUILD}/dunes"]).stdout
 say(f"- 3D game (dunes): {os.path.getsize(f'{BUILD}/dunes') // 1024} KB; static: "
@@ -318,7 +318,7 @@ webdir = os.path.join(ROOT, "build", "report-web")
 os.makedirs(webdir, exist_ok=True)
 for g in ["lumen", "dunes"]:
     html = os.path.join(webdir, f"{g}.html")
-    r = run([JOT, "build", f"examples/{g}/{g}.jot", "-o", html, "--target", "wasm"])
+    r = run([SLOPPY, "build", f"examples/{g}/{g}.jo", "-o", html, "--target", "wasm"])
     text = open(html).read()
     external = re.findall(r'(?:src|href)\s*=\s*"(?!data:)[^"]+"', text)
     line = f"- {g}: single file `{os.path.basename(html)}`, {len(text) // 1024} KB, external references: {len(external)}"
@@ -348,9 +348,9 @@ if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
     for g in ["lumen", "dunes"]:
         for mode in ["debug", "release"]:
             exe = f"{BUILD}/{g}_{mode}"
-            run([JOT, "build", f"examples/{g}/{g}.jot", "-o", exe] + (["--release"] if mode == "release" else []))
+            run([SLOPPY, "build", f"examples/{g}/{g}.jo", "-o", exe] + (["--release"] if mode == "release" else []))
             png = f"{BUILD}/{g}_{mode}.png"
-            env = dict(ENV, JOT_FRAMES="240", JOT_SCREENSHOT=png, JOT_FRAME_STATS="1")
+            env = dict(ENV, SLOPPY_FRAMES="240", SLOPPY_SCREENSHOT=png, SLOPPY_FRAME_STATS="1")
             r = run([exe], env=env, timeout=120)
             m = re.search(r"frame cpu: ([\d.]+) ms", r.stderr)
             how = re.search(r"ms; (.*)$", r.stderr.strip())
@@ -363,8 +363,8 @@ say()
 # ---------------- software rendering ----------------
 say("## 10. Without a GPU driver (software renderer)")
 say()
-say("With no OpenGL ES driver (or `JOT_SOFTWARE=1`) the same binaries draw with a multithreaded software "
-    "renderer that runs the Jot shader functions on the CPU, at half resolution. Without libX11 it speaks "
+say("With no OpenGL ES driver (or `SLOPPY_SOFTWARE=1`) the same binaries draw with a multithreaded software "
+    "renderer that runs the Sloppy shader functions on the CPU, at half resolution. Without libX11 it speaks "
     "the X11 protocol itself, and screenshot runs need no display at all. Below, frame 60 of each game "
     "rendered with no display and no GPU, compared with the GPU's frame:")
 say()
@@ -372,18 +372,18 @@ say("| game | software frame CPU time | mean abs difference vs GPU frame (0-255)
 say("|---|---|---|")
 has_display = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
 for g in ["cube", "lumen", "dunes"]:
-    src = f"examples/{g}.jot" if g == "cube" else f"examples/{g}/{g}.jot"
+    src = f"examples/{g}.jo" if g == "cube" else f"examples/{g}/{g}.jo"
     exe = f"{BUILD}/{g}_sw"
-    run([JOT, "build", src, "-o", exe, "--release"])
+    run([SLOPPY, "build", src, "-o", exe, "--release"])
     soft_png = f"{BUILD}/{g}_soft.png"
     env = {k: v for k, v in ENV.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
-    env.update(JOT_SOFTWARE="1", JOT_FRAMES="60", JOT_SCREENSHOT=soft_png, JOT_FRAME_STATS="1")
+    env.update(SLOPPY_SOFTWARE="1", SLOPPY_FRAMES="60", SLOPPY_SCREENSHOT=soft_png, SLOPPY_FRAME_STATS="1")
     r = run([exe], env=env, timeout=300)
     m = re.search(r"frame cpu: ([\d.]+) ms", r.stderr)
     diff = "n/a (no display for the GPU frame)"
     if has_display:
         gpu_png = f"{BUILD}/{g}_gpu.png"
-        run([exe], env=dict(ENV, JOT_FRAMES="60", JOT_SCREENSHOT=gpu_png, JOT_SCALE="1"), timeout=120)
+        run([exe], env=dict(ENV, SLOPPY_FRAMES="60", SLOPPY_SCREENSHOT=gpu_png, SLOPPY_SCALE="1"), timeout=120)
         if os.path.exists(soft_png) and os.path.exists(gpu_png):
             d = png_diff(soft_png, gpu_png)
             diff = f"{d:.2f}" if d is not None else "size mismatch"

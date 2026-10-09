@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Test the language server (jot lsp) the way an editor uses it.
-usage: tools/lsptest.py [path/to/jot]        (default: bin/jot)"""
+"""Test the language server (sloppy lsp) the way an editor uses it.
+usage: tools/lsptest.py [path/to/sloppy]        (default: bin/sloppy)"""
 import json, os, subprocess, sys, tempfile
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-jot = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(root, "bin", "jot")
+sloppy = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(root, "bin", "sloppy")
 
 
 class Client:
     def __init__(self):
-        self.p = subprocess.Popen([jot, "lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  env=dict(os.environ, JOT_LIB=os.path.join(root, "lib")))
+        self.p = subprocess.Popen([sloppy, "lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")))
         self.id = 0
         self.notes = []
         self.versions = {}
@@ -45,7 +45,7 @@ class Client:
         v = self.versions.get(uri, 0) + 1
         self.versions[uri] = v
         if v == 1:
-            self.notify("textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "jot", "version": 1, "text": text}})
+            self.notify("textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "sloppy", "version": 1, "text": text}})
         else:
             self.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": v}, "contentChanges": [{"text": text}]})
 
@@ -77,7 +77,7 @@ def lc(text, off):
     return {"line": pre.count("\n"), "character": off - (pre.rfind("\n") + 1)}
 
 
-tmp = tempfile.mkdtemp(prefix="jot-lsptest-")
+tmp = tempfile.mkdtemp(prefix="sloppy-lsptest-")
 c = Client()
 caps = c.request("initialize", {"capabilities": {}})["capabilities"]
 check("capabilities", sorted(k for k, v in caps.items() if v), sorted(["textDocumentSync", "hoverProvider", "definitionProvider", "referencesProvider", "documentHighlightProvider", "documentSymbolProvider", "renameProvider", "completionProvider", "signatureHelpProvider", "inlayHintProvider"]))
@@ -111,7 +111,7 @@ main = ():
     xs = [1, 2, 3].map((v): v * 10)
     print(d, n, t, xs, p.dist(q), xs.len(), p.x, dir)
 '''
-path = os.path.join(tmp, "prog.jot")
+path = os.path.join(tmp, "prog.jo")
 open(path, "w").write(prog)
 uri = "file://" + path
 c.set_text(uri, prog)
@@ -130,17 +130,17 @@ def hover(s, k=0, nth=0):
     return h and h["contents"]["value"]
 
 
-check("hover local", hover("dx * dx"), "```jot\n(variable) dx: f64\n```")
-check("hover field", hover("a.x", 2), "```jot\n(field) x: f64\n```\n---\nacross")
-check("hover function", hover("dist(p"), "```jot\ndist = (a: Point, b: Point) -> f64\n```\n---\nthe distance between two points")
-check("hover inferred result", hover("add(1"), "```jot\nadd = (a: int, b: int) -> int\n```")
-check("hover generic", hover("twice("), "```jot\ntwice = (f, x)\n# here: twice(f: (int) -> int, x: int) -> int\n```")
-check("hover struct", hover("Point(1"), "```jot\nstruct Point:\n    x: f64\n    y: f64\n```\n---\nA point in the plane")
-check("hover variant", hover(".left", 1), "```jot\n(variant) Dir.left\n```")
-check("hover method call", hover("p.dist", 2), "```jot\ndist = (a: Point, b: Point) -> f64\n```\n---\nthe distance between two points")
-check("hover named argument", hover("x = 4.0"), "```jot\n(field) x: f64\n```\n---\nacross")
-check("hover builtin", hover("len()"), "```jot\n(builtin) len\n```")
-check("hover lambda parameter", hover("v * 2"), "```jot\n(parameter) v: int\n```")
+check("hover local", hover("dx * dx"), "```sloppy\n(variable) dx: f64\n```")
+check("hover field", hover("a.x", 2), "```sloppy\n(field) x: f64\n```\n---\nacross")
+check("hover function", hover("dist(p"), "```sloppy\ndist = (a: Point, b: Point) -> f64\n```\n---\nthe distance between two points")
+check("hover inferred result", hover("add(1"), "```sloppy\nadd = (a: int, b: int) -> int\n```")
+check("hover generic", hover("twice("), "```sloppy\ntwice = (f, x)\n# here: twice(f: (int) -> int, x: int) -> int\n```")
+check("hover struct", hover("Point(1"), "```sloppy\nstruct Point:\n    x: f64\n    y: f64\n```\n---\nA point in the plane")
+check("hover variant", hover(".left", 1), "```sloppy\n(variant) Dir.left\n```")
+check("hover method call", hover("p.dist", 2), "```sloppy\ndist = (a: Point, b: Point) -> f64\n```\n---\nthe distance between two points")
+check("hover named argument", hover("x = 4.0"), "```sloppy\n(field) x: f64\n```\n---\nacross")
+check("hover builtin", hover("len()"), "```sloppy\n(builtin) len\n```")
+check("hover lambda parameter", hover("v * 2"), "```sloppy\n(parameter) v: int\n```")
 check("hover keyword", hover("loop" if "loop" in prog else "main = ", 7), None)
 
 
@@ -150,13 +150,13 @@ def where(r):
     return (os.path.basename(r["uri"]), r["range"]["start"]["line"], r["range"]["start"]["character"])
 
 
-check("definition", where(c.request("textDocument/definition", at("dist(p"))), ("prog.jot", 8, 0))
-check("definition of a field", where(c.request("textDocument/definition", at("a.x", 2))), ("prog.jot", 2, 4))
-check("definition of a local", where(c.request("textDocument/definition", at("d, n, t"))), ("prog.jot", 20, 4))
+check("definition", where(c.request("textDocument/definition", at("dist(p"))), ("prog.jo", 8, 0))
+check("definition of a field", where(c.request("textDocument/definition", at("a.x", 2))), ("prog.jo", 2, 4))
+check("definition of a local", where(c.request("textDocument/definition", at("d, n, t"))), ("prog.jo", 20, 4))
 d = where(c.request("textDocument/definition", at("map(")))
-check("definition in the library", d and (d[0], d[1] > 0), ("array.jot", True))
+check("definition in the library", d and (d[0], d[1] > 0), ("array.jo", True))
 refs = c.request("textDocument/references", dict(at("dist(p"), context={"includeDeclaration": True}))
-check("references", sorted(where(refs)), [("prog.jot", 8, 0), ("prog.jot", 20, 8), ("prog.jot", 25, 25)])
+check("references", sorted(where(refs)), [("prog.jo", 8, 0), ("prog.jo", 20, 8), ("prog.jo", 25, 25)])
 hl = c.request("textDocument/documentHighlight", at("dx = "))
 check("highlights", len(hl), 3)
 ren = c.request("textDocument/rename", dict(at("dist(p"), newName="distance"))
@@ -170,7 +170,7 @@ check("symbols", [(s["name"], s["kind"], [k["name"] for k in s.get("children", [
       [("Point", 23, ["x", "y"]), ("Dir", 10, ["left", "right"]), ("dist", 12, []), ("add", 12, []), ("twice", 12, []), ("main", 12, [])])
 
 # ---- completion ----
-cpath = os.path.join(tmp, "comp.jot")
+cpath = os.path.join(tmp, "comp.jo")
 curi = "file://" + cpath
 base = '''struct Ship:
     pos: vec2
@@ -212,7 +212,7 @@ check("complete array functions", all(n in complete("ships.|") for n in ["len", 
 check("nothing in comments", complete("x = 1  # s.|"), [])
 
 # ---- errors ----
-epath = os.path.join(tmp, "errs.jot")
+epath = os.path.join(tmp, "errs.jo")
 euri = "file://" + epath
 c.set_text(euri, '''helper = (x: int) -> int:
     y = x +
@@ -240,35 +240,35 @@ check("lowering: first the checker's", c.diagnostics(euri), [])
 check("lowering: then lowering's", [(d["range"]["start"]["line"], d["message"][:39]) for d in c.diagnostics(euri)], [(3, "parallel_map runs this function on many")])
 
 # ---- several files: use, errors in another file ----
-open(os.path.join(tmp, "util.jot"), "w").write("# doubles\ndouble = (x: int) -> int: x * 2\n")
-mpath = os.path.join(tmp, "main.jot")
+open(os.path.join(tmp, "util.jo"), "w").write("# doubles\ndouble = (x: int) -> int: x * 2\n")
+mpath = os.path.join(tmp, "main.jo")
 muri = "file://" + mpath
-msrc = "use 'util.jot'\nprint(double(21))\n"
+msrc = "use 'util.jo'\nprint(double(21))\n"
 c.set_text(muri, msrc)
 check("multi-file: no errors", c.diagnostics(muri), [])
 d = where(c.request("textDocument/definition", {"textDocument": {"uri": muri}, "position": lc(msrc, msrc.index("double"))}))
-check("multi-file: definition", d, ("util.jot", 1, 0))
+check("multi-file: definition", d, ("util.jo", 1, 0))
 d = where(c.request("textDocument/definition", {"textDocument": {"uri": muri}, "position": lc(msrc, 6)}))
-check("multi-file: use", d, ("util.jot", 0, 0))
+check("multi-file: use", d, ("util.jo", 0, 0))
 refs = c.request("textDocument/references", {"textDocument": {"uri": muri}, "position": lc(msrc, msrc.index("double")), "context": {"includeDeclaration": True}})
-check("multi-file: references", sorted(where(refs)), [("main.jot", 1, 6), ("util.jot", 1, 0)])
+check("multi-file: references", sorted(where(refs)), [("main.jo", 1, 6), ("util.jo", 1, 0)])
 ren = c.request("textDocument/rename", {"textDocument": {"uri": muri}, "position": lc(msrc, msrc.index("double")), "newName": "twice"})
-check("multi-file: rename", sorted((os.path.basename(u), len(es)) for u, es in ren["changes"].items()), [("main.jot", 1), ("util.jot", 1)])
+check("multi-file: rename", sorted((os.path.basename(u), len(es)) for u, es in ren["changes"].items()), [("main.jo", 1), ("util.jo", 1)])
 # an error in the used file (not open): reported on that file
-open(os.path.join(tmp, "util.jot"), "w").write("double = (x: int) -> int: x.nope\n")
-uuri = "file://" + os.path.join(tmp, "util.jot")
+open(os.path.join(tmp, "util.jo"), "w").write("double = (x: int) -> int: x.nope\n")
+uuri = "file://" + os.path.join(tmp, "util.jo")
 c.set_text(muri, msrc + "\n")
 check("multi-file: none in the main file", c.diagnostics(muri), [])
 errs = [m["params"]["diagnostics"] for m in c.notes if m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uuri]
 check("multi-file: error in the used file", [[(d["range"]["start"]["line"], d["message"]) for d in e] for e in errs][-1:], [[(0, "int has no field 'nope'")]])
-open(os.path.join(tmp, "util.jot"), "w").write("double = (x: int) -> int: x * 2\n")
+open(os.path.join(tmp, "util.jo"), "w").write("double = (x: int) -> int: x * 2\n")
 c.set_text(muri, msrc)
 c.diagnostics(muri)
 errs = [m["params"]["diagnostics"] for m in c.notes if m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uuri]
 check("multi-file: fixed", errs[-1:], [[]])
 
 # ---- a library file ----
-lpath = os.path.join(root, "lib", "game", "stats.jot")
+lpath = os.path.join(root, "lib", "game", "stats.jo")
 luri = "file://" + lpath
 lsrc = open(lpath).read()
 c.set_text(luri, lsrc)

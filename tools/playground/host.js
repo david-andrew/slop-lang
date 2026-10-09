@@ -1,9 +1,9 @@
-// The Jot compiler, compiled to WebAssembly, run on files kept in memory: the standard library
+// The Sloppy compiler, compiled to WebAssembly, run on files kept in memory: the standard library
 // (embedded in the page) and the program being edited. It runs in a worker (or, where a page
 // cannot start one, on the page itself): each compile gets a fresh instance of the compiler.
 //   compile(source) -> { ok, html, log, ms }   html: the program, a complete web page
 "use strict";
-const jotHost = (() => {
+const sloppyHost = (() => {
   let compiler = null;          // WebAssembly.Module
   let lib = null;               // path -> Uint8Array
   const enc = new TextEncoder(), dec = new TextDecoder();
@@ -27,9 +27,9 @@ const jotHost = (() => {
   function compile(source) {
     const t0 = performance.now();
     const files = Object.assign({}, lib);
-    files["/play/main.jot"] = enc.encode(source);
-    const args = ["/jot/bin/jot", "build", "/play/main.jot", "--target", "wasm", "-o", "/play/main"];
-    const envVars = { JOT_LIB: "/jot/lib" };
+    files["/play/main.jo"] = enc.encode(source);
+    const args = ["/sloppy/bin/sloppy", "build", "/play/main.jo", "--target", "wasm", "-o", "/play/main"];
+    const envVars = { SLOPPY_LIB: "/sloppy/lib" };
     let log = "";
     let mem = null;
     const u8 = () => new Uint8Array(mem.buffer);
@@ -89,9 +89,9 @@ if (typeof window === "undefined" && typeof self !== "undefined") {
     const m = ev.data;
     try {
       if (m.init) {
-        await jotHost.init(m.init[0], m.init[1]);
+        await sloppyHost.init(m.init[0], m.init[1]);
         self.postMessage({ ready: true });
-      } else self.postMessage(Object.assign({ id: m.id }, jotHost.compile(m.source)));
+      } else self.postMessage(Object.assign({ id: m.id }, sloppyHost.compile(m.source)));
     } catch (e) {
       self.postMessage({ id: m.id, ok: false, html: "", log: "playground error: " + (e && e.message || e) + "\n", ms: 0 });
     }

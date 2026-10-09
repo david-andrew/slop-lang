@@ -1,27 +1,27 @@
 <p align="center">
-  <img src="assets/logo-256.png" alt="Jot: a white clover blossom" width="200">
+  <img src="assets/logo-256.png" alt="Sloppy: a white clover blossom" width="200">
 </p>
 
-<h1 align="center">jot</h1>
+<h1 align="center">sloppy</h1>
 
 <p align="center"><b>a simple game dev language</b></p>
 
 <p align="center">
   <a href="https://github.com/david-andrew/slop-lang/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/david-andrew/slop-lang?label=release&color=2f6a7a"></a>
   <a href="https://github.com/david-andrew/slop-lang/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/david-andrew/slop-lang/test.yml?label=tests"></a>
-  <a href="https://david-andrew.github.io/slop-lang/"><img alt="Website" src="https://img.shields.io/github/actions/workflow/status/david-andrew/slop-lang/site.yml?label=website"></a>
-  <a href="https://david-andrew.github.io/slop-lang/playground/"><img alt="Try it in the browser" src="https://img.shields.io/badge/playground-try%20it%20in%20the%20browser-2f6a7a"></a>
+  <a href="https://sloppy-lang.org/"><img alt="Website" src="https://img.shields.io/github/actions/workflow/status/david-andrew/slop-lang/site.yml?label=website"></a>
+  <a href="https://sloppy-lang.org/playground/"><img alt="Try it in the browser" src="https://img.shields.io/badge/playground-try%20it%20in%20the%20browser-2f6a7a"></a>
   <img alt="Platform: Linux x86-64 and the web" src="https://img.shields.io/badge/platform-linux%20x86--64%20%7C%20web-555">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-555"></a>
 </p>
 
-Jot is a small, compiled, statically typed language that feels like a scripting language,
-built for making games. `jot game.jot` compiles the whole program and runs it in a blink;
-`jot build game.jot` writes a fully static Linux executable, and with `target = wasm` a
+Sloppy is a small, compiled, statically typed language that feels like a scripting language,
+built for making games. `sloppy game.jo` compiles the whole program and runs it in a blink;
+`sloppy build game.jo` writes a fully static Linux executable, and with `target = wasm` a
 single self-contained `.html` file that runs in a browser straight from disk.
 
-```jot
-# hello.jot
+```sloppy
+# hello.jo
 print("hello, world")
 
 fib = (n: int) -> int:
@@ -38,7 +38,7 @@ print(nums .* 2.5 .+ 1, sqrt.([4.0 9.0]), [1 2; 3 4] * [1 0; 0 1])
 
 A complete (tiny) game:
 
-```jot
+```sloppy
 pos = vec2(400, 300)
 
 update = (dt: f64):
@@ -60,7 +60,7 @@ draw = ():
 - **Fast compiles.** About 250,000 lines per second on one core (debug builds), roughly 20x
   faster than `gcc -O0`. Hello world compiles and runs in ~10 ms. There are no incremental
   builds and no build system: build options live in the source (`build:` block).
-- **Edit while it runs.** `jot watch game.jot` reloads the running game as you save: new code
+- **Edit while it runs.** `sloppy watch game.jo` reloads the running game as you save: new code
   takes over between two frames, and the game keeps its state, its window and what it loaded.
 - **Fast programs.** Release builds (`opt = release`) are within ~1.5x of `gcc -O2` on the
   benchmark set (geometric mean), with bounds checks kept on. `parallel_map` and friends use
@@ -77,81 +77,81 @@ draw = ():
 - **Predictable.** Plain value semantics: arrays, strings and maps are reference counted with
   copy-on-write, so there is no garbage collector, no reference cycles and no hidden aliasing.
 - **Batteries for games.** Windows and input, 2D drawing with SDF text, a 3D renderer with
-  sun/sky lighting, shadows, fog and bloom, GPU programs written in Jot itself (translated to
+  sun/sky lighting, shadows, fog and bloom, GPU programs written in Sloppy itself (translated to
   GLSL), PNG/WAV loading, a software audio mixer and synthesizer.
 - **Programs keep working.** Native executables are static (they talk to the kernel directly);
   the GPU driver is loaded at run time when present, and without one games still run on a
   multithreaded software renderer. Web builds are one HTML file with the WebAssembly embedded. The compiler needs no assembler, linker or C toolchain.
-- **Self-hosted.** The compiler is written in Jot (~15k lines) and compiles itself; a small
+- **Self-hosted.** The compiler is written in Sloppy (~15k lines) and compiles itself; a small
   C compiler in `stage0/` bootstraps it.
 
 ## Getting started
 
-Install (Linux x86-64; into `~/.jot`, added to your PATH; run again, or `jot upgrade`, to upgrade):
+Install (Linux x86-64; into `~/.sloppy`, added to your PATH; run again, or `sloppy upgrade`, to upgrade):
 
 ```
-curl -fsSL https://david-andrew.github.io/slop-lang/install | bash
+curl -fsSL https://sloppy-lang.org/install | bash
 ```
 
-Or try it in the browser: [the playground](https://david-andrew.github.io/slop-lang/playground/).
+Or try it in the browser: [the playground](https://sloppy-lang.org/playground/).
 
 From source:
 
 Requirements: Linux x86-64; a C compiler is needed once, to build the bootstrap compiler.
 
 ```
-tools/bootstrap.sh            # stage0 (C) -> jot1 -> jot2 -> jot3, checks jot2 == jot3, installs bin/jot
-bin/jot                       # an interactive prompt
-bin/jot examples/shapes.jot   # compile and run
-bin/jot examples/lumen/lumen.jot          # the 2D demo game
-bin/jot examples/dunes/dunes.jot          # the 3D demo game
-bin/jot watch examples/lumen/lumen.jot    # ... reloaded as you edit it, without restarting
-bin/jot --web examples/dunes/dunes.jot    # the same game in the browser
-bin/jot build examples/dunes/dunes.jot --target wasm -o dunes.html   # a page to keep or share
-bin/jot test tests/unit/sample_test.jot  # run `test` blocks
-bin/jot check file.jot        # type check only
+tools/bootstrap.sh            # stage0 (C) -> sloppy1 -> sloppy2 -> sloppy3, checks sloppy2 == sloppy3, installs bin/sloppy
+bin/sloppy                       # an interactive prompt
+bin/sloppy examples/shapes.jo   # compile and run
+bin/sloppy examples/lumen/lumen.jo          # the 2D demo game
+bin/sloppy examples/dunes/dunes.jo          # the 3D demo game
+bin/sloppy watch examples/lumen/lumen.jo    # ... reloaded as you edit it, without restarting
+bin/sloppy --web examples/dunes/dunes.jo    # the same game in the browser
+bin/sloppy build examples/dunes/dunes.jo --target wasm -o dunes.html   # a page to keep or share
+bin/sloppy test tests/unit/sample_test.jo  # run `test` blocks
+bin/sloppy check file.jo        # type check only
 ```
 
-`bin/jot` finds the standard library in `lib/` next to its own directory (or `$JOT_LIB`).
+`bin/sloppy` finds the standard library in `lib/` next to its own directory (or `$SLOPPY_LIB`).
 
 **In the browser:** `tools/playground.py` builds `build/playground.html`, one self-contained
-page (1.4 MB) with an editor, examples and the Jot compiler itself, compiled to WebAssembly:
+page (1.4 MB) with an editor, examples and the Sloppy compiler itself, compiled to WebAssembly:
 programs (games included) compile in the page in well under 100 ms and run beside the editor.
 Share links carry the program in the address.
 
 ## Editors
 
-`jot lsp` is a language server (the Language Server Protocol, on standard input and output):
+`sloppy lsp` is a language server (the Language Server Protocol, on standard input and output):
 errors as you type, hover with types and doc comments, go to definition, references, rename,
 completion, signature help, inlay hints for inferred types, and an outline. It is the compiler
 itself answering, so it agrees with the compiler by construction.
 
 VS Code: `tools/vsix.py` packages the extension in `editors/vscode` (highlighting, the language
 server, and commands to run a file in a terminal or the browser, or its tests);
-`code --install-extension build/jot-0.1.0.vsix` installs it.
+`code --install-extension build/sloppy-0.1.0.vsix` installs it.
 
-Other editors: run `jot lsp` for `*.jot` files. For example, Neovim (0.11):
+Other editors: run `sloppy lsp` for `*.jo` files. For example, Neovim (0.11):
 
 ```lua
-vim.lsp.config('jot', { cmd = { 'jot', 'lsp' }, filetypes = { 'jot' }, root_markers = { '.git' } })
-vim.lsp.enable('jot')
-vim.filetype.add({ extension = { jot = 'jot' } })
+vim.lsp.config('sloppy', { cmd = { 'sloppy', 'lsp' }, filetypes = { 'sloppy' }, root_markers = { '.git' } })
+vim.lsp.enable('sloppy')
+vim.filetype.add({ extension = { jo = 'sloppy' } })
 ```
 
 and Helix (`languages.toml`):
 
 ```toml
-[language-server.jot]
-command = "jot"
+[language-server.sloppy]
+command = "sloppy"
 args = ["lsp"]
 
 [[language]]
-name = "jot"
-scope = "source.jot"
-file-types = ["jot"]
+name = "sloppy"
+scope = "source.sloppy"
+file-types = ["jo"]
 comment-token = "#"
 indent = { tab-width = 4, unit = "    " }
-language-servers = ["jot"]
+language-servers = ["sloppy"]
 ```
 
 ## Documentation
@@ -166,25 +166,25 @@ pages and the playground.
 ## Repository layout
 
 ```
-compiler/      the Jot compiler, in Jot
+compiler/      the Sloppy compiler, in Sloppy
   lex, parse, ast        source -> syntax tree
   check, expr, types     name resolution, type inference, overloading, generics
   lower                  syntax tree -> IR (register based, structured control flow)
   opt, inline            release builds: folding, CSE, check elimination, inlining
   x64, elf               IR -> x86-64 machine code -> static ELF executable
   wasm                   IR -> WebAssembly, packaged into one HTML file
-  glsl                   shader functions written in Jot -> GLSL ES 3.00
-  ide, lsp               the language server (jot lsp): what the checker learns, for editors
+  glsl                   shader functions written in Sloppy -> GLSL ES 3.00
+  ide, lsp               the language server (sloppy lsp): what the checker learns, for editors
   repl                   the interactive prompt: compiles each input against a live session
 stage0/        bootstrap compiler in C (compiles compiler/ once)
 lib/core/      runtime, strings, arrays, maps, math, files, formatting
-lib/std/       thread pool and parallel helpers, numeric arrays (nd.jot)
+lib/std/       thread pool and parallel helpers, numeric arrays (nd.jo)
 lib/game/      windows (Wayland, X11), input, OpenGL ES / WebGL, 2D, 3D, images, audio
 lib/web/       JavaScript glue embedded into web builds
 editors/       the VS Code extension (tools/vsix.py packages it)
 examples/      demos: lumen (2D), dunes (3D), shapes, cube, scene3d
 tests/         test programs with expected output (tools/runtests.py), render references
-bench/         benchmarks (Jot and equivalent C)
+bench/         benchmarks (Sloppy and equivalent C)
 tools/         bootstrap, test runner, render test, differential fuzzer, language server test,
                headless GNOME screenshots (gnomeshot.py), the web playground (playground.py,
                playground/), the website (site.py, site/), report, profiler, instruction counter
@@ -213,10 +213,10 @@ and libdecor in a Wayland session (so windows get the desktop's own decorations;
 rendered with EGL into an offscreen buffer shared with the compositor), otherwise X11; and EGL
 and OpenGL ES. Nothing is loaded at all by programs that do not use graphics, and a missing
 library is a run-time decision instead of a load-time failure: without an OpenGL ES driver
-(or with `JOT_SOFTWARE=1`) games draw with a software renderer (`lib/game/softgl.jot`) that
-runs the Jot shader functions on the CPU in parallel, at half resolution; without
+(or with `SLOPPY_SOFTWARE=1`) games draw with a software renderer (`lib/game/softgl.jo`) that
+runs the Sloppy shader functions on the CPU in parallel, at half resolution; without
 libwayland-client or libX11 the window is opened by speaking the Wayland or X11 protocol over
-the socket (`lib/game/wayland.jot`, `lib/game/x11.jot`), and without libdecor the program
+the socket (`lib/game/wayland.jo`, `lib/game/x11.jo`), and without libdecor the program
 draws its own title bar. The
 software frames match the GPU's within about 1/255 per channel (`tools/rendertest.py` checks
 them against references, with no GPU or display needed).
@@ -226,6 +226,6 @@ and a small JavaScript runtime for WebGL 2, input and audio.
 
 ## License
 
-MIT (see [LICENSE](LICENSE) and [NOTICE](NOTICE)), so programs built with Jot, which include its runtime and
+MIT (see [LICENSE](LICENSE) and [NOTICE](NOTICE)), so programs built with Sloppy, which include its runtime and
 library, can be released under any license. The logo is not covered by it; the default font
 is Noto Sans, under the SIL Open Font License ([lib/game/assets/OFL.txt](lib/game/assets/OFL.txt)).

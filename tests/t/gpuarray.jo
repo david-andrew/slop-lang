@@ -1,0 +1,39 @@
+# requires: sloppy
+# GPU arrays: dotted expressions on them run as GPU programs (or on the CPU without a GPU);
+# only operations that are exact in f32 here, so both give the same output
+half_plus = (x: f32) -> f32: x * 0.5 + 0.25
+main = ():
+    xs = [1.0 2.0 3.0 4.0]
+    g = gpu(xs)
+    h = g .* 2.0 .+ 1.0
+    print(h, len(h), sum(h))
+    k = 4.0
+    print(half_plus.(g) .- k, g .> 2.5, g .* g)
+    big = gpu(linspace(0, 1023, 1024))
+    loop _ in [0..20): big = big .+ 1.0
+    out = cpu(big)
+    print(out[0], out[1023], out.len())
+
+wave2 = (x: f32) -> f32: x * 0.5 + 0.25
+broadcast_demo = ():
+    m = gpu([1.0 2.0 3.0; 4.0 5.0 6.0])
+    r = gpu([10.0 20.0 30.0])
+    c = gpu(reshape([100.0, 200.0], 2, 1))
+    print(m .+ r, m .* c, wave2.(m) .+ c .- r)
+    one = gpu([7.0])
+    print(r .+ one, cpu(m).shape, len(m))
+    t = gpu(reshape([1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0], 2, 2, 2))
+    print(t .* gpu([1.0 10.0]))
+broadcast_demo()
+
+# integers stay integers (division truncates, % keeps the dividend's sign); mixed with floats,
+# floats. Reductions run on the GPU (exact here: whole numbers below 2^24)
+int_demo = ():
+    a = gpu([7, -7, 9, 100, -13])
+    b = gpu([2, 2, -4, 7, 5])
+    print(a ./ b, a .% b, a .* 3 .+ 1, a .> b, a .* 0.5)
+    print(gpu([7.5, -7.5, 2.25]) .% 2.0)
+    print(sum(a), min(a), max(a), mean(a))
+    many = gpu(fill(1.0, 100_000)) .* 3.0
+    print(sum(many), min(many), max(many), len(many))
+int_demo()

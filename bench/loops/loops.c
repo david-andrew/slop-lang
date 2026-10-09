@@ -1,5 +1,5 @@
-// C equivalents of bench/loops/loops.jot (gcc -O2); the dotted expression allocates a new array
-// each time, as the Jot one does.
+// C equivalents of bench/loops/loops.jo (gcc -O2); the dotted expression allocates a new array
+// each time, as the Sloppy one does.
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>

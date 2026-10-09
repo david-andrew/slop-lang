@@ -1,7 +1,7 @@
-# The Jot Programming Language
+# The Sloppy Programming Language
 
-Jot is a small, statically typed, compiled language that feels like a scripting
-language. `jot game.jot` compiles the whole program (in milliseconds) and runs it.
+Sloppy is a small, statically typed, compiled language that feels like a scripting
+language. `sloppy game.jo` compiles the whole program (in milliseconds) and runs it.
 
 Design goals, in priority order:
 
@@ -18,8 +18,8 @@ Design goals, in priority order:
 
 ## 1. A taste
 
-```jot
-# hello.jot
+```sloppy
+# hello.jo
 print("hello, world")
 
 fib = (n: int) -> int:
@@ -40,7 +40,7 @@ print(nums .* 2, sqrt.([4.0 9.0]))     # elementwise
 
 ### The interactive prompt
 
-`jot` with no file starts an interactive prompt. Type declarations and statements; they run
+`sloppy` with no file starts an interactive prompt. Type declarations and statements; they run
 as you enter them, and the value of an expression at the end of an input is shown:
 
 ```
@@ -61,7 +61,7 @@ to machine code that runs in a session process, so it runs as fast as a program 
 input has errors, or panics, or crashes, or is stopped with ctrl-c, the session is exactly as it
 was before it. `:type expr` shows an expression's type, tab completes names (including fields
 after a `.`), up and down recall earlier lines, and ctrl-d or `exit` leaves. Input can also be
-piped in (`jot < script.txt`).
+piped in (`sloppy < script.txt`).
 
 ## 2. Lexical structure
 
@@ -93,7 +93,7 @@ none null and or xor not is let mut when defer extern test build pass` (`loop le
 
 ## 3. Variables and constants
 
-```jot
+```sloppy
 x = 10               # declares x (there is no x yet), type inferred (int)
 x = x + 1            # assigns (x exists)
 let x = "text"       # always a new variable (shadows the outer x)
@@ -147,12 +147,12 @@ precedence, so `flags & MASK == 0` is `(flags & MASK) == 0`. `x in xs` tests mem
 
 ### Value semantics
 
-Every type in Jot is a *value*: assignment copies. Arrays, strings and maps are
+Every type in Sloppy is a *value*: assignment copies. Arrays, strings and maps are
 reference counted with copy-on-write, so copies are O(1) and a real copy only
 happens when you mutate something that is shared. There are no reference types,
 so reference cycles (and leaks) are impossible, and there is no garbage collector.
 
-```jot
+```sloppy
 a = [1, 2, 3]
 b = a           # O(1), shares storage
 b.push(4)       # b is shared, so b gets its own copy here
@@ -162,21 +162,21 @@ print(a, b)     # [1, 2, 3] [1, 2, 3, 4]
 Function parameters are borrowed (passed without copying, read-only).
 Mark a parameter `mut` to let the function modify the caller's variable:
 
-```jot
+```sloppy
 grow = (xs: mut int[]): xs.push(0)
 grow(nums)
 ```
 
 To modify array elements in a loop, use `loop mut`:
 
-```jot
+```sloppy
 loop mut p in particles:
     p.pos += p.vel * dt
 ```
 
 ## 5. Functions
 
-```jot
+```sloppy
 area = (w: f64, h: f64) -> f64: w * h            # the last expression is the result
 clamp01 = (x: f64, lo: f64 = 0, hi: f64 = 1) -> f64:
     if x < lo: return lo
@@ -202,7 +202,7 @@ written inside an expression is a lambda.
 
 ### Functions as values, closures, partial application
 
-```jot
+```sloppy
 double = (x: int): x * 2
 nums.map(double)
 nums.map((x): x * 2)            # parameter types inferred from context
@@ -219,7 +219,7 @@ print(half(10))                 # 5
 function sees (and can change) that function's variables, just as a closure at the top level
 sees and changes globals.
 
-```jot
+```sloppy
 make_counter = () -> () -> int:
     n = 0
     ():
@@ -236,7 +236,7 @@ variables on every iteration, so closures made in a loop each see their own.)
 
 ## 6. Control flow
 
-```jot
+```sloppy
 if a > b: print("a") else if a == b: print("eq") else: print("b")
 m = if a > b: a else: b                # if is an expression
 if let v = lookup(key): print(v)       # bind the value of an optional when present
@@ -263,7 +263,7 @@ defer close(f)                         # runs when the enclosing block exits
 
 **Combined loops.** Bindings and conditions join with `and` / `or` in one loop header:
 
-```jot
+```sloppy
 loop i in 0.. and v in values: ...             # counts alongside: stops when values runs out
 loop i in 0.. and v in values and v ^ 2 < limit: ...   # also stops at the first false condition
 loop a in xs or b in ys: ...                   # until both run out; a finished one gives none
@@ -276,7 +276,7 @@ until all have run out (the variables of finished ones are `none`, so they are o
 
 **Comprehensions** are a loop inside brackets; `if` filters, nested loops flatten:
 
-```jot
+```sloppy
 squares = [loop i in [1..5]: i ^ 2]
 evens = [loop n in [0..10): if n % 2 == 0: n]
 pairs = [loop i in [0..3): loop j in [0..3): (i, j)]
@@ -284,7 +284,7 @@ pairs = [loop i in [0..3): loop j in [0..3): (i, j)]
 
 **Match:**
 
-```jot
+```sloppy
 match value:
     0: print("zero")
     1, 2: print("small")
@@ -295,7 +295,7 @@ match value:
 
 ## 7. Structs, unions, enums, optionals, tuples
 
-```jot
+```sloppy
 struct Player:
     name: str
     pos: vec2
@@ -317,7 +317,7 @@ if d == .north: ...                     # `.name` when the type is known
 been tested *is* that type where the test holds — in the `if`, after an `if` that returns or
 breaks, on the right of `and`, and in `match` arms:
 
-```jot
+```sloppy
 struct Circle: r: f64
 struct Rect: w: f64; h: f64
 type Shape = Circle | Rect
@@ -351,7 +351,7 @@ the value it holds. `T | none` is `T?`.
 
 **Optionals:**
 
-```jot
+```sloppy
 best: int? = none
 if let v = lookup(key): print(v)        # bind when present
 if best is int: print(best + 1)         # `is` works on optionals too
@@ -361,7 +361,7 @@ k = lookup(key)!                        # unwrap or panic
 
 **Tuples:**
 
-```jot
+```sloppy
 pair = (1, "one")
 a, b = pair
 print(pair.0)
@@ -382,7 +382,7 @@ apply element by element, and `f.(xs)` applies any function to each element. Arr
 different shapes broadcast like numpy: a scalar, or a dimension of length 1, stretches to fit.
 A whole dotted expression runs as one loop, without temporary arrays:
 
-```jot
+```sloppy
 xs = linspace(0, 1, 5)
 ys = 3.0 .* xs .^ 2 .+ 1.0       # one loop
 mask = xs .> 0.5                 # bool[]
@@ -396,7 +396,7 @@ in numpy: `T[,]`, `T[,,]` ... all name the same type (the commas are for the rea
 `m.shape` holds the dimensions. Rows are separated by `;` or line breaks; `[a; b]` stacks arrays
 (1-D arrays become rows, n-dimensional ones gain a dimension).
 
-```jot
+```sloppy
 m = [1.0 2.0; 3.0 4.0]
 grid = [0 1 0
         1 1 1]
@@ -417,7 +417,7 @@ left out at the end mean whole axes). A part is an array of its own; assigning t
 the array: `m[.., 0] = xs`, `m[0, ..] = 0.0`. `sum(m, axis)`, `mean`, `min` and `max` reduce along
 one axis (`sum(m, 0)` adds up the rows: one sum per column).
 
-```jot
+```sloppy
 img = zeros(480, 640, 3)
 img[.., .., 0] = 1.0             # the red channel
 top = img[0..239, ..]
@@ -439,7 +439,7 @@ element itself: `p.x` reads (or, in `loop mut`, writes) only the `x` array, so a
 at two fields of a large struct touches only those two arrays. Using `p` as a whole value reads
 every field. `ps.x` is the whole field array, for elementwise math:
 
-```jot
+```sloppy
 ps: soa Particle[] = make_particles()
 loop mut p in ps:
     p.pos += p.vel * dt                 # reads vel, writes pos: no other field is touched
@@ -451,7 +451,7 @@ expression whose arrays are GPU arrays runs on the GPU as one fragment program, 
 the expression at compile time — functions applied with `f.(g)` are translated to GLSL like
 shader functions, and the numbers in the expression become uniforms:
 
-```jot
+```sloppy
 g = gpu(rand(4_000_000))
 h = wave.(g) .* 0.5 .+ g          # one GPU program
 ys = cpu(h)
@@ -465,12 +465,12 @@ the dividend's sign, as on the CPU), and mixing integers with floats gives float
 Arrays may hold as many values as the GPU's largest texture times four (a billion on a typical
 desktop GPU). GPU memory is reused automatically once no copy of a GPU array is left. Native programs use OpenGL
 ES (no window needed), web builds WebGL 2. Where neither can render to float textures (no
-driver, `JOT_SOFTWARE=1`, an old browser) the same expressions run on the CPU, so programs work
+driver, `SLOPPY_SOFTWARE=1`, an old browser) the same expressions run on the CPU, so programs work
 everywhere; `gpu_available()` tells which.
 
 ## 9. Modules
 
-`use 'util.jot'` loads a file relative to the importing file and makes its names available
+`use 'util.jo'` loads a file relative to the importing file and makes its names available
 directly; standard-library modules are named without quotes (`use thread`).
 `import util` makes them available as `util.name` (`import util as u` renames).
 The core standard library (strings, arrays, maps, math, vectors, files, numeric arrays, and
@@ -478,7 +478,7 @@ the game/graphics/audio API) is always available without importing.
 
 ## 10. Compile-time features
 
-```jot
+```sloppy
 build:                          # build options live in the source
     target = wasm               # native (default) | wasm
     opt = release               # debug | release
@@ -495,11 +495,11 @@ test "math works":
     assert(1 + 1 == 2)
 ```
 
-`jot test file.jot` runs the file's top-level code, then each `test` block in order,
+`sloppy test file.jo` runs the file's top-level code, then each `test` block in order,
 reporting `test name ... ok` per block; the first failing `assert` stops the run with its
 message and location.
 
-**Release builds.** `opt = release` (or `jot build --release`) inlines refcount, uniqueness
+**Release builds.** `opt = release` (or `sloppy build --release`) inlines refcount, uniqueness
 and bounds-check fast paths and runs the optimizer (constant folding, copy propagation,
 common subexpressions, redundant load and bounds-check elimination, inlining, keeping small
 vectors in registers). Debug builds compile faster; both have identical behavior, including
@@ -512,7 +512,7 @@ whole range once, up front (and runs as before when that test fails, so a failin
 still stops it where it always did). A loop that does the same arithmetic to element `i` of
 arrays of numbers (`ys[i] = ys[i] + a * xs[i]`, a dotted expression, `loop mut x in xs`
 with `+ - * /`) runs several elements at a time: 256-bit AVX2 instructions where the processor
-has them, else SSE2, chosen when the program starts (`JOT_NO_AVX=1` forces SSE2). Every
+has them, else SSE2, chosen when the program starts (`SLOPPY_NO_AVX=1` forces SSE2). Every
 element gets the same operations in the same order as one at a time, so the results are
 identical on every machine (sums over a loop keep their order and are not vectorized).
 
@@ -526,7 +526,7 @@ costs what it would in C.
 
 Data-parallel helpers run a function over many elements on all CPU cores (fork-join):
 
-```jot
+```sloppy
 lengths = parallel_map(words, (w): expensive(w))      # [loop x in xs: f(x)]
 parallel_update(particles, (p): step(p, dt))          # xs[i] = f(xs[i]) in place
 rows = parallel_range(height, (y): render_row(y))     # [loop i in [0..n): f(i)]
@@ -544,7 +544,7 @@ A program runs its top-level statements, then `main()` if defined.
 If the program defines `update(dt: f64)` and/or `draw()`, a window opens and they are
 called every frame (this is also how programs run in the browser).
 
-```jot
+```sloppy
 pos = vec2(100, 100)
 
 update = (dt: f64):
@@ -580,7 +580,7 @@ uses the whole window.
 design size), whatever the window's real size; `screen_fit` says how that area fits a window
 of another shape, and the render resolution says how many pixels draw it:
 
-```jot
+```sloppy
 screen_fit(.expand)       # (default) scaled to fit, centered; a wider or taller window shows more
                           # around it (visible_rect() is what is shown)
 screen_fit(.letterbox)    # just the design area, with bars (letterbox_color(c))
@@ -596,7 +596,7 @@ render_scale(0.5)             # draw at half the window's resolution (fewer pixe
 ```
 
 `mouse_pos()` is in the same 2D units, and 3D follows the same picture (a letterboxed game's 3D
-view has the design area's shape). `JOT_FIT=letterbox` and `JOT_RESOLUTION=320x180` try a mode
+view has the design area's shape). `SLOPPY_FIT=letterbox` and `SLOPPY_RESOLUTION=320x180` try a mode
 on any game without changing it.
 
 Window sizes are in the desktop's logical units, and frames are rendered at the display's real
@@ -605,45 +605,45 @@ stay sharp (in the browser too). The rendered frame goes to the compositor witho
 through the CPU.
 
 Native games open a Wayland window when `WAYLAND_DISPLAY` is set and an X11 window otherwise
-(`JOT_PLATFORM=x11|wayland` chooses). Windows have the desktop's own decorations: on GNOME they
+(`SLOPPY_PLATFORM=x11|wayland` chooses). Windows have the desktop's own decorations: on GNOME they
 are drawn by libdecor (with GTK, as other apps' title bars are), elsewhere by the compositor
-(xdg-decoration) or the X11 window manager; without libdecor (or with `JOT_LIBDECOR=0`) the
+(xdg-decoration) or the X11 window manager; without libdecor (or with `SLOPPY_LIBDECOR=0`) the
 program draws a plain title bar itself. A window's title is the program's name unless
 `window(title)` gives one. Everything a game loads at run time is optional: without
-libwayland-client (or with `JOT_WAYLAND=protocol`) it speaks the Wayland protocol itself, and
+libwayland-client (or with `SLOPPY_WAYLAND=protocol`) it speaks the Wayland protocol itself, and
 without libX11 the X11 protocol. They use the system's OpenGL ES driver when there is
-one. Without it (or with `JOT_SOFTWARE=1`) the same program draws with the built-in software
+one. Without it (or with `SLOPPY_SOFTWARE=1`) the same program draws with the built-in software
 renderer, which runs your shader functions (see `make_shader`) on the CPU; `soft_rendering()`
 tells the program which is in use, e.g. to draw fewer particles. Frames are rendered at half
-resolution (`JOT_SOFT_SCALE=1` for full resolution) and paced to 60 per second.
+resolution (`SLOPPY_SOFT_SCALE=1` for full resolution) and paced to 60 per second.
 
-**Frame statistics.** `show_stats()` (or `JOT_STATS=1`, or `?stats` at the end of a web page's
+**Frame statistics.** `show_stats()` (or `SLOPPY_STATS=1`, or `?stats` at the end of a web page's
 address) draws an overlay with the frame rate, a graph of recent frame times, the CPU time of
 `update` + `draw`, the time spent handing frames to the screen, and how many frames took much
-longer than usual (stutter). `JOT_STATS=log` (`?stats=log`) prints the same numbers every two
+longer than usual (stutter). `SLOPPY_STATS=log` (`?stats=log`) prints the same numbers every two
 seconds, and each long frame as it happens. In a web page, `env(name)` reads the page's URL
-parameters, so `?JOT_STATS=1` and `?stats` are the same. Files in a web page (`read_file`,
-`write_file`, `list_dir`) are the page's own, in memory (`jot.files` in JavaScript); a web build
+parameters, so `?SLOPPY_STATS=1` and `?stats` are the same. Files in a web page (`read_file`,
+`write_file`, `list_dir`) are the page's own, in memory (`sloppy.files` in JavaScript); a web build
 run under node (`tools/runwasm.js page.html args...`) uses the real ones and gets the arguments.
 
-Environment variables for testing and tuning: `JOT_SCREENSHOT=out.png` (with `JOT_FRAMES=n`)
+Environment variables for testing and tuning: `SLOPPY_SCREENSHOT=out.png` (with `SLOPPY_FRAMES=n`)
 saves frame n and exits — the clock then advances exactly 1/60 s per frame, so the image is
-reproducible, and with `JOT_SOFTWARE=1` no display is needed at all; `JOT_INPUT="5:space+,9:space-"`
-presses and releases keys at given frames; `JOT_THREADS=n` caps the threads used by the
-parallel functions; `JOT_SCALE=1` renders at the logical size and lets the compositor scale
-it up; `JOT_FRAME_STATS=1` (with `JOT_SCREENSHOT`) reports frame times and how frames reach the
+reproducible, and with `SLOPPY_SOFTWARE=1` no display is needed at all; `SLOPPY_INPUT="5:space+,9:space-"`
+presses and releases keys at given frames; `SLOPPY_THREADS=n` caps the threads used by the
+parallel functions; `SLOPPY_SCALE=1` renders at the logical size and lets the compositor scale
+it up; `SLOPPY_FRAME_STATS=1` (with `SLOPPY_SCREENSHOT`) reports frame times and how frames reach the
 screen.
 
 ```
-jot file.jot [args]     compile and run (wasm target: opens the browser)
-jot watch file.jot      run it, and reload it while its files change
-jot --web file.jot      compile for the web and open it in the browser
-jot build file.jot      write the executable / .html
-jot test file.jot       run `test` blocks
-jot check file.jot      type check only
+sloppy file.jo [args]     compile and run (wasm target: opens the browser)
+sloppy watch file.jo      run it, and reload it while its files change
+sloppy --web file.jo      compile for the web and open it in the browser
+sloppy build file.jo      write the executable / .html
+sloppy test file.jo       run `test` blocks
+sloppy check file.jo      type check only
 ```
 
-**Reloading while it runs.** `jot watch game.jot` runs the game and keeps watching the files it
+**Reloading while it runs.** `sloppy watch game.jo` runs the game and keeps watching the files it
 is built from. Each time one is saved the game is rebuilt and the running game takes the new
 code between two frames, without starting over: the window stays open and every global keeps
 its value (the player where they are, the level as it is, what is loaded on the GPU), so a
@@ -664,12 +664,12 @@ change to how something moves or looks shows at once.
 - A build with errors leaves the game running as it was, with the errors over it and in the
   terminal. A panic in `update` or `draw` pauses the game with the message on the screen; saving
   a fix goes on from there.
-- `r` (and enter) in the terminal starts the program again from the beginning (`jot watch` says
+- `r` (and enter) in the terminal starts the program again from the beginning (`sloppy watch` says
   when an edit needs it: top-level statements that changed); `q` quits. A game that gains or
   loses `update` or `draw` is started again by itself.
 - A program without `update`/`draw` is run again from the start each time its files change.
 
-`jot watch` runs native builds (Linux), in debug or release mode as the build block says.
+`sloppy watch` runs native builds (Linux), in debug or release mode as the build block says.
 
 ## 13. Calling C
 
@@ -677,14 +677,14 @@ Native programs can call functions from system shared libraries; the library is 
 first time one of its functions is called, so a missing library only matters to code that
 actually uses it (check with `lib_available("libfoo.so.1")`).
 
-```jot
+```sloppy
 @lib("libm.so.6")
 extern cbrt = (x: f64) -> f64
 
 @lib("libGLESv2.so.2")
-@symbol("glClear")                 # the C name, when the Jot name differs
+@symbol("glClear")                 # the C name, when the Sloppy name differs
 extern gl_clear_native = (mask: u32)
 ```
 
 Arguments and results must be scalars or pointers; `cfn(...) -> T` is the type of a C function
-pointer, and `@cabi` makes a Jot function callable from C.
+pointer, and `@cabi` makes a Sloppy function callable from C.

@@ -1,5 +1,5 @@
 // internal header shared by check.c and expr.c
-#include "jot0.h"
+#include "sloppy0.h"
 
 typedef struct FnCtx {
   FnInst *inst;

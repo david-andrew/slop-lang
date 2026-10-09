@@ -1,4 +1,4 @@
-# Build Jot's website (home page, docs, playground) and publish it with GitHub Pages.
+# Build Sloppy's website (home page, docs, playground) and publish it with GitHub Pages.
 # (Repository settings -> Pages -> Source: GitHub Actions.)
 name: Website
 on:
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build the compiler (C bootstrap -> Jot, which compiles itself)
+      - name: Build the compiler (C bootstrap -> Sloppy, which compiles itself)
         run: tools/bootstrap.sh
       - name: Build the site
         run: python3 tools/site.py

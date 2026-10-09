@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Generate a large synthetic program (Jot + equivalent C) for compile-speed benchmarks.
+"""Generate a large synthetic program (Sloppy + equivalent C) for compile-speed benchmarks.
 usage: genbench.py N_FUNCS out_prefix"""
 import sys, random
 n = int(sys.argv[1]); out = sys.argv[2]
 random.seed(1)
-jot, c = [], []
+sloppy, c = [], []
 c.append("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <math.h>")
 c.append("typedef struct { double x, y; long id; } Item;")
-jot.append("struct Item:\n    x: f64\n    y: f64\n    id: int\n")
+sloppy.append("struct Item:\n    x: f64\n    y: f64\n    id: int\n")
 for i in range(n):
     k = random.randint(2, 9)
-    jot.append(f"""work{i} = (a: int, b: f64, items: Item[]) -> f64:
+    sloppy.append(f"""work{i} = (a: int, b: f64, items: Item[]) -> f64:
     total = 0.0
     count = 0
     loop j in [0..a):
@@ -66,12 +66,12 @@ for i in range(n):
     }}
     return total + (double)count;
 }}""")
-jot.append("items: Item[]\nloop i in [0..100): items.push(Item(f64(i), f64(i) * 0.5, i))\nacc = 0.0")
+sloppy.append("items: Item[]\nloop i in [0..100): items.push(Item(f64(i), f64(i) * 0.5, i))\nacc = 0.0")
 c.append("int main(void) {\n    Item items[100];\n    for (long i = 0; i < 100; i++) { items[i].x = i; items[i].y = i * 0.5; items[i].id = i; }\n    double acc = 0.0;")
 for i in range(n):
-    jot.append(f"acc += work{i}({i % 50}, {i}.0, items)")
+    sloppy.append(f"acc += work{i}({i % 50}, {i}.0, items)")
     c.append(f"    acc += work{i}({i % 50}, {i}.0, items, 100);")
-jot.append('print("{acc:.3}")')
+sloppy.append('print("{acc:.3}")')
 c.append('    printf("%.3f\\n", acc);\n    return 0;\n}')
-open(out + ".jot", "w").write("\n".join(jot) + "\n")
+open(out + ".jo", "w").write("\n".join(sloppy) + "\n")
 open(out + ".c", "w").write("\n".join(c) + "\n")

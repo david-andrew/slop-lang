@@ -12,14 +12,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Build the compiler (C bootstrap -> Jot, which compiles itself)
+      - name: Build the compiler (C bootstrap -> Sloppy, which compiles itself)
         run: tools/bootstrap.sh
       - name: Test
         run: |
           python3 tools/runtests.py
-          python3 tools/runtests.py --compiler jot
-          python3 tools/runtests.py --compiler jot --release
-          python3 tools/runtests.py --compiler jot --target wasm
+          python3 tools/runtests.py --compiler sloppy
+          python3 tools/runtests.py --compiler sloppy --release
+          python3 tools/runtests.py --compiler sloppy --target wasm
           python3 tools/lsptest.py
           python3 tools/rendertest.py --no-gpu
           python3 tools/watchtest.py
@@ -28,4 +28,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rendered-frames
-          path: /tmp/jot-render/*.png
+          path: /tmp/sloppy-render/*.png

@@ -25,8 +25,8 @@ def main():
         elif opts[i] == "--input": actions = opts[i + 1]
         elif opts[i] == "--scale": scale = float(opts[i + 1])
         i += 2
-    if os.environ.get("JOT_GNOMESHOT_INNER") != "1":
-        env = dict(os.environ, JOT_GNOMESHOT_INNER="1")
+    if os.environ.get("SLOPPY_GNOMESHOT_INNER") != "1":
+        env = dict(os.environ, SLOPPY_GNOMESHOT_INNER="1")
         r = subprocess.run(["dbus-run-session", "--", sys.executable, __file__] + sys.argv[1:], env=env)
         sys.exit(r.returncode)
     inner(out, monitor, delay, actions, cmd, scale)
@@ -36,7 +36,7 @@ def inner(out, monitor, delay, actions, cmd, scale):
     import gi
     gi.require_version("Gio", "2.0")
     from gi.repository import Gio, GLib
-    home = tempfile.mkdtemp(prefix="jot-gnome-")
+    home = tempfile.mkdtemp(prefix="sloppy-gnome-")
     env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=home + "/.config", XDG_DATA_HOME=home + "/.local/share",
                XDG_CACHE_HOME=home + "/.cache", XDG_STATE_HOME=home + "/.local/state", XDG_RUNTIME_DIR=home + "/run")
     os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
@@ -47,7 +47,7 @@ def inner(out, monitor, delay, actions, cmd, scale):
         procs.append(subprocess.Popen(["pipewire"], env=env, stdout=log, stderr=log))
         time.sleep(0.5)
     procs.append(subprocess.Popen(["gnome-shell", "--headless", "--wayland", "--no-x11", "--virtual-monitor", monitor,
-                                   "--wayland-display", "jot-test"], env=env, stdout=log, stderr=log))
+                                   "--wayland-display", "sloppy-test"], env=env, stdout=log, stderr=log))
     bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
 
     def call(dest, path, iface, method, args=None):
@@ -78,7 +78,7 @@ def inner(out, monitor, delay, actions, cmd, scale):
     for name in ["org.gnome.Screenshot", "org.freedesktop.impl.portal.desktop.gtk", "org.gnome.SettingsDaemon.MediaKeys"]:
         call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", GLib.Variant("(su)", (name, 4)))
     time.sleep(1.0)
-    app = subprocess.Popen(cmd, env=dict(env, WAYLAND_DISPLAY="jot-test"))
+    app = subprocess.Popen(cmd, env=dict(env, WAYLAND_DISPLAY="sloppy-test"))
     time.sleep(delay)
     if actions:
         rd = "org.gnome.Mutter.RemoteDesktop"

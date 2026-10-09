@@ -1,0 +1,26 @@
+# strings: interpolation, formatting, slicing, searching, building
+# requires: sloppy (uses features the C bootstrap compiler does not implement)
+s = "hello, world"
+print(len(s), s[0..5), s[7..])
+print(s.find("world"), s.find("xyz"), s.contains("lo, w"))
+print(s.upper(), "ABC".lower())
+print(s.starts_with("hell"), s.ends_with("ld"), s.replace("l", "L"))
+parts = "a,b,,c".split(",")
+print(parts, parts.len())
+print(["x", "y", "z"].join(", "))
+print("  pad  ".trim() + "|")
+x = 3.14159
+n = 42
+print("{n} {x:.2} {n:5}|{-n} {x * 2:.3}")
+print("{{literal}} {n + 1}")
+b = ""
+loop i in [0..5): b += "{i}"
+print(b)
+print("abc" < "abd", "abc" == "abc", "b" > "abc")
+print(to_int("123") ?? -1, to_int("x1") ?? -1, to_float("2.5") ?? 0)
+c = s[4]
+print(c, c == 'o')
+lines_ = "one\ntwo\nthree".lines()
+print(lines_.len(), lines_[2])
+print("ab" * 3)
+print(str(17) + str(true))

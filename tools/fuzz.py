@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Differential fuzzing: generate random (well-defined) Jot programs and check that debug,
+"""Differential fuzzing: generate random (well-defined) Sloppy programs and check that debug,
 release and web builds print the same thing. Half the programs also use the newer features
 (unions with narrowing, closures that change captured variables, struct-of-arrays checked
 against a plain array, n-dimensional arrays and broadcasting); the others stay within the
 C bootstrap compiler's subset, which is then a fifth, independent build.
 
 usage: tools/fuzz.py [count] [--seed N] [--no-wasm] [--keep]
-Failing programs are saved to build/fuzz/fail_<seed>.jot.
+Failing programs are saved to build/fuzz/fail_<seed>.jo.
 """
 import os, random, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-JOT = os.environ.get("JOT_FUZZ_COMPILER") or os.path.join(ROOT, "bin", "jot")
-JOT0 = os.path.join(ROOT, "stage0", "jot0")      # the C bootstrap compiler: an independent implementation
-ENV = dict(os.environ, JOT_LIB=os.path.join(ROOT, "lib"))
+SLOPPY = os.environ.get("SLOPPY_FUZZ_COMPILER") or os.path.join(ROOT, "bin", "sloppy")
+SLOPPY0 = os.path.join(ROOT, "stage0", "sloppy0")      # the C bootstrap compiler: an independent implementation
+ENV = dict(os.environ, SLOPPY_LIB=os.path.join(ROOT, "lib"))
 OUT = os.path.join(ROOT, "build", "fuzz")
 os.makedirs(OUT, exist_ok=True)
 
@@ -668,14 +668,14 @@ def run(cmd, timeout=15):
 
 def check(seed, wasm=True, keep=False):
     src = Gen(random.Random(seed)).program()
-    path = os.path.join(OUT, f"p{seed}.jot")
+    path = os.path.join(OUT, f"p{seed}.jo")
     open(path, "w").write(src)
     outs = {}
     modes = [("debug", []), ("release", ["--release"])]
     if wasm: modes += [("wasm", ["--target", "wasm"]), ("wasm-release", ["--target", "wasm", "--release"])]
     for name, flags in modes:
         exe = os.path.join(OUT, f"p{seed}_{name}")
-        code, _, err = run([JOT, "build", path, "-o", exe] + flags)
+        code, _, err = run([SLOPPY, "build", path, "-o", exe] + flags)
         if code != 0:
             outs[name] = f"COMPILE ERROR {err[:300]}"
             continue
@@ -686,19 +686,19 @@ def check(seed, wasm=True, keep=False):
         outs[name] = o + (f"[exit {code}] {e[:200]}" if code != 0 else "")
     # the bootstrap compiler shares no code with the self-hosted one, so it catches mistakes all
     # of the self-hosted builds make alike (when the program stays within its language subset)
-    if os.path.exists(JOT0) and "vec" not in src:
-        exe = os.path.join(OUT, f"p{seed}_jot0")
-        code, _, err = run([JOT0, path, "-o", exe])
+    if os.path.exists(SLOPPY0) and "vec" not in src:
+        exe = os.path.join(OUT, f"p{seed}_sloppy0")
+        code, _, err = run([SLOPPY0, path, "-o", exe])
         if code == 0:
             code, o, e = run([exe])
-            outs["jot0"] = o + (f"[exit {code}] {e[:200]}" if code != 0 else "")
+            outs["sloppy0"] = o + (f"[exit {code}] {e[:200]}" if code != 0 else "")
     vals = list(outs.values())
     # programs printing megabytes can time out on the slower builds: inconclusive, not a failure
     if len(outs.get("debug", "")) > 1000000 and any(v.endswith("timeout") for v in vals):
         vals = [v for v in vals if not v.endswith("timeout")]
     ok = all(v == vals[0] for v in vals) and not vals[0].startswith("COMPILE ERROR") and "SOA MISMATCH" not in vals[0]
     if not ok:
-        os.rename(path, os.path.join(OUT, f"fail_{seed}.jot"))
+        os.rename(path, os.path.join(OUT, f"fail_{seed}.jo"))
         print(f"MISMATCH seed {seed}:")
         for k, v in outs.items(): print(f"  {k}: {v[:300]!r}")
     elif not keep:

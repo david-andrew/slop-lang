@@ -1,6 +1,6 @@
-// The swarm benchmark (swarm.jot) in plain C, as a C programmer would write it: the same
+// The swarm benchmark (swarm.jo) in plain C, as a C programmer would write it: the same
 // agents, spatial hash, steering, bullets, events, sparks and scoreboard, with buffers reused
-// instead of made per call. Its own random numbers, so the counts differ a little from Jot's.
+// instead of made per call. Its own random numbers, so the counts differ a little from Sloppy's.
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>

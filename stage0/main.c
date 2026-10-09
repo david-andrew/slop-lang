@@ -1,9 +1,9 @@
-#include "jot0.h"
+#include "sloppy0.h"
 #include <unistd.h>
 #include <sys/wait.h>
 
 static void usage(void) {
-  fprintf(stderr, "usage: jot0 file.jot [-o output] [-S] [--run]\n");
+  fprintf(stderr, "usage: sloppy0 file.jo [-o output] [-S] [--run]\n");
   exit(2);
 }
 
@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
     else usage();
   }
   if (!in) usage();
-  g_lib_dir = getenv("JOT_LIB");
+  g_lib_dir = getenv("SLOPPY_LIB");
   if (!g_lib_dir) {
     char exe[1024];
     ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
   char cmd[4096];
   snprintf(cmd, sizeof cmd, "gcc -nostdlib -static -no-pie -o '%s' '%s'", out, asmpath);
   int rc = system(cmd);
-  if (rc != 0) { fprintf(stderr, "jot0: assembler failed\n"); return 1; }
+  if (rc != 0) { fprintf(stderr, "sloppy0: assembler failed\n"); return 1; }
   unlink(asmpath);
   if (run) {
     char path[1200];

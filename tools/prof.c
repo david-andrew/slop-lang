@@ -1,4 +1,4 @@
-// Tiny sampling profiler for Jot executables (uses ptrace + frame pointers).
+// Tiny sampling profiler for Sloppy executables (uses ptrace + frame pointers).
 // usage: prof [-i usec] [-c func (callers)] [-a func (hot addresses)] program args...
 #define _GNU_SOURCE
 #include <stdio.h>
