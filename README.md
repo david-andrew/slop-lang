@@ -126,9 +126,11 @@ errors as you type, hover with types and doc comments, go to definition, referen
 completion, signature help, inlay hints for inferred types, and an outline. It is the compiler
 itself answering, so it agrees with the compiler by construction.
 
-VS Code: `tools/vsix.py` packages the extension in `editors/vscode` (highlighting, the language
-server, and commands to run a file in a terminal or the browser, or its tests);
-`code --install-extension build/sloppy-0.2.1.vsix` installs it.
+VS Code, Cursor and VSCodium: the [Sloppy extension](https://marketplace.visualstudio.com/items?itemName=RedFoxLabs.sloppy)
+(also [on Open VSX](https://open-vsx.org/extension/RedFoxLabs/sloppy)): highlighting, the language
+server, and commands to run a file in a terminal or the browser, or its tests.
+`code --install-extension RedFoxLabs.sloppy` installs it. Its source is `editors/vscode`;
+`tools/vsix.py` packages it (`build/sloppy-<version>.vsix`).
 
 Other editors: run `sloppy lsp` for `*.jo` files. For example, Neovim (0.11):
 

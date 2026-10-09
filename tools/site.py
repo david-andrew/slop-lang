@@ -233,7 +233,7 @@ nums.sort()
 add = (a: int, b: int): a + b
 print(nums.map((x): x * x), add(1, _)(41), fib(30))
 print(nums .* 2.5 .+ 1, sqrt.([4.0 9.0]), [1 2; 3 4] * [1 0; 0 1])</code></pre>
-  <p>Editors: <code>sloppy lsp</code> is a language server (VS Code and Cursor extension in the repository). An interactive prompt: run <code>sloppy</code> with no file.</p>
+  <p>Editors: <code>sloppy lsp</code> is a language server (and there is a <a href="https://marketplace.visualstudio.com/items?itemName=RedFoxLabs.sloppy">VS Code / Cursor extension</a>). An interactive prompt: run <code>sloppy</code> with no file.</p>
 </section>
 """
 

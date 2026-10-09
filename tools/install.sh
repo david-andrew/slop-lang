@@ -143,7 +143,7 @@ command -v code >/dev/null && [ -z "$editor" ] && editor="code"
 if [ -n "$editor" ]; then
     say ""
     say "Editor support (highlighting, errors as you type, completion...):"
-    say "  ${CYAN}$editor --install-extension $home_shown/editors/sloppy.vsix${RESET}"
+    say "  ${CYAN}$editor --install-extension RedFoxLabs.sloppy${RESET}"
 fi
 say ""
 say "${DIM}Docs: https://sloppy-lang.org  ·  update: sloppy update  ·  uninstall: rm -rf $home_shown${RESET}"
