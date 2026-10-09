@@ -107,6 +107,20 @@ when TARGET == "windows":
     @lib("kernel32.dll")
     extern GetLastError = () -> u32
     @lib("kernel32.dll")
+    extern VirtualQuery = (p: *u8, info: *u8, n: int) -> int
+    @lib("kernel32.dll")
+    extern SetEnvironmentVariableW = (name: *u16, value: *u16) -> i32
+    @lib("kernel32.dll")
+    extern GetCurrentProcessId = () -> u32
+    @lib("kernel32.dll")
+    extern GetFileAttributesExW = (name: *u16, level: i32, info: *u8) -> i32
+    @lib("kernel32.dll")
+    extern GetConsoleMode = (h: *u8, mode: *u32) -> i32
+    @lib("kernel32.dll")
+    extern GetNumberOfConsoleInputEvents = (h: *u8, n: *u32) -> i32
+    @lib("kernel32.dll")
+    extern ReadConsoleInputW = (h: *u8, records: *u8, n: u32, got: *u32) -> i32
+    @lib("kernel32.dll")
     extern MoveFileExW = (from: *u16, to: *u16, flags: u32) -> i32
     @lib("kernel32.dll")
     extern AddVectoredExceptionHandler = (first: u32, h: *u8) -> *u8
@@ -326,14 +340,18 @@ when TARGET == "windows":
 
     __w32_free_pages = (p: *u8): VirtualFree(p, 0, u32(0x8000))   # MEM_RELEASE
 
-    # run a program and wait for it: its exit code (-1: it could not be started)
-    __w32_run = (path: str, argv: str[], wait: bool) -> int:
+    # a command line: the arguments, quoted where they need it
+    __w32_cmdline = (argv: str[]) -> str:
         cmd = ""
         loop i in 0.. and a in argv:
             if i > 0: cmd += " "
             if len(a) > 0 and find(a, " ") < 0 and find(a, "\"") < 0: cmd += a
             else: cmd += "\"" + replace(a, "\"", "\\\"") + "\""
-        wcmd = __wide(cmd)
+        cmd
+
+    # run a program and wait for it: its exit code (-1: it could not be started)
+    __w32_run = (path: str, argv: str[], wait: bool) -> int:
+        wcmd = __wide(__w32_cmdline(argv))
         wpath = __wide(path)
         si = fill(u8(0), 104)
         (data(si) as *u32)[0] = 104

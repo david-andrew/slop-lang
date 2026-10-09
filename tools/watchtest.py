@@ -5,7 +5,7 @@ usage: tools/watchtest.py [compiler]  (games run headless, in the software rende
 import os, re, subprocess, sys, tempfile, threading, time
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sloppy = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "bin", "sloppy")
+sloppy = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "bin", "sloppy.exe" if os.name == "nt" else "sloppy")
 env = dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib"), SLOPPY_SOFTWARE="1", SLOPPY_FRAMES="1000000")
 
 
@@ -58,7 +58,7 @@ def write(d, name, text):
     tmp = os.path.join(d, "." + name + ".tmp")
     with open(tmp, "w") as f:
         f.write(text)
-    os.rename(tmp, os.path.join(d, name))
+    os.replace(tmp, os.path.join(d, name))
 
 
 GAME = """\

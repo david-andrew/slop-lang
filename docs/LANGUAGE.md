@@ -771,7 +771,7 @@ sloppy update             install the latest release (when this is not it)
 
 On Windows, `sloppy` is `sloppy.exe` and programs are Windows executables (`sloppy build game.jo`
 writes `game.exe`); `sloppy build --target windows` makes them on Linux too, and `--target linux`
-Linux ones on Windows. The interactive prompt and `sloppy watch` are Linux-only for now.
+Linux ones on Windows. The interactive prompt is Linux-only for now.
 
 **Reloading while it runs.** `sloppy watch game.jo` runs the game and keeps watching the files it
 is built from. Each time one is saved the game is rebuilt and the running game takes the new
@@ -799,8 +799,8 @@ change to how something moves or looks shows at once.
   loses `update` or `draw` is started again by itself.
 - A program without `update`/`draw` is run again from the start each time its files change.
 
-`sloppy watch` runs native builds (Linux; not on Windows yet), in debug or release mode as the build
-block says.
+`sloppy watch` runs native builds (Linux or Windows; on Windows `r` and `q` need no enter), in debug
+or release mode as the build block says.
 
 ## 13. Calling C
 

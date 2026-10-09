@@ -711,8 +711,12 @@ else when TARGET == "windows":
     __game_run = (update: (f64) -> void, draw: () -> void):
         window(__win_title, __win_w, __win_h)
         __fixed_step = env("SLOPPY_SCREENSHOT") != none
+        when WATCH:
+            __watch_init()
         last = time()
         loop not __win_close:
+            when WATCH:
+                __watch_frame()
             __platform_poll()
             now = time()
             dt = clamp(now - last, 0.0, 0.1)

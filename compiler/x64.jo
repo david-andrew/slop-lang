@@ -2266,6 +2266,23 @@ sym_name = (n: str) -> str:
 
 # the entry point of a Windows program: called with the stack 8 bytes off 16-byte alignment;
 # the initializers and main, then ExitProcess(0) from the import table
+# VirtualAlloc(at, size, kind, read/write/run) through the import table: its result in rax
+win_virtual_alloc = (at: int, size: int, kind: int):
+    mov_imm(RCX, at)
+    mov_imm(RDX, size)
+    mov_imm(8, kind)
+    mov_imm(9, 0x40)
+    rex(true, 0, 0, RSP, false)               # sub rsp, 32 (shadow space)
+    b(0x83)
+    modrr(5, RSP)
+    b(32)
+    b(0xFF); b(0x15); b32(0)                  # call [rip + VirtualAlloc]
+    data_fix.push((code.len() - 4, 1, pe_iat_off(3)))
+    rex(true, 0, 0, RSP, false)               # add rsp, 32
+    b(0x83)
+    modrr(0, RSP)
+    b(32)
+
 x64_entry_win = (inits: int[], main_lf: int) -> int:
     loop code.len() % 16 != 0: b(0xCC)
     start = code.len()
@@ -2276,6 +2293,23 @@ x64_entry_win = (inits: int[], main_lf: int) -> int:
     b(0x83)
     modrr(5, RSP)
     b(8)
+    if watch_build:
+        # (sloppy watch: room for the code of later builds, reserved before anything else can be
+        # put there, its pages committed as patches use them; its first word tells
+        # lib/std/watch.jo it is there)
+        win_virtual_alloc(WATCH_CODE_AT, WATCH_CODE_SIZE, 0x2000)          # MEM_RESERVE
+        mov_imm(RCX, WATCH_CODE_AT)
+        b(0x48); b(0x39); b(0xC8)             # cmp rax, rcx
+        b(0x75); b(0)                         # jne over the rest
+        j = code.len()
+        win_virtual_alloc(WATCH_CODE_AT, 4096, 0x1000)                     # MEM_COMMIT
+        b(0x48); b(0x85); b(0xC0)             # test rax, rax
+        b(0x74); b(0)                         # je over the mark
+        k = code.len()
+        mov_imm(RDX, 0x6A6F74776174636B)
+        mov_mr(RAX, 0, RDX)
+        code[k - 1] = u8(code.len() - k)
+        code[j - 1] = u8(code.len() - j)
     loop f in inits:
         b(0xE8)
         b32(0)

@@ -329,7 +329,11 @@ compile = (path: str, out0: str) -> str:
         img_ro_addr = PE_BASE + ro_rva
         img_data_addr = PE_BASE + data_rva + idata_size
         x64_resolve(img_text_addr, img_ro_addr, img_data_addr)
-        ok = write_pe(out, code, entry, rodata, data_size + 8 + bss_reserve, update_fn != 0 or draw_fn != 0, pe_backtrace_info(), program_icon)
+        # (sloppy watch: after the first build, a patch for the program running)
+        if watch_build and not watch_first: ok = watch_make_patch()
+        else:
+            ok = write_pe(out, code, entry, rodata, data_size + 8 + bss_reserve, update_fn != 0 or draw_fn != 0, pe_backtrace_info(), program_icon)
+            if ok and watch_build: watch_record_image()
         size = code.len()
     else:
         x64_stubs()
@@ -372,6 +376,11 @@ main = ():
         if a.len() >= 3: version = a[2]
         self_update(version)
     lib_dir = find_lib_dir()
+    # (sloppy watch on Windows: each build in a process of its own: watch.jo, w32_compile)
+    when TARGET == "windows":
+        if a.len() >= 8 and a[1] == "watch" and a[2] == "--build":
+            watch_build_child(a[3], a[4], a[5], a[6] == "1", a[7])
+            return
     # no file: the interactive prompt
     if a.len() < 2 or a[1] == "repl":
         when TARGET == "windows":
@@ -444,11 +453,7 @@ main = ():
         cli_target = "native"
         wargs: str[]
         loop i in [first + 2..a.len()): wargs.push(a[i])
-        when TARGET == "windows":
-            eprint("sloppy: sloppy watch is not on Windows yet (run the file: sloppy file.jo)")
-            exit(2)
-        else:
-            watch_main(os_path(a[first + 1]), wargs)
+        watch_main(os_path(a[first + 1]), wargs)
         return
     if a[first] == "test":
         if a.len() < first + 2: usage()

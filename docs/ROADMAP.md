@@ -5,7 +5,7 @@ bootstrap) that compiles a 50k-line program in 0.18 s, runs programs at ~1.24x t
 (release), and targets Linux x86-64, Windows x64 and the web (one .html file). It has a game
 library (window, input, gamepads, 2D/3D drawing with a 2D camera, collision and particle helpers,
 shadows, shaders written in Sloppy that run on the GPU or a software renderer, an audio mixer,
-PNG/WAV), hot reloading (`sloppy watch`, Linux), a REPL (Linux), a language server and VS Code
+PNG/WAV), hot reloading (`sloppy watch`), a REPL (Linux), a language server and VS Code
 extension, a playground, backtraces, DWARF, modules.
 
 The aim stays the same: a small language that feels like Python and runs like C, for making
@@ -65,9 +65,9 @@ Left:
 
 - a. Check on real hardware (S): window, OpenGL on Intel/AMD/NVIDIA drivers, DPI scaling,
   fullscreen, raw mouse, XInput, sound (never heard yet), alt-tab, minimize.
-- b. `sloppy watch` on Windows (M): hot reload is what most sets Sloppy apart for games, and most
-  game developers use Windows. Process control without fork (CreateProcess, shared memory, a pipe
-  protocol) in place of ptrace/fork/inotify.
+- b. Done (0.3.1): `sloppy watch` on Windows (each build in a process of its own given the link
+  map; the program's pipes passed as handles; files watched by their write times). Left: a
+  panic in reloaded code names the wrong function in its backtrace.
 - c. The interactive prompt on Windows (S, on b's machinery).
 - d. Debugging (M): unwind tables (.pdata/.xdata) so Windows' tools can walk the stack, then
   CodeView/PDB line info for Visual Studio, WinDbg and RemedyBG.
