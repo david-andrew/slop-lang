@@ -42,7 +42,12 @@ for t in tests:
         cmd = [sloppy, "build", t, "-o", exe] + (["--target", target] if target != "native" else []) + (["--release"] if release else [])
         env = dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib"))
     t0 = time.time()
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")))
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")), timeout=60)
+    except subprocess.TimeoutExpired:
+        print(f"FAIL {name}: the compiler took over 60 s")
+        failed += 1
+        continue
     if r.returncode != 0:
         print(f"FAIL {name}: compile error\n{r.stderr}")
         failed += 1
@@ -124,7 +129,9 @@ if compiler != "sloppy0" and target == "native":
         want = open(t, encoding="utf-8").readline().split("# error:", 1)[-1].strip()
         r = subprocess.run([sloppy, "build", t, "-o", os.path.join(tmp, "error_case")], capture_output=True, text=True, encoding="utf-8", errors="replace",
                            env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")), timeout=60)
-        if r.returncode != 0 and want in r.stderr: passed += 1
+        # (a diagnostic: exit status 1 with an error at a place, never the compiler crashing)
+        crashed = r.returncode != 1 or "panic:" in r.stderr or "internal compiler error" in r.stderr
+        if not crashed and want in r.stderr: passed += 1
         else:
             print(f"FAIL {name}: expected an error containing {want!r}\n{r.stderr}")
             failed += 1

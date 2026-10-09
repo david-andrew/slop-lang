@@ -169,6 +169,8 @@ lower = (s: str) -> str:
         if c >= 'A' and c <= 'Z': c = c + 32
     str_from_bytes(b)
 
+# parse an integer (decimal, or hex after 0x; _ may separate digits); none if it is not one or
+# does not fit in an int
 to_int = (s: str) -> int?:
     t = trim(s)
     n = len(t)
@@ -195,12 +197,15 @@ to_int = (s: str) -> int?:
             i += 1
             continue
         if d < 0 or d >= base: return none
-        v = v * base + d
+        # (accumulated negated, which reaches the smallest int; none when out of range)
+        if v < (-0x7FFFFFFFFFFFFFFF - 1 + d) / base: return none
+        v = v * base - d
         any = true
         i += 1
     if not any: return none
-    if neg: return -v
-    v
+    if neg: return v
+    if v == -0x7FFFFFFFFFFFFFFF - 1: return none
+    -v
 
 # Parse a decimal number. The result is the double nearest to the exact decimal value
 # (ties to even), like C's strtod: an estimate, then exact big-integer comparisons.
@@ -477,16 +482,19 @@ __cmp_scaled = (d: int[], exp: int, q: int, e: int) -> int:
     else: __big_shl(lhs, -e)
     __big_cmp(lhs, rhs)
 
+# the characters (code points) in reverse order
 reverse = (s: str) -> str:
-    b = bytes(s)
-    n = b.len()
-    i = 0
-    loop i < n / 2:
-        t = b[i]
-        b[i] = b[n - 1 - i]
-        b[n - 1 - i] = t
-        i += 1
-    str_from_bytes(b)
+    n = len(s)
+    out: u8[]
+    out.reserve(n)
+    e = n
+    loop e > 0:
+        # (the start of the character that ends at e: continuation bytes are 10xxxxxx)
+        k = e - 1
+        loop k > 0 and (int(s[k]) & 0xC0) == 0x80: k -= 1
+        loop j in [k..e): out.push(s[j])
+        e = k
+    str_from_bytes(out)
 
 # number of unicode code points
 char_count = (s: str) -> int:

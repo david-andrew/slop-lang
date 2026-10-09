@@ -1,0 +1,8 @@
+# a WAV file in a format load_wav does not read is an error that says so
+# requires: sloppy
+w = bytes("RIFF") + [u8(36), 0, 0, 0] + bytes("WAVEfmt ")
+w += [u8(16), 0, 0, 0, 2, 0, 1, 0, 128, 187, 0, 0, 0, 0, 0, 0, 2, 0, 4, 0]      # format 2: ADPCM
+w += bytes("data") + [u8(0), 0, 0, 0]
+print("loading")
+s = load_wav(w)
+print(s.samples.len())

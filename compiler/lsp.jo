@@ -580,8 +580,7 @@ check_child = (main_path: str, doc_path: str, sentinel: bool, skips: str[], lowe
         compile(main_path, "")
     else:
         scan_build_block(main_path)
-        target_wasm = build_target == "wasm"
-        if target_wasm: ptr_size = 4
+        setup_target()
         init_types()
         check_program(main_path)
     ide_finish()

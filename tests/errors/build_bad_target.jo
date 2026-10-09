@@ -1,0 +1,4 @@
+# error: build option 'target' is native, linux, windows or wasm
+build:
+    target = wsam
+print(1)

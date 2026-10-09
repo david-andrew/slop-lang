@@ -23,6 +23,7 @@ jobs:
           python3 tools/runtests.py --compiler sloppy
           python3 tools/runtests.py --compiler sloppy --release
           python3 tools/runtests.py --compiler sloppy --target wasm
+          python3 tools/runtests.py --compiler sloppy --target wasm --release
           python3 tools/lsptest.py
           python3 tools/rendertest.py --no-gpu
       - name: Keep the rendered frames (when a test failed)

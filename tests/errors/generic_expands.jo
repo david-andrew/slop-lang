@@ -1,0 +1,5 @@
+# error: the generic type 'Box' expands without end
+struct Box[T]:
+    child: Box[T[]][]
+x = Box[int]()
+print(x)

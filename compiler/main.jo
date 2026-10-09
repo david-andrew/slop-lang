@@ -91,6 +91,27 @@ build_target = ""
 build_output = ""
 cli_target = ""
 
+# the target, from the command line or else the build block: for building, checking and the
+# language server alike
+setup_target = ():
+    tgt = build_target
+    # (one the build block names wrongly: the checker says where)
+    if tgt != "linux" and tgt != "windows" and tgt != "wasm": tgt = ""
+    if len(cli_target) > 0: tgt = cli_target
+    if tgt == "" or tgt == "native":
+        # (the system this compiler runs on)
+        tgt = "linux"
+        when TARGET == "windows":
+            tgt = "windows"
+    if tgt != "linux" and tgt != "windows" and tgt != "wasm":
+        eprint("sloppy: unknown target '{tgt}' (native, linux, windows or wasm)")
+        exit(2)
+    target_wasm = tgt == "wasm"
+    target_windows = tgt == "windows"
+    if target_wasm: ptr_size = 4
+
+# (a quick read of the main file's build block before anything is checked; check_build_block
+# reports its mistakes)
 scan_build_block = (path: str):
     src = read_source(path) ?? ""
     # find a top-level `build:` line, then read its indented lines
@@ -118,11 +139,7 @@ scan_build_block = (path: str):
         if len(val) >= 2 and val[0] == '"': val = val[1..len(val) - 1)
         if key == "target": build_target = val
         else if key == "output": build_output = val
-        else if key == "opt":
-            if val != "debug" and val != "release":
-                eprint("error: build option 'opt' must be debug or release\n")
-                exit(1)
-            opt_release = val == "release"
+        else if key == "opt": opt_release = val == "release"
 
 lower_only = false      # (the language server: what lowering finds wrong, without code)
 # the interactive prompt (repl.jo): the program's main is the session's server, and there is
@@ -212,19 +229,7 @@ compile = (path: str, out0: str) -> str:
     scan_build_block(path)
     if cli_release: opt_release = true
     if lower_only: opt_release = false
-    tgt = build_target
-    if len(cli_target) > 0: tgt = cli_target
-    if tgt == "" or tgt == "native":
-        # (the system this compiler runs on)
-        tgt = "linux"
-        when TARGET == "windows":
-            tgt = "windows"
-    if tgt != "linux" and tgt != "windows" and tgt != "wasm":
-        eprint("sloppy: unknown target '{tgt}' (native, linux, windows or wasm)")
-        exit(2)
-    target_wasm = tgt == "wasm"
-    target_windows = tgt == "windows"
-    if target_wasm: ptr_size = 4
+    setup_target()
     out = out0
     if target_wasm and not ends_with(out, ".html"): out = out + ".html"
     if target_windows:
@@ -396,6 +401,12 @@ main = ():
             else: path = os_path(x)
             i += 1
         if len(path) == 0: usage()
+        scan_build_block(path)
+        if len(out) == 0 and len(build_output) > 0:
+            # (the build block's output: beside the program, unless it is a full path)
+            out = os_path(build_output)
+            s = rfind(path, "/")
+            if not is_abs_path(out) and s >= 0: out = path[..s + 1) + out
         if len(out) == 0:
             out = path
             out = strip_ext(out)
@@ -411,8 +422,7 @@ main = ():
         if let s = env("SLOPPY_STOP"): stop_after = s
         path = os_path(a[2])
         scan_build_block(path)
-        target_wasm = build_target == "wasm"
-        if target_wasm: ptr_size = 4
+        setup_target()
         init_types()
         check_program(path)
         return

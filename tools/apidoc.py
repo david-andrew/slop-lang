@@ -27,6 +27,7 @@ for sub, title in SECTIONS:
     out.append(f"## {title}")
     out.append("")
     for path in sorted(glob.glob(os.path.join(ROOT, "lib", sub, "*.jo"))):
+        if os.path.basename(path) == "windows.jo": continue      # (the OS layer of Windows programs)
         lines = open(path).read().splitlines()
         header = []
         for l in lines:
@@ -34,9 +35,16 @@ for sub, title in SECTIONS:
             else: break
         entries = []
         comment = []
-        depth_skip = False
+        in_when = False        # (declarations one level into a top-level `when` count too)
+        seen = set()
         for l in lines:
             s = l.rstrip()
+            if s and not s.startswith((" ", "#")):
+                in_when = s.startswith(("when ", "else"))
+                if in_when: continue
+            if in_when and s.startswith("    ") and not s.startswith("     "):
+                s = s[4:]
+                if s.startswith("extern"): s = "    " + s
             if s.startswith("#"):
                 c = s.lstrip("# ").rstrip()
                 if not re.fullmatch(r"-+.*-+", c): comment.append(c)
@@ -51,7 +59,9 @@ for sub, title in SECTIONS:
                         sig = signature(s)
                     elif m.group(1) == "struct":
                         sig = s.split(":")[0]
-                    entries.append((sig.strip(), " ".join(c for c in comment if c)))
+                    if sig.strip() not in seen:
+                        seen.add(sig.strip())
+                        entries.append((sig.strip(), " ".join(c for c in comment if c)))
             if not s.startswith("#"):
                 comment = []
         if not entries: continue

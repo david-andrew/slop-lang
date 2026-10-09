@@ -461,6 +461,11 @@ cell_place = (l: int) -> Place:
     Place(false, int(locals[l].vreg))
 
 new_cell = (l: int):
+    # (a cell holding a closure that holds the cell would never be freed: values that can hold
+    # functions are not shared like this)
+    if type_has_fn(int(locals[l].type)):
+        nm = name_of(int(locals[l].name))
+        fatal(int(locals[l].pos), "'{nm}' is changed after a closure captured it, and it can hold functions ({type_str(int(locals[l].type))}): a closure kept in it would keep it alive forever. Make it a global, or pass it to the closure as a `mut` parameter")
     sz = tsize(int(locals[l].type))
     if sz < 1: sz = 1
     write_place(cell_place(l), store_type(l), e_call(rt("__arr_repeat"), [e_iconst(1), e_iconst(sz)], VI))

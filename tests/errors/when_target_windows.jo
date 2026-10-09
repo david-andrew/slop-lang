@@ -1,0 +1,8 @@
+# error: unknown name 'win_only'
+# (the windows branch is the one checked, as the build block says)
+build:
+    target = windows
+when TARGET == "windows":
+    print(win_only)
+else:
+    print(1)

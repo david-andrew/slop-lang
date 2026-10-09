@@ -346,6 +346,37 @@ is_managed = (t0: int) -> bool:
         return int(types[t].flags) & TF_MANAGED != 0
     false
 
+# can a value of this type hold a function value (a closure)? (through arrays, optionals, tuples,
+# struct and enum fields, union members and type arguments)
+has_fn_memo: {int: int} = {}          # 1: being worked out (a recursive type), 2: yes, 3: no
+
+type_has_fn = (t0: int) -> bool:
+    t = prune(t0)
+    k = types[t].kind
+    if k == .fn_: return true
+    if k == .array or k == .opt or k == .fixed: return type_has_fn(int(types[t].elem))
+    if k == .tuple:
+        loop i in [0..int(types[t].nargs)):
+            if type_has_fn(targ(t, i)): return true
+        return false
+    if k != .struct_ and k != .enum_: return false
+    if let c = has_fn_memo.get(t): return c == 2
+    has_fn_memo[t] = 1
+    si = int(types[t].st)
+    check_struct_fields(si)
+    r = false
+    loop i in [0..int(structs[si].ntargs)):
+        if type_has_fn(struct_targ(si, i)): r = true
+    loop i in [0..int(structs[si].nfields)):
+        if type_has_fn(int(fields[int(structs[si].fields) + i].type)): r = true
+    loop v in [0..int(structs[si].nvariants)):
+        vi = int(structs[si].variants) + v
+        loop i in [0..int(variants[vi].nfields)):
+            if type_has_fn(int(fields[int(variants[vi].fields) + i].type)): r = true
+    has_fn_memo[t] = 3
+    if r: has_fn_memo[t] = 2
+    r
+
 is_aggregate = (t0: int) -> bool:
     t = prune(t0)
     k = types[t].kind
@@ -648,6 +679,20 @@ soa_inst = (p: int) -> int:
     structs[idx].type = i32(types.len() - 1)
     types.len() - 1
 
+# how deeply a type nests (counted up to lim)
+type_nesting = (t0: int, lim: int) -> int:
+    if lim <= 0 or t0 <= 0: return 0
+    t = prune(t0)
+    d = 0
+    if int(types[t].elem) > 0: d = type_nesting(int(types[t].elem), lim - 1)
+    loop i in [0..int(types[t].nargs)): d = max(d, type_nesting(targ(t, i), lim - 1))
+    if (types[t].kind == .struct_ or types[t].kind == .enum_) and int(types[t].st) < structs.len():
+        si = int(types[t].st)
+        loop i in [0..int(structs[si].ntargs)): d = max(d, type_nesting(struct_targ(si, i), lim - 1))
+    d + 1
+
+const MAX_TYPE_NESTING = 48
+
 # ---------- struct instances ----------
 get_struct_inst = (decl: int, targs: int[]) -> int:
     if decl == 0: return mk_union(targs)
@@ -660,6 +705,10 @@ get_struct_inst = (decl: int, targs: int[]) -> int:
                 same = false
                 break
         if same: return int(si.type)
+    # (a generic struct whose fields use it with bigger type arguments would expand without end)
+    loop t in targs:
+        if type_nesting(t, MAX_TYPE_NESTING + 1) > MAX_TYPE_NESTING:
+            fatal(nodes[decl].pos, "the generic type '{name_of(int(nodes[decl].name))}' expands without end: its type arguments nest more than {MAX_TYPE_NESTING} deep (does a field use it with a bigger type argument than its own?)")
     si = StructInfo(decl = i32(decl), ntargs = i32(targs.len()), name = name_of(int(nodes[decl].name)))
     si.targs = i32(type_args.len())
     hv = false

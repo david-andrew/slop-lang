@@ -1,0 +1,4 @@
+# error: build option 'opt' is debug or release
+build:
+    opt = fast
+print(1)

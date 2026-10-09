@@ -1,0 +1,10 @@
+# error: 'b' is changed after a closure captured it, and it can hold functions
+struct Btn:
+    label: str
+    on_click: () -> void
+make = ():
+    b = Btn("x", (): pass)
+    b.on_click = ():
+        b.label = "clicked"
+    b.on_click()
+make()

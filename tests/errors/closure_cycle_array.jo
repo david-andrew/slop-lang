@@ -1,0 +1,6 @@
+# error: 'fs' is changed after a closure captured it, and it can hold functions
+make = ():
+    fs: (() -> int)[]
+    f = () -> int: fs.len()
+    fs.push(f)
+make()

@@ -1,0 +1,7 @@
+# reverse keeps characters whole; to_int is none for what does not fit in an int
+# requires: sloppy
+print(reverse("héllo wörld 😀!"), bytes(reverse("é")), reverse(""), reverse("a"))
+print(to_int("9223372036854775807"), to_int("9223372036854775808"))
+print(to_int("-9223372036854775808"), to_int("-9223372036854775809"))
+print(to_int("18446744073709551616"), to_int("0x7fffffffffffffff"), to_int("0x8000000000000000"))
+print(to_int("-42"), to_int("1_000"), to_int("0x1F"), to_int(""), to_int("-"), to_int("12a"))

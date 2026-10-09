@@ -1818,13 +1818,32 @@ ceval = (e: int) -> CVal:
 
 const_eval_bool = (e: int) -> bool: ceval(e).i != 0
 
-build_option = (key: str) -> int:
-    if build_node == 0: return 0
+# the build: block of the main file, checked (main.jo's scan_build_block read it before checking
+# began, to know the target: here its mistakes are errors with places)
+check_build_block = ():
+    if build_node == 0: return
     b = int(nodes[build_node].b)
+    seen: str[]
     loop i in [0..nkids(b)):
         s = kid(b, i)
-        if nodes[s].kind == .assign and nodes[int(nodes[s].a)].kind == .ident and name_of(int(nodes[int(nodes[s].a)].name)) == key: return int(nodes[s].b)
-    0
+        if nodes[s].kind != .assign or nodes[int(nodes[s].a)].kind != .ident:
+            fatal(nodes[s].pos, "a build option is `name = value` (target, opt or output)")
+        key = name_of(int(nodes[int(nodes[s].a)].name))
+        v = int(nodes[s].b)
+        word = ""
+        if nodes[v].kind == .ident: word = name_of(int(nodes[v].name))
+        else if nodes[v].kind == .str_lit and nodes[v].aux == 0: word = name_of(int(nodes[v].sval))
+        if seen.contains(key): fatal(nodes[s].pos, "build option '{key}' is set twice")
+        seen.push(key)
+        if key == "target":
+            if word != "native" and word != "linux" and word != "windows" and word != "wasm":
+                fatal(nodes[v].pos, "build option 'target' is native, linux, windows or wasm")
+        else if key == "opt":
+            if word != "debug" and word != "release": fatal(nodes[v].pos, "build option 'opt' is debug or release")
+        else if key == "output":
+            if nodes[v].kind != .str_lit or nodes[v].aux != 0 or len(word) == 0: fatal(nodes[v].pos, "build option 'output' is a file name in quotes: output = \"game\"")
+        else:
+            fatal(nodes[int(nodes[s].a)].pos, "unknown build option '{key}' (the options are target, opt and output)")
 
 # ---------------- program ----------------
 want_cpu_flag = false           # (release builds for x86-64: the vectorizer may use __cpu_avx2)
@@ -1922,6 +1941,7 @@ check_program = (main_path: str):
         register_decls(i, modules[i].decls)
         i += 1
     bind_from_imports()
+    check_build_block()
     # (native programs report crashes as they do panics: lib/std/backtrace.jo)
     if not target_wasm and prelude.get(intern("__crash_install")) != none: modules[mainm].inits.insert(0, synth_call("__crash_install", [], 0))
     # programs with update()/draw() run the game loop after main()

@@ -1,0 +1,50 @@
+# load_wav: every sample format it reads, at the mixer's rate (no resampling)
+# requires: sloppy
+le = (out: mut u8[], v: int, n: int):
+    loop i in [0..n): out.push(u8((v >> (8 * i)) & 255))
+
+wav = (fmt_: int, bits: int, channels: int, samples: u8[], extensible: bool = false) -> u8[]:
+    f: u8[]
+    if extensible:
+        le(f, 0xFFFE, 2)
+    else:
+        le(f, fmt_, 2)
+    le(f, channels, 2)
+    le(f, 48000, 4)
+    le(f, 48000 * channels * bits / 8, 4)
+    le(f, channels * bits / 8, 2)
+    le(f, bits, 2)
+    if extensible:
+        le(f, 22, 2)
+        le(f, bits, 2)
+        le(f, 3, 4)
+        le(f, fmt_, 2)
+        loop i in [0..14): f.push(0)
+    out = bytes("RIFF")
+    le(out, 4 + 8 + f.len() + 8 + samples.len(), 4)
+    out += bytes("WAVEfmt ")
+    le(out, f.len(), 4)
+    out += f
+    out += bytes("data")
+    le(out, samples.len(), 4)
+    out += samples
+    out
+
+pcm = (bits: int, xs: int[]) -> u8[]:
+    out: u8[]
+    loop x in xs: le(out, x, bits / 8)
+    out
+
+show = (s: Sound): print(s.samples)
+
+show(load_wav(wav(1, 8, 1, [u8(192), 64])))
+show(load_wav(wav(1, 16, 1, pcm(16, [16384, -16384]))))
+show(load_wav(wav(1, 24, 1, pcm(24, [0x400000, -0x400000]))))
+show(load_wav(wav(1, 32, 1, pcm(32, [0x40000000, -0x40000000]))))
+f32s: u8[]
+loop x in [0.5, -0.25]: le(f32s, int(f32(x) as u32), 4)
+show(load_wav(wav(3, 32, 1, f32s)))
+f64s: u8[]
+loop x in [0.5, -0.25]: le(f64s, x as int, 8)
+show(load_wav(wav(3, 64, 1, f64s)))
+show(load_wav(wav(1, 24, 2, pcm(24, [0x400000, -0x200000]), extensible = true)))

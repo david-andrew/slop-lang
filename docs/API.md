@@ -156,6 +156,8 @@ exec = (path: str, argv: str[]) -> bool    # replace the current process with an
 spawn_detached = (path: str, argv: str[]) -> bool    # start a program in the background, detached from this one: its own session, no terminal (input and output go to /dev/null); returns whether it was started
 chmod = (path: str, mode: int) -> bool
 mkdir = (path: str) -> bool
+cwd = () -> str    # the current directory
+temp_dir = () -> str    # a directory for temporary files (TMPDIR, else /tmp; on Windows, the user's temporary directory)
 ```
 
 ### rt.jo
@@ -200,9 +202,9 @@ repeat = (s: str, n: int) -> str
 (*) = (s: str, n: int) -> str
 upper = (s: str) -> str
 lower = (s: str) -> str
-to_int = (s: str) -> int?
+to_int = (s: str) -> int?    # parse an integer (decimal, or hex after 0x; _ may separate digits); none if it is not one or does not fit in an int
 to_float = (s: str) -> f64?    # Parse a decimal number. The result is the double nearest to the exact decimal value (ties to even), like C's strtod: an estimate, then exact big-integer comparisons.
-reverse = (s: str) -> str
+reverse = (s: str) -> str    # the characters (code points) in reverse order
 char_count = (s: str) -> int    # number of unicode code points
 chars = (s: str) -> int[]    # unicode code points of s
 hash = (s: str) -> u64
@@ -480,8 +482,8 @@ if gamepad_pressed(.a): jump()
 move = left_stick()                # vec2 in -1..1, y down, with a dead zone  
   
 input_axis() also follows the left stick and the d-pad, so keyboard games work with a pad.  
-Native builds read the Linux joystick device (/dev/input/js0); web builds use the browser's  
-Gamepad API.  
+Linux builds read the joystick device (/dev/input/js0), Windows builds XInput, web builds the  
+browser's Gamepad API.  
 
 ```gdscript
 enum PadButton: a, b, x, y, lb, rb, back, start, home, lstick, rstick, up, down, left, right
@@ -592,6 +594,75 @@ const GL_UNPACK_ALIGNMENT = 0xCF5
 const GL_COMPILE_STATUS = 0x8B81
 const GL_LINK_STATUS = 0x8B82
 const GL_INFO_LOG_LENGTH = 0x8B84
+gl_create_buffer = () -> int
+gl_delete_buffer = (b: int)
+gl_create_vertex_array = () -> int
+gl_delete_vertex_array = (v: int)
+gl_create_texture = () -> int
+gl_delete_texture = (t: int)
+gl_create_framebuffer = () -> int
+gl_delete_framebuffer = (f: int)
+gl_create_renderbuffer = () -> int
+gl_delete_renderbuffer = (r: int)
+gl_create_program = (vs: str, fs: str) -> int
+gl_uniform_location = (p: int, name: str) -> int
+gl_tex_image = (w: int, h: int, internal: int, format: int, ty: int, pixels: *u8, size: int)
+gl_tex_sub_image = (x: int, y: int, w: int, h: int, format: int, ty: int, pixels: *u8, size: int)
+gl_read_pixels = (x: int, y: int, w: int, h: int, out: *u8)
+gl_read_pixels_f32 = (x: int, y: int, w: int, h: int, out: *u8)    # RGBA f32 pixels of a float render target
+gl_uniform4i = (loc: int, x: int, y: int, z: int, w: int)
+gl_max_texture_size = () -> int
+gl_read_pixels_i32 = (x: int, y: int, w: int, h: int, out: *u8)    # RGBA i32 pixels of an integer render target
+glClearColor = (r: f32, g: f32, b: f32, a: f32)    # the GL entry points: the driver, or the software renderer (softgl.jo) when there is none
+glClear = (mask: u32)
+glViewport = (x: i32, y: i32, w: i32, h: i32)
+glScissor = (x: i32, y: i32, w: i32, h: i32)
+glEnable = (cap: u32)
+glDisable = (cap: u32)
+glBlendFunc = (s: u32, d: u32)
+glBlendFuncSeparate = (s: u32, d: u32, sa: u32, da: u32)
+glDepthFunc = (f: u32)
+glDepthMask = (flag: u32)
+glCullFace = (mode: u32)
+glFrontFace = (mode: u32)
+glColorMask = (r: u32, g: u32, b: u32, a: u32)
+glBindBuffer = (target: u32, b: u32)
+glBufferData = (target: u32, size: int, data: *u8, usage: u32)
+glBufferSubData = (target: u32, offset: int, size: int, data: *u8)
+glBindVertexArray = (v: u32)
+glEnableVertexAttribArray = (i: u32)
+glDisableVertexAttribArray = (i: u32)
+glVertexAttribPointer = (i: u32, size: i32, ty: u32, normalized: u8, stride: i32, offset: int)
+glVertexAttribDivisor = (i: u32, d: u32)
+glDrawArrays = (mode: u32, first: i32, count: i32)
+glDrawElements = (mode: u32, count: i32, ty: u32, offset: int)
+glDrawArraysInstanced = (mode: u32, first: i32, count: i32, instances: i32)
+glDrawElementsInstanced = (mode: u32, count: i32, ty: u32, offset: int, instances: i32)
+glUseProgram = (p: u32)
+glDeleteProgram = (p: u32)
+glUniform1i = (loc: i32, v: i32)
+glUniform1f = (loc: i32, v: f32)
+glUniform2f = (loc: i32, x: f32, y: f32)
+glUniform3f = (loc: i32, x: f32, y: f32, z: f32)
+glUniform4f = (loc: i32, x: f32, y: f32, z: f32, w: f32)
+glUniformMatrix4fv = (loc: i32, count: i32, transpose: u8, v: *u8)
+glUniform1fv = (loc: i32, count: i32, v: *u8)
+glUniform2fv = (loc: i32, count: i32, v: *u8)
+glUniform3fv = (loc: i32, count: i32, v: *u8)
+glUniform1iv = (loc: i32, count: i32, v: *u8)
+glUniform2iv = (loc: i32, count: i32, v: *u8)
+glUniform4fv = (loc: i32, count: i32, v: *u8)
+glBindTexture = (target: u32, t: u32)
+glActiveTexture = (unit: u32)
+glTexParameteri = (target: u32, pname: u32, v: i32)
+glGenerateMipmap = (target: u32)
+glPixelStorei = (pname: u32, v: i32)
+glBindFramebuffer = (target: u32, f: u32)
+glFramebufferTexture2D = (target: u32, attachment: u32, textarget: u32, tex: u32, level: i32)
+glBindRenderbuffer = (target: u32, r: u32)
+glRenderbufferStorage = (target: u32, format: u32, w: i32, h: i32)
+glFramebufferRenderbuffer = (target: u32, attachment: u32, rbtarget: u32, rb: u32)
+glCheckFramebufferStatus = (target: u32) -> u32
 ```
 
 ### gpu.jo

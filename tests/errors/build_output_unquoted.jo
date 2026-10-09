@@ -1,0 +1,4 @@
+# error: build option 'output' is a file name in quotes
+build:
+    output = game
+print(1)

@@ -1,0 +1,24 @@
+# closures that share variables (heap cells) free them: no allocations are left behind
+# requires: sloppy
+count = () -> int:
+    total = 0
+    add = (x: int): total += x
+    add(3)
+    add(4)
+    total
+
+handlers: (() -> int)[]           # (a global: closures stored in it are fine)
+register = ():
+    n = 0
+    handlers.push(():
+        n += 1
+        n)
+
+handlers.reserve(4)               # (its own storage, kept by clear())
+before = alloc_count()
+loop i in [0..10): count()
+print(alloc_count() - before)
+register()
+print(handlers[0](), handlers[0]())
+handlers.clear()
+print(alloc_count() - before)

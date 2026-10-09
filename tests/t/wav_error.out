@@ -1,0 +1,2 @@
+loading
+[exit 101] panic: load_wav: compressed WAV files (format 2) are not supported: save it as PCM

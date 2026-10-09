@@ -203,25 +203,38 @@ melody = (notes: str, bpm: f64 = 120.0, wave: Wave = .triangle, volume: f64 = 0.
     out
 
 # ---------------- WAV files ----------------
+# a WAV file's sound: integer samples of 8, 16, 24 or 32 bits or floats of 32 or 64, any number of
+# channels (the first two are used; mono plays on both), any rate (resampled to MIX_RATE). Other
+# files are an error that says what they are.
 load_wav = (file: u8[]) -> Sound:
-    if file.len() < 44 or file[0] != 'R' or file[8] != 'W': panic("not a WAV file")
+    if file.len() < 12 or file[0] != 'R' or file[1] != 'I' or file[2] != 'F' or file[3] != 'F' or file[8] != 'W': panic("load_wav: not a WAV file (no RIFF/WAVE header)")
+    u16_at = (o: int) -> int: int(file[o]) | (int(file[o + 1]) << 8)
+    u32_at = (o: int) -> int: u16_at(o) | (u16_at(o + 2) << 16)
     pos = 12
-    fmt_ = 1
-    channels = 2
-    rate = 44100
-    bits = 16
+    fmt_ = -1
+    channels = 0
+    rate = 0
+    bits = 0
     loop pos + 8 <= file.len():
         id = str_from_bytes(file[pos..pos + 4))
-        n = int(file[pos + 4]) | (int(file[pos + 5]) << 8) | (int(file[pos + 6]) << 16) | (int(file[pos + 7]) << 24)
+        n = u32_at(pos + 4)
         b = pos + 8
         if id == "fmt ":
-            fmt_ = int(file[b]) | (int(file[b + 1]) << 8)
-            channels = int(file[b + 2]) | (int(file[b + 3]) << 8)
-            rate = int(file[b + 4]) | (int(file[b + 5]) << 8) | (int(file[b + 6]) << 16)
-            bits = int(file[b + 14]) | (int(file[b + 15]) << 8)
+            if n < 16 or b + 16 > file.len(): panic("load_wav: the format chunk is too short")
+            fmt_ = u16_at(b)
+            channels = u16_at(b + 2)
+            rate = u32_at(b + 4)
+            bits = u16_at(b + 14)
+            # (WAVE_FORMAT_EXTENSIBLE: the real format is the first two bytes of the sub-format)
+            if fmt_ == 0xFFFE and n >= 26 and b + 26 <= file.len(): fmt_ = u16_at(b + 24)
+            if fmt_ != 1 and fmt_ != 3: panic("load_wav: compressed WAV files (format {fmt_}) are not supported: save it as PCM")
+            if fmt_ == 1 and bits != 8 and bits != 16 and bits != 24 and bits != 32: panic("load_wav: {bits}-bit samples are not supported (8, 16, 24 or 32)")
+            if fmt_ == 3 and bits != 32 and bits != 64: panic("load_wav: {bits}-bit float samples are not supported (32 or 64)")
+            if channels < 1 or rate < 1: panic("load_wav: the format chunk says {channels} channels at {rate} Hz")
         else if id == "data":
+            if fmt_ < 0: panic("load_wav: the data comes before the format chunk")
             bps = bits / 8
-            nframes = n / (bps * channels)
+            nframes = min(n, file.len() - b) / (bps * channels)
             src: f32[]
             src.reserve(nframes * 2)
             loop f in [0..nframes):
@@ -229,16 +242,26 @@ load_wav = (file: u8[]) -> Sound:
                     c = min(ch, channels - 1)
                     o = b + (f * channels + c) * bps
                     v: f32 = 0.0
-                    if fmt_ == 3 and bits == 32: v = ((data(file) + o) as *f32)[0]
+                    if fmt_ == 3:
+                        if bits == 32: v = ((data(file) + o) as *f32)[0]
+                        else: v = f32(((data(file) + o) as *f64)[0])
+                    else if bits == 8: v = (f32(file[o]) - 128.0) / 128.0
                     else if bits == 16:
-                        x = int(file[o]) | (int(file[o + 1]) << 8)
+                        x = u16_at(o)
                         if x >= 32768: x -= 65536
                         v = f32(x) / 32768.0
-                    else if bits == 8: v = (f32(file[o]) - 128.0) / 128.0
+                    else if bits == 24:
+                        x = u16_at(o) | (int(file[o + 2]) << 16)
+                        if x >= 0x800000: x -= 0x1000000
+                        v = f32(f64(x) / 8388608.0)
+                    else:
+                        x = u32_at(o)
+                        if x >= 0x80000000: x -= 0x100000000
+                        v = f32(f64(x) / 2147483648.0)
                     src.push(v)
             return __resample(src, rate)
         pos = b + n + (n & 1)
-    panic("WAV file has no data")
+    panic("load_wav: the file has no data chunk")
     Sound([])
 
 __resample = (src: f32[], rate: int) -> Sound:

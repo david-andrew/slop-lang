@@ -1,0 +1,4 @@
+# error: unknown build option 'targte'
+build:
+    targte = wasm
+print(1)

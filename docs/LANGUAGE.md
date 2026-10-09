@@ -277,6 +277,19 @@ print(c())                      # 3
 closure; one that is changed lives in a small shared heap cell. A loop body gets fresh
 variables on every iteration, so closures made in a loop each see their own.)
 
+One thing cannot be shared that way: a local variable that can hold functions (a closure, or
+an array, struct or map with one inside). A closure stored in it would keep it alive forever,
+so changing such a variable after a closure captured it is an error. Globals have no such
+limit; or pass the value to the closure as a `mut` parameter:
+
+```gdscript
+make_button = () -> Button:
+    b = Button("ok", (): pass)
+    b.on_click = (): b.label = "clicked"      # error: b holds a function and is shared
+    b
+on_click = (b: mut Button): b.label = "clicked"  # instead: the button is passed in
+```
+
 ## 6. Control flow
 
 ```gdscript
