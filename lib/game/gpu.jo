@@ -183,7 +183,7 @@ draw[U] = (sh: Shader, m: Mesh, params: U):
     p = params
     when TARGET != "wasm":
         if __soft:
-            __sw_draw_mesh(sh.prog, m.mode, m.vbo, m.stride, m.count, m.ibo, m.index_count, (&p) as *u8, 0, 0, 0)
+            __sw_draw_mesh(sh.prog, m.mode, m.vbo, m.stride, m.count, m.ibo, m.index_count, (&p) as *u8, 0, 0, 0, 0)
             return
     glUseProgram(u32(sh.prog))
     __bind_uniforms_sized(sh, (&p) as *u8)
@@ -197,6 +197,8 @@ draw[U] = (sh: Shader, m: Mesh, params: U):
 __bind_uniforms_sized = (sh: Shader, p: *u8): __bind_uniforms(sh, p)
 
 # draw many copies of a mesh in one call; `instances` holds the per-instance shader input
+# (uploaded on every call: for instances that change rarely, keep them on the GPU with
+# instance_buffer)
 draw_instanced[U, I] = (sh: Shader, m: mut Mesh, instances: I[], params: U):
     if instances.len() == 0: return
     flush()
@@ -204,24 +206,54 @@ draw_instanced[U, I] = (sh: Shader, m: mut Mesh, instances: I[], params: U):
     if m.instance_vbo == 0: m.instance_vbo = gl_create_buffer()
     glBindBuffer(GL_ARRAY_BUFFER, u32(m.instance_vbo))
     glBufferData(GL_ARRAY_BUFFER, instances.len() * size_of(I), data(instances) as *u8, GL_STREAM_DRAW)
+    __draw_inst(sh, m, m.instance_vbo, size_of(I), 0, instances.len(), (&p) as *u8)
+
+# per-instance shader input kept on the GPU: uploaded once (and again by set_instances),
+# drawn any number of times with draw_instanced
+struct InstanceBuffer[I]:
+    vbo: int
+    count: int
+
+instance_buffer[I] = (instances: I[]) -> InstanceBuffer[I]:
+    __gfx_init_gl_only()
+    b = InstanceBuffer[I](vbo = gl_create_buffer())
+    set_instances(b, instances)
+    b
+
+# replace what an instance buffer holds
+set_instances[I] = (b: mut InstanceBuffer[I], instances: I[]):
+    glBindBuffer(GL_ARRAY_BUFFER, u32(b.vbo))
+    glBufferData(GL_ARRAY_BUFFER, instances.len() * size_of(I), data(instances) as *u8, GL_DYNAMIC_DRAW)
+    b.count = instances.len()
+
+# draw instances first .. first + count of a buffer (count -1: to the end)
+draw_instanced[U, I] = (sh: Shader, m: Mesh, b: InstanceBuffer[I], params: U, first: int = 0, count: int = -1):
+    n = count
+    if n < 0: n = b.count - first
+    if n <= 0 or first < 0 or first + n > b.count: return
+    flush()
+    p = params
+    __draw_inst(sh, m, b.vbo, size_of(I), first, n, (&p) as *u8)
+
+__draw_inst = (sh: Shader, m: Mesh, vbo: int, istride: int, first: int, n: int, p: *u8):
     when TARGET != "wasm":
         if __soft:
-            __sw_draw_mesh(sh.prog, m.mode, m.vbo, m.stride, m.count, m.ibo, m.index_count, (&p) as *u8, m.instance_vbo, size_of(I), instances.len())
+            __sw_draw_mesh(sh.prog, m.mode, m.vbo, m.stride, m.count, m.ibo, m.index_count, p, vbo, istride, n, first * istride)
             return
     glUseProgram(u32(sh.prog))
-    __bind_uniforms(sh, (&p) as *u8)
+    __bind_uniforms(sh, p)
     __bind_attribs(sh, m)
-    glBindBuffer(GL_ARRAY_BUFFER, u32(m.instance_vbo))
+    glBindBuffer(GL_ARRAY_BUFFER, u32(vbo))
     base = sh.attribs.len()
     loop i in 0.. and a in sh.iattribs:
         loc = u32(base + i)
         glEnableVertexAttribArray(loc)
-        glVertexAttribPointer(loc, i32(a.comps), GL_FLOAT, 0, i32(sh.istride), a.offset)
+        glVertexAttribPointer(loc, i32(a.comps), GL_FLOAT, 0, i32(sh.istride), a.offset + first * istride)
         glVertexAttribDivisor(loc, 1)
     if m.index_count > 0:
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, u32(m.ibo))
-        glDrawElementsInstanced(u32(m.mode), i32(m.index_count), GL_UNSIGNED_INT, 0, i32(instances.len()))
-    else: glDrawArraysInstanced(u32(m.mode), 0, i32(m.count), i32(instances.len()))
+        glDrawElementsInstanced(u32(m.mode), i32(m.index_count), GL_UNSIGNED_INT, 0, i32(n))
+    else: glDrawArraysInstanced(u32(m.mode), 0, i32(m.count), i32(n))
     loop i in [0..sh.iattribs.len()):
         glVertexAttribDivisor(u32(base + i), 0)
         glDisableVertexAttribArray(u32(base + i))

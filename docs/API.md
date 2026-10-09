@@ -637,7 +637,11 @@ make_shader = (src: ShaderSource) -> Shader
 mesh[V] = (vertices: V[], indices: u32[] = [], mode: int = GL_TRIANGLES) -> Mesh    # upload vertices (any struct type matching the shader's vertex input) and optional indices
 update_mesh[V] = (m: mut Mesh, vertices: V[])
 draw[U] = (sh: Shader, m: Mesh, params: U)    # draw a mesh with a shader; `params` is the uniforms struct the shader functions take
-draw_instanced[U, I] = (sh: Shader, m: mut Mesh, instances: I[], params: U)    # draw many copies of a mesh in one call; `instances` holds the per-instance shader input
+draw_instanced[U, I] = (sh: Shader, m: mut Mesh, instances: I[], params: U)    # draw many copies of a mesh in one call; `instances` holds the per-instance shader input (uploaded on every call: for instances that change rarely, keep them on the GPU with instance_buffer)
+struct InstanceBuffer[I]    # per-instance shader input kept on the GPU: uploaded once (and again by set_instances), drawn any number of times with draw_instanced
+instance_buffer[I] = (instances: I[]) -> InstanceBuffer[I]
+set_instances[I] = (b: mut InstanceBuffer[I], instances: I[])    # replace what an instance buffer holds
+draw_instanced[U, I] = (sh: Shader, m: Mesh, b: InstanceBuffer[I], params: U, first: int = 0, count: int = -1)    # draw instances first .. first + count of a buffer (count -1: to the end)
 sample = (t: Texture, uv: vec2) -> vec4    # texture lookup inside shader functions (maps to GLSL texture()); outside the software renderer, calling it on the CPU returns white
 sample_lod = (t: Texture, uv: vec2, lod: f32) -> vec4    # texture lookup at a given mipmap level (maps to GLSL textureLod; the software renderer has no mipmaps and samples the full-size image)
 texel = (t: Texture, p: ivec2) -> vec4    # the texel at integer coordinates p (0 to size - 1; y = 0 is the first row of the image data): no filtering or wrapping (maps to GLSL texelFetch)
@@ -931,6 +935,10 @@ const WLK_DDM = 26             # wl_data_device_manager (the clipboard)
 const WLK_DDEV = 27
 const WLK_DSOURCE = 28
 const WLK_DOFFER = 29
+const WLK_CONSTRAINTS = 30     # zwp_pointer_constraints_v1 (pointer lock, for mouse look)
+const WLK_LOCKED = 31
+const WLK_RELMGR = 32          # zwp_relative_pointer_manager_v1
+const WLK_RELPTR = 33
 const WL_BAR = 30
 const WL_EDGE = 8              # pixels along the window's border that resize it
 ```
@@ -971,6 +979,8 @@ toggle_fullscreen = ()
 is_fullscreen = () -> bool
 clipboard = () -> str    # the text on the system clipboard ("" if none, or not text). In a web page the browser lets a page read it only as it is pasted: this is the text last pasted (ctrl+V) into the page.
 set_clipboard = (s: str)
+mouse_lock = (on: bool = true) -> bool    # lock the mouse pointer to the window and hide it, for mouse look: the pointer stays put and its motion keeps arriving through mouse_delta(). false where the platform cannot. (A web page gets the lock at the next click into it, as browsers require; Escape releases it there.)
+is_mouse_locked = () -> bool
 window = (title: str = "", width: int = 1280, height: int = 720)    # Open the game window (called automatically when the program defines update/draw).
 ```
 

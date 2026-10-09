@@ -1,5 +1,5 @@
 # shader intrinsics: discard (which also keeps the fragment out of the depth buffer), texel,
-# texture_size, sample_lod, vertex_id and instance_id
+# texture_size, sample_lod, vertex_id and instance_id; instance buffers
 img = image(4, 4, vec4(0, 0, 0, 0))
 loop y in [0..4):
     loop x in [0..4):
@@ -50,6 +50,8 @@ inst_vs = (v: P, i: I, u: Q) -> C:
 inst_fs = (c: C, u: Q) -> vec4: c.color
 inst = make_shader(shader(inst_vs, inst_fs))
 tri = mesh([P(vec3(0, 0, 0)), P(vec3(0.1, 0, 0)), P(vec3(0.05, 0.1, 0))])
+# kept on the GPU, and drawn in part: instances 1 and 2 (instance_id() counts from 0 again)
+kept = instance_buffer([I(0.5), I(0.8), I(1.1), I(9.0)])
 
 draw = ():
     clear(vec4(0.1, 0.1, 0.12, 1))
@@ -58,3 +60,4 @@ draw = ():
     draw(back, back_q, U(mat4(), tex))
     glDisable(GL_DEPTH_TEST)
     draw_instanced(inst, tri, [I(1.0), I(1.2), I(1.4), I(1.6)], Q(mat4()))
+    draw_instanced(inst, tri, kept, Q(translation(vec3(-1.2, 0.05, 0))), 1, 2)

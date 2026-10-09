@@ -175,6 +175,18 @@ is_fullscreen = () -> bool: __fullscreen
 clipboard = () -> str: __platform_clipboard()
 set_clipboard = (s: str): __platform_set_clipboard(s)
 
+# lock the mouse pointer to the window and hide it, for mouse look: the pointer stays put and
+# its motion keeps arriving through mouse_delta(). false where the platform cannot. (A web
+# page gets the lock at the next click into it, as browsers require; Escape releases it there.)
+mouse_lock = (on: bool = true) -> bool:
+    __mouse_lock_want = on
+    if not __win_open: return true
+    __platform_mouse_lock(on)
+
+is_mouse_locked = () -> bool: __mouse_lock_want and __platform_mouse_locked()
+
+__mouse_lock_want = false
+
 # the program's name (shapes for shapes.jo), for a window without a title of its own
 __program_name = () -> str:
     a = args()
@@ -217,6 +229,7 @@ window = (title: str = "", width: int = 1280, height: int = 720):
     __platform_open()
     __win_open = true
     __time0 = time()
+    if __mouse_lock_want: __platform_mouse_lock(true)
 
 when TARGET == "wasm":
     extern __web_canvas_open = (title: *u8, title_len: i32, w: i32, h: i32)
@@ -225,10 +238,14 @@ when TARGET == "wasm":
     extern __web_set_title = (title: *u8, title_len: i32)
     extern __web_fullscreen = (on: i32)
     extern __web_is_fullscreen = () -> i32
+    extern __web_pointer_lock = (on: i32) -> i32
+    extern __web_pointer_locked = () -> i32
     extern __web_clipboard_get = (out: *u8, cap: i32) -> i32
     extern __web_clipboard_set = (p: *u8, n: i32)
 
     __platform_fullscreen = (on: bool): __web_fullscreen(i32(int(on)))
+    __platform_mouse_lock = (on: bool) -> bool: __web_pointer_lock(i32(int(on))) != 0
+    __platform_mouse_locked = () -> bool: __web_pointer_locked() != 0
     __platform_clipboard = () -> str:
         buf = fill(u8(0), 4096)
         n = int(__web_clipboard_get(data(buf), 4096))
@@ -273,6 +290,10 @@ when TARGET == "wasm":
         else if kind == 1: __mouse_event(int(b), true)
         else if kind == 2: __mouse_event(int(b), false)
         else if kind == 3: __mouse_wheel += f64(y)
+        else if kind == 4:
+            # motion while the pointer is locked: only how far it moved
+            __mouse_dx += f64(x)
+            __mouse_dy += f64(y)
 
     @export("__char")
     __web_char = (c: i32): __text_input += chr(int(c))
@@ -558,6 +579,8 @@ else:
     __platform_poll = ():
         if __wayland:
             __wl_poll()
+            # (a lock asked for before the seat had a pointer)
+            if __mouse_lock_want and __wl_locked == 0 and __wl_pointer != 0 and __wl_constraints != 0: __wl_pointer_lock(true)
             return
         if __xproto:
             __xp_poll()
@@ -594,6 +617,8 @@ else:
             __mouse_dy += y - __mouse_y
             __mouse_x = x
             __mouse_y = y
+            # (locked: back to the middle, so the motion never stops at the window's edge)
+            if __x_locked and (int(x) != __win_w / 2 or int(y) != __win_h / 2): __x_recenter()
         else if kind == 22:
             __win_w = int(ev[14])
             __win_h = int(ev[15])
@@ -601,6 +626,11 @@ else:
             if (evp as *int)[7] == __wm_delete: __win_close = true
         else if kind == 10:
             loop mut kd in __key_down: kd = false
+            # (focus elsewhere: the pointer is free there, and locked again on return)
+            if __x_locked:
+                XUngrabPointer(__xdpy, 0)
+                __x_locked = false
+        else if kind == 9 and __mouse_lock_want and not __x_locked: __x_mouse_lock(true)
         else if kind == 30: __x_selection_request(evp)
         else if kind == 31:
             __x_sel_done = true
@@ -694,6 +724,56 @@ else:
         if __wayland: __wl_set_fullscreen(on)
         else if __xproto: __xp_fullscreen(on)
         else if __xdpy != null: __x_fullscreen(on)
+    __platform_mouse_lock = (on: bool) -> bool:
+        if __wayland: return __wl_pointer_lock(on)
+        if __xdpy != null and not __xproto: return __x_mouse_lock(on)
+        false
+    __platform_mouse_locked = () -> bool:
+        if __wayland: return __wl_locked != 0
+        __x_locked
+
+    # ---- mouse lock (libX11): the pointer grabbed, hidden and put back in the middle ----
+    @lib("libX11.so.6")
+    extern XGrabPointer = (d: *u8, w: int, owner: i32, mask: u32, pmode: i32, kmode: i32, confine: int, cursor: int, time: int) -> i32
+    @lib("libX11.so.6")
+    extern XUngrabPointer = (d: *u8, time: int) -> i32
+    @lib("libX11.so.6")
+    extern XWarpPointer = (d: *u8, src: int, dst: int, sx: i32, sy: i32, sw: u32, sh: u32, dx: i32, dy: i32) -> i32
+    @lib("libX11.so.6")
+    extern XCreateBitmapFromData = (d: *u8, w: int, bits: *u8, width: u32, height: u32) -> int
+    @lib("libX11.so.6")
+    extern XCreatePixmapCursor = (d: *u8, src: int, mask: int, fg: *u8, bg: *u8, x: u32, y: u32) -> int
+    @lib("libX11.so.6")
+    extern XDefineCursor = (d: *u8, w: int, c: int) -> i32
+    @lib("libX11.so.6")
+    extern XUndefineCursor = (d: *u8, w: int) -> i32
+
+    __x_locked = false
+    __x_blank = 0
+
+    __x_mouse_lock = (on: bool) -> bool:
+        if not on:
+            if __x_locked: XUngrabPointer(__xdpy, 0)
+            XUndefineCursor(__xdpy, __xwin)
+            XFlush(__xdpy)
+            __x_locked = false
+            return true
+        if __x_blank == 0:
+            bits = fill(u8(0), 8)
+            color = fill(u8(0), 16)
+            bm = XCreateBitmapFromData(__xdpy, __xwin, data(bits), 1, 1)
+            __x_blank = XCreatePixmapCursor(__xdpy, bm, bm, data(color), data(color), 0, 0)
+        XDefineCursor(__xdpy, __xwin, __x_blank)
+        # (pointer motion and buttons, both async, confined to the window)
+        __x_locked = XGrabPointer(__xdpy, __xwin, 1, 0x4 | 0x8 | 0x40, 1, 1, __xwin, __x_blank, 0) == 0
+        if __x_locked: __x_recenter()
+        XFlush(__xdpy)
+        __x_locked
+
+    __x_recenter = ():
+        XWarpPointer(__xdpy, 0, __xwin, 0, 0, 0, 0, i32(__win_w / 2), i32(__win_h / 2))
+        __mouse_x = f64(__win_w / 2)
+        __mouse_y = f64(__win_h / 2)
     __platform_clipboard = () -> str:
         if __wayland: return __wl_get_clipboard()
         if __xdpy != null: return __x_get_clipboard()

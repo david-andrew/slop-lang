@@ -159,6 +159,21 @@ wp_fractional_scale_manager_v1 1
 wp_fractional_scale_v1 1
 > destroy
 < preferred_scale u
+zwp_pointer_constraints_v1 1
+> destroy
+> lock_pointer n:zwp_locked_pointer_v1 o:wl_surface o:wl_pointer ?o u
+zwp_locked_pointer_v1 1
+> destroy
+> set_cursor_position_hint f f
+> set_region ?o
+< locked
+< unlocked
+zwp_relative_pointer_manager_v1 1
+> destroy
+> get_relative_pointer n:zwp_relative_pointer_v1 o:wl_pointer
+zwp_relative_pointer_v1 1
+> destroy
+< relative_motion u u f f f f
 "
 
     # a C string that lives as long as the program
@@ -232,7 +247,8 @@ wp_fractional_scale_v1 1
             "zxdg_decoration_manager_v1", "zxdg_toplevel_decoration_v1", "wl_callback", "wp_cursor_shape_manager_v1",
             "wp_cursor_shape_device_v1", "zwp_linux_dmabuf_v1", "zwp_linux_buffer_params_v1", "wp_viewporter", "wp_viewport",
             "wp_fractional_scale_manager_v1", "wp_fractional_scale_v1", "wl_data_device_manager", "wl_data_device",
-            "wl_data_source", "wl_data_offer"]
+            "wl_data_source", "wl_data_offer", "zwp_pointer_constraints_v1", "zwp_locked_pointer_v1",
+            "zwp_relative_pointer_manager_v1", "zwp_relative_pointer_v1"]
         __lw_ifaces = []
         loop n in kinds: __lw_ifaces.push(by_name.get(n) ?? null)
         true

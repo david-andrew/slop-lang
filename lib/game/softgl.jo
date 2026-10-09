@@ -578,7 +578,7 @@ __sw_raster = (sv: *f32, stride: int, idx: *i32, ntri: int, shade: (int, int, in
 # draw a mesh with a Sloppy shader (called by gpu.jo's draw / draw_instanced in software mode)
 __sw_warned_lines = false
 
-__sw_draw_mesh = (prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo: int, nidx: int, uni: *u8, ibuf: int, istride: int, ninst: int):
+__sw_draw_mesh = (prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo: int, nidx: int, uni: *u8, ibuf: int, istride: int, ninst: int, ioff: int):
     if mode != GL_TRIANGLES and mode != GL_TRIANGLE_STRIP and mode != GL_TRIANGLE_FAN:
         if not __sw_warned_lines:
             __sw_warned_lines = true
@@ -612,8 +612,8 @@ __sw_draw_mesh = (prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo:
     reps = max(ninst, 1)
     instb: *u8 = null
     if ninst > 0:
-        if __s_buffers[ibuf].len() < ninst * istride: return
-        instb = data(__s_buffers[ibuf])
+        if __s_buffers[ibuf].len() < ioff + ninst * istride: return
+        instb = data(__s_buffers[ibuf]) + ioff
     c, d = __sw_target()
     tw, th = __sw_target_size()
     cp: *f32 = null
