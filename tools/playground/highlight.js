@@ -25,6 +25,7 @@ function sloppyHighlight(text, errLine) {
     else if (m[6]) {
       const after = text.slice(TOKEN.lastIndex);
       if (KW.has(t)) cls = "k";
+      else if (t === "from" && firstIdent && /^\s+\S+\s+import\b/.test(after)) cls = "k";     // from m import x
       else if (CONSTS.has(t)) cls = "v";
       else if (TYPES.has(t)) cls = "t";
       else if (firstIdent && defs.has(line)) cls = "d";
