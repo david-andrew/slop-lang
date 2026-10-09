@@ -23,6 +23,17 @@ const __TSTACK_SHIFT = 23              # 8 MB per worker stack
 __tstack_base: *u8 = null
 __mt_active = false                   # a parallel job is running: refcounts are atomic
 
+# Loops the compiler vectorized run 256-bit instructions where the processor has AVX2, else
+# 128-bit ones (every x86-64 has SSE2): the results are the same. JOT_NO_AVX=1 forces the
+# second kind (to compare, or to test them).
+__cpu_avx2 = __cpu_detect()
+__cpu_detect = () -> bool:
+    r = false
+    when TARGET != "wasm":
+        r = __cpu_features() & 1 != 0
+        if r and env("JOT_NO_AVX") != none: r = false
+    r
+
 __tid = () -> int:
     if __tstack_base == null: return 0
     sp = __stack_ptr()
@@ -75,7 +86,13 @@ __size_class = (n: int) -> int:
     int((f64(n - 1) as u64) >> 52) - 1027
 
 # Allocate `size` zeroed bytes (16-byte aligned).
-__alloc = (size: int) -> *u8:
+__alloc = (size: int) -> *u8: __alloc_z(size, true)
+
+# Allocate `size` bytes (16-byte aligned) the caller writes before reading: what a block held
+# before it was freed is still there.
+__alloc_raw = (size: int) -> *u8: __alloc_z(size, false)
+
+__alloc_z = (size: int, zero: bool) -> *u8:
     t = __ts()
     t[2] += 1
     n = size + 16
@@ -83,7 +100,7 @@ __alloc = (size: int) -> *u8:
         total = (n + 65535) & ~65535
         h = __big_take(t, total)
         if h != null:
-            mem_set((h as *u8) + 16, 0, h[0] - 16)
+            if zero: mem_set((h as *u8) + 16, 0, size)
             return (h as *u8) + 16
         h = __os_pages(total) as *int
         h[0] = total
@@ -95,7 +112,7 @@ __alloc = (size: int) -> *u8:
     head = lists[c]
     if head != null:
         lists[c] = (head as **u8)[0]
-        mem_set(head, 0, csize)
+        if zero: mem_set(head + 16, 0, size)
         h = head as *int
         h[0] = c
         return head + 16
@@ -166,7 +183,7 @@ __grow_alloc = (p: *u8, used: int, size: int) -> *u8:
             (q as *int)[0] = total
             return (q as *u8) + 16
     else if n <= 32 << h[0]: return p
-    q = __alloc(size)
+    q = __alloc_raw(size)
     mem_copy(q, p, used)
     __free(p)
     q
@@ -266,14 +283,26 @@ __print_str = (s: str):
     __write_fd(1, data("\n"), 1)
 
 # ---------------- arrays ----------------
+# (an array's elements past its length are not zeroed: whatever makes the array longer writes
+# them first)
 __arr_new_raw = (cap: int, es: int) -> *u8:
-    p = __alloc(24 + cap * es)
+    p = __alloc_raw(24 + cap * es)
     h = p as *int
     h[0] = 1
+    h[1] = 0
     h[2] = cap
     p
 
+# n zeroed elements
 __arr_repeat = (n: int, es: int) -> *u8:
+    if n <= 0: return null
+    p = __arr_new_raw(n, es)
+    (p as *int)[1] = n
+    mem_set(p + 24, 0, n * es)
+    p
+
+# n elements the caller writes
+__arr_filled = (n: int, es: int) -> *u8:
     if n <= 0: return null
     p = __arr_new_raw(n, es)
     (p as *int)[1] = n

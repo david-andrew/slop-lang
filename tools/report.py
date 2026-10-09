@@ -211,6 +211,55 @@ for k in lc:
     if k in lj: say(f"| {k.replace('_', ' ')} | {lc[k]:.2f} ns | {lj[k]:.2f} ns | {fmt_ratio(lj[k] / lc[k])} |")
 say()
 
+say("Loops the compiler vectorizes (`bench/simd`, arrays that fit in the cache): nanoseconds per element. "
+    "Jot uses AVX2 where the processor has it and SSE2 otherwise (`JOT_NO_AVX=1` forces SSE2), from one "
+    "executable; gcc -O2 vectorizes with SSE2, the x86-64 baseline:")
+say()
+run(["gcc", "-O2", "-o", f"{BUILD}/simd_c", "bench/simd/simd.c"])
+run([JOT, "build", "bench/simd/simd.jot", "-o", f"{BUILD}/simd_j"])
+def simd_times(cmd, env=None):
+    best = {}
+    vals = {}
+    for _ in range(3):
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        for line in r.stdout.splitlines():
+            k, v, x = line.split()
+            best[k] = min(best.get(k, 1e9), float(v))
+            vals[k] = x
+    return best, vals
+sc, scv = simd_times([f"{BUILD}/simd_c"])
+sa, sav = simd_times([f"{BUILD}/simd_j"])
+ss, ssv = simd_times([f"{BUILD}/simd_j"], dict(os.environ, JOT_NO_AVX="1"))
+avx = " avx2" in open("/proc/cpuinfo").read()
+say(f"| loop | C -O2 | Jot (AVX2{'' if avx else ': not on this machine, so SSE2'}) | Jot (SSE2) | same results |")
+say("|---|---|---|---|---|")
+for k in sc:
+    if k in sa:
+        same = sav[k] == ssv[k]
+        say(f"| {k.replace('_', ' ')} | {sc[k]:.3f} ns | {sa[k]:.3f} ns | {ss[k]:.3f} ns | {'yes' if same else 'NO'} |")
+say()
+
+say("Game logic (`bench/game/swarm`: 3000 agents flocking, a spatial hash, shooting, events, "
+    "respawning, sorting, strings; no window), milliseconds per frame. The C version (`swarm.c`) is "
+    "what a C programmer would write (buffers reused, its own random numbers):")
+say()
+run(["gcc", "-O2", "-o", f"{BUILD}/swarm_c", "bench/game/swarm.c", "-lm"])
+run([JOT, "build", "bench/game/swarm.jot", "-o", f"{BUILD}/swarm_jr", "--release"])
+run([JOT, "build", "bench/game/swarm.jot", "-o", f"{BUILD}/swarm_jd"])
+def frame_ms(exe):
+    best = 1e9
+    for _ in range(3):
+        r = run([exe])
+        best = min(best, float(r.stderr.split()[0]))
+    return best
+fc = frame_ms(f"{BUILD}/swarm_c")
+fr = frame_ms(f"{BUILD}/swarm_jr")
+fd = frame_ms(f"{BUILD}/swarm_jd")
+say("| C -O2 | Jot release | Jot debug | release / C |")
+say("|---|---|---|---|")
+say(f"| {fc:.2f} ms | {fr:.2f} ms | {fd:.2f} ms | {fmt_ratio(fr / fc)} |")
+say()
+
 # ---------------- parallelism ----------------
 say("## 6. CPU parallelism")
 say()

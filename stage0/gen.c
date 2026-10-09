@@ -785,6 +785,10 @@ static Val gen_intrinsic(Node *e) {
   case IN_STACK_PTR:
     E("mov rax, rsp");
     return V(false);
+  case IN_CPU_FEATURES:
+    // (the bootstrap compiler's programs never use what this reports)
+    E("xor eax, eax");
+    return V(false);
   case IN_MEMCPY:
     gen_expr(a[0]); push_rax(); gen_expr(a[1]); push_rax(); gen_expr(a[2]);
     E("mov rcx, rax"); pop_reg("rsi"); pop_reg("rdi"); E("rep movsb");

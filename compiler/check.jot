@@ -1730,9 +1730,10 @@ build_option = (key: str) -> int:
     0
 
 # ---------------- program ----------------
+want_cpu_flag = false           # (release builds for x86-64: the vectorizer may use __cpu_avx2)
 runtime_names = ["__alloc", "__free", "__panic", "__panic_bounds", "__panic_unwrap", "__free_obj", "__arr_clone", "__arr_push_slot",
     "__arr_reserve", "__arr_insert_slot", "__arr_remove_slot", "__arr_slice", "__arr_concat", "__str_concat", "__str_eq",
-    "__str_cmp", "__str_slice", "__str_append", "__buf_finish", "__buf_append_str", "__arr_resize", "__arr_repeat",
+    "__str_cmp", "__str_slice", "__str_append", "__buf_finish", "__buf_append_str", "__arr_resize", "__arr_repeat", "__arr_filled",
     "__print_str", "__str_from_bytes", "__assert_fail", "__hash_bytes", "__str_hash", "__div_zero", "__rc_inc", "__rc_dec",
     "__arr_extend", "__rc_dec_test"]
 optional_runtime = ["__mat4_mul", "__mat4_mul_vec4", "__fmt_i32", "__fmt_f32", "__ffi_resolve", "__panic_narrow"]
@@ -1897,6 +1898,10 @@ check_program = (main_path: str):
     loop nm in runtime_names: runtime_fn(nm)
     loop nm in optional_runtime:
         if prelude.get(intern(nm)) != none: runtime_fn(nm)
+    # (vectorized code reads __cpu_avx2: its initializer must be checked with the rest)
+    if want_cpu_flag:
+        if let cs = prelude.get(intern("__cpu_avx2")):
+            if syms[cs].kind == .global: ensure_global(int(syms[cs].ref), 0)
     # check everything reachable; library exports join once their module is in use
     k = 0
     exp_added: bool[] = fill(false, export_decls.len())

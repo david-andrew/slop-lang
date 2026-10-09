@@ -1,0 +1,223 @@
+# A CPU stress test shaped like game logic, with no window: two teams of agents steer as a
+# flock, pick targets, shoot and respawn, at a fixed time step. It leans on what game code
+# leans on: structs of vec2s, a spatial hash in a map, arrays that grow and shrink every
+# frame, optionals, unions of events, closures, string formatting, sorting.
+# Prints a checksum (the same for debug and release builds) and the time per frame.
+
+enum Team: red, blue
+
+struct Agent:
+    id: int
+    name: str
+    pos: vec2
+    vel: vec2
+    team: Team
+    hp: f32 = 100.0
+    cooldown: f32 = 0.0
+    target: int? = none
+    kills = 0
+    alive = true
+
+struct Bullet:
+    pos: vec2
+    vel: vec2
+    owner: int
+    team: Team
+    life: f32
+
+struct Spark:
+    pos: vec2
+    vel: vec2
+    life: f32
+
+struct Hit:
+    who: int
+    by: int
+    dmg: f32
+
+struct Kill:
+    who: int
+    by: int
+
+type Event = Hit | Kill
+
+const N = 3000
+const FRAMES = 300
+const DT = 1.0 / 60.0
+const WORLD = 2400.0
+const CELL = 64.0
+
+agents: Agent[]
+bullets: Bullet[]
+sparks: Spark[]
+events: Event[]
+grid: {int: int[]}
+stats: {str: int}
+log: str[]
+next_id = 0
+checksum = 0.0
+
+cell_key = (p: vec2) -> int:
+    cx = int(clamp(f64(p.x), 0.0, WORLD - 1.0) / CELL)
+    cy = int(clamp(f64(p.y), 0.0, WORLD - 1.0) / CELL)
+    cy * 1000 + cx
+
+spawn = (team: Team) -> Agent:
+    next_id += 1
+    side = if team == .red: WORLD / 2.0 - 260.0 else: WORLD / 2.0 + 260.0
+    p = vec2(f32(side + random(-150.0, 150.0)), f32(random(100.0, WORLD - 100.0)))
+    Agent(next_id, "{team}-{next_id}", p, vec2(0, 0), team, cooldown = f32(random(0.0, 1.0)))
+
+count = (key: str):
+    stats[key] = stats.get(key, 0) + 1
+
+build_grid = ():
+    grid.clear()
+    loop i in 0.. and a in agents:
+        if not a.alive: continue
+        k = cell_key(a.pos)
+        if let cell = grid.get(k):
+            c = cell
+            c.push(i)
+            grid[k] = c
+        else: grid[k] = [i]
+
+# the agents within r of p, from the spatial hash
+neighbors = (p: vec2, r: f32) -> int[]:
+    out: int[]
+    cx = int(clamp(f64(p.x), 0.0, WORLD - 1.0) / CELL)
+    cy = int(clamp(f64(p.y), 0.0, WORLD - 1.0) / CELL)
+    loop dy in -1..1:
+        loop dx in -1..1:
+            if let cell = grid.get((cy + dy) * 1000 + cx + dx):
+                loop j in cell:
+                    if length_sq(agents[j].pos - p) < r * r: out.push(j)
+    out
+
+steer = ():
+    loop i in [0..agents.len()):
+        a = agents[i]
+        if not a.alive: continue
+        sep = vec2(0, 0)
+        center = vec2(0, 0)
+        heading = vec2(0, 0)
+        friends = 0
+        best: int? = none
+        best_d = 1.0e9
+        loop j in neighbors(a.pos, 120.0):
+            if j == i: continue
+            b = agents[j]
+            d = b.pos - a.pos
+            dist = length(d)
+            if b.team == a.team:
+                friends += 1
+                center += b.pos
+                heading += b.vel
+                if dist < 24.0 and dist > 0.0: sep -= d / (dist * dist)
+            else if f64(dist) < best_d:
+                best_d = f64(dist)
+                best = j
+        force = sep * 900.0
+        if friends > 0:
+            force += (center / f32(friends) - a.pos) * 0.6
+            force += (heading / f32(friends) - a.vel) * 0.4
+        # with no enemy near, march toward the other side
+        goal = if a.team == .red: vec2(f32(WORLD), a.pos.y) else: vec2(0, a.pos.y)
+        if let t = best: goal = agents[t].pos
+        to_goal = goal - a.pos
+        gl = length(to_goal)
+        if gl > 0.0: force += to_goal / gl * 60.0
+        v = a.vel + force * f32(DT)
+        sp = length(v)
+        if sp > 140.0: v = v / sp * 140.0
+        agents[i].vel = v
+        agents[i].target = best
+
+move_and_shoot = ():
+    loop mut a in agents:
+        if not a.alive: continue
+        a.pos += a.vel * f32(DT)
+        a.pos.x = clamp(a.pos.x, 0.0, f32(WORLD))
+        a.pos.y = clamp(a.pos.y, 0.0, f32(WORLD))
+        a.cooldown -= f32(DT)
+        if a.cooldown <= 0.0:
+            if let t = a.target:
+                aim = agents[t].pos - a.pos
+                l = length(aim)
+                if l > 0.0 and l < 110.0:
+                    bullets.push(Bullet(a.pos, aim / l * 420.0, a.id, a.team, 0.5))
+                    a.cooldown = 0.6
+                    count("shots")
+
+fly = ():
+    loop mut b in bullets:
+        b.pos += b.vel * f32(DT)
+        b.life -= f32(DT)
+        if b.life <= 0.0: continue
+        loop j in neighbors(b.pos, 10.0):
+            if agents[j].team != b.team and agents[j].alive:
+                events.push(Hit(j, b.owner, 25.0))
+                b.life = 0.0
+                break
+    bullets = [loop b in bullets: if b.life > 0.0: b]
+
+handle_events = ():
+    # (handling an event can make more: a hit that kills makes a Kill)
+    loop events.len() > 0:
+        batch = events
+        events.clear()
+        loop e in batch:
+            match e:
+                Hit:
+                    a = agents[e.who]
+                    if a.alive:
+                        agents[e.who].hp -= e.dmg
+                        count("hits")
+                        loop k in [0..4):
+                            ang = random(0.0, 2.0 * PI)
+                            sparks.push(Spark(a.pos, vec2(f32(cos(ang)), f32(sin(ang))) * 90.0, 0.3))
+                        if agents[e.who].hp <= 0.0:
+                            agents[e.who].alive = false
+                            events.push(Kill(e.who, e.by))
+                Kill:
+                    count("kills")
+                    loop mut a in agents:
+                        if a.id == e.by: a.kills += 1
+                    log.push("{agents[e.who].name} was taken out")
+    # the fallen come back on their own side
+    loop i in [0..agents.len()):
+        if not agents[i].alive:
+            agents[i] = spawn(agents[i].team)
+            count("respawns")
+
+update_sparks = ():
+    loop mut s in sparks:
+        s.pos += s.vel * f32(DT)
+        s.vel *= 0.9
+        s.life -= f32(DT)
+    sparks = sparks.filter((s): s.life > 0.0)
+
+scoreboard = () -> str:
+    order = [loop i in [0..agents.len()): i]
+    order.sort_by((i): -agents[i].kills * 100000 + agents[i].id)
+    lines = [loop k in [0..5): "{k + 1}. {agents[order[k]].name} {agents[order[k]].kills}"]
+    lines.join(" | ")
+
+main = ():
+    seed_random(7)
+    loop i in [0..N):
+        agents.push(spawn(if i % 2 == 0: Team.red else: Team.blue))
+    systems = [steer, move_and_shoot, fly, handle_events, update_sparks]
+    board = ""
+    t0 = time()
+    loop frame in [0..FRAMES):
+        build_grid()
+        loop s in systems: s()
+        if frame % 30 == 0: board = scoreboard()
+        if log.len() > 200: log = log[log.len() - 100..]
+    t = time() - t0
+    loop a in agents: checksum += f64(a.pos.x) * 0.001 + f64(a.pos.y) * 0.002 + f64(a.kills)
+    print("checksum {checksum:.3}")
+    print("shots {stats.get("shots", 0)} hits {stats.get("hits", 0)} kills {stats.get("kills", 0)} bullets {bullets.len()} sparks {sparks.len()}")
+    print("top: {board}")
+    eprint("{t * 1000.0 / f64(FRAMES):.3} ms per frame")

@@ -501,8 +501,20 @@ message and location.
 
 **Release builds.** `opt = release` (or `jot build --release`) inlines refcount, uniqueness
 and bounds-check fast paths and runs the optimizer (constant folding, copy propagation,
-common subexpressions, redundant load and bounds-check elimination). Debug builds compile
-faster; both have identical behavior, including bounds checks.
+common subexpressions, redundant load and bounds-check elimination, inlining, keeping small
+vectors in registers). Debug builds compile faster; both have identical behavior, including
+bounds checks.
+
+In release builds, `b = xs[i]` where `b` is only read (and nothing changes `xs` while `b` is
+used) is the element itself, not a copy: reading a few fields of a big struct in an array
+costs only those reads. A loop whose bounds checks index by the loop variable checks the
+whole range once, up front (and runs as before when that test fails, so a failing check
+still stops it where it always did). A loop that does the same arithmetic to element `i` of
+arrays of numbers (`ys[i] = ys[i] + a * xs[i]`, a dotted expression, `loop mut x in xs`
+with `+ - * /`) runs several elements at a time: 256-bit AVX2 instructions where the processor
+has them, else SSE2, chosen when the program starts (`JOT_NO_AVX=1` forces SSE2). Every
+element gets the same operations in the same order as one at a time, so the results are
+identical on every machine (sums over a loop keep their order and are not vectorized).
 
 Array indexing is always checked, except where the check cannot fail: in
 `loop i in [0..xs.len())` (or `[0..n)` with `n = xs.len()`, or `xs = fill(v, n)` and

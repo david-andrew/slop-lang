@@ -34,6 +34,7 @@ static struct { const char *name; int id; bool arr_domain; } intrinsics[] = {
   {"__hash_value", IN_HASH, false}, {"__set_len", IN_SETLEN, false},
   {"__atomic_add", IN_ATOMIC_ADD, false}, {"__atomic_cas", IN_ATOMIC_CAS, false},
   {"__stack_ptr", IN_STACK_PTR, false}, {"fill", IN_FILL, false},
+  {"__cpu_features", IN_CPU_FEATURES, false},
 };
 
 void register_intrinsics(Scope *s) {
@@ -1094,6 +1095,10 @@ static Type *check_intrinsic(FnCtx *c, Node **pn, int id, Node **args, int nargs
   case IN_STACK_PTR:
     nargs_check(n, nargs, 0, 0, "__stack_ptr");
     r = t_rawptr;
+    break;
+  case IN_CPU_FEATURES:
+    nargs_check(n, nargs, 0, 0, "__cpu_features");
+    r = t_int;
     break;
   case IN_MEMCPY: case IN_MEMSET: {
     nargs_check(n, nargs, 3, 3, id == IN_MEMCPY ? "mem_copy" : "mem_set");

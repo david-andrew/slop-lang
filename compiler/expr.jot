@@ -12,7 +12,7 @@ enum IN:
     none_, len, push, pop, insert, remove, clear, reserve, slice, syscall, memcpy, memset, sizeof,
     arrdata, panic, assert, print, embed, from_bytes, to_bytes, argv, setlen, truncate, resize,
     hash, alignof, unreachable, arrcap, fmt_struct, sqrt, vec_ctor, cfn_cast, wasm_call, callc, floor_,
-    ceil_, fabs, fmin, fmax, setjmp, longjmp, jump, shader, extend, clone_thread, atomic_add, atomic_cas, stack_ptr, fill, fmt_elem, gpu_kernel
+    ceil_, fabs, fmin, fmax, setjmp, longjmp, jump, shader, extend, clone_thread, atomic_add, atomic_cas, stack_ptr, fill, fmt_elem, gpu_kernel, cpu_features
 
 enum CV: none_, int_, int2float, float2int, float_, opt, ptr, bits, fn2clos, union_
 
@@ -36,6 +36,7 @@ intrinsics = [
     Intrinsic("shader", .shader, false), Intrinsic("__setjmp", .setjmp, false), Intrinsic("__longjmp", .longjmp, false), Intrinsic("__jump", .jump, false),
     Intrinsic("__clone_thread", .clone_thread, false), Intrinsic("__atomic_add", .atomic_add, false),
     Intrinsic("__atomic_cas", .atomic_cas, false), Intrinsic("__stack_ptr", .stack_ptr, false),
+    Intrinsic("__cpu_features", .cpu_features, false),
 ]
 
 last_checked = 0
@@ -1480,6 +1481,10 @@ check_intrinsic = (n: int, id: IN, args: int[], expected: int) -> int:
         nodes[arr].b = i32(args[1])
         nodes[n] = nodes[arr]
         return check_expr(n, expected)
+    else if id == .cpu_features:
+        # bit 0: AVX2 can be used (the processor has it and the system saves its registers)
+        nargs_check(n, nargs, 0, 0, "__cpu_features")
+        r = T_INT
     else if id == .stack_ptr:
         nargs_check(n, nargs, 0, 0, "__stack_ptr")
         r = T_RAWPTR
@@ -3094,7 +3099,6 @@ bc_loop_nd = (tmpl: int, arrs: str[], kinds: int[], pre: str, epre: str, pos: in
 # element variables the template uses. The last statement is the result.
 bc_loop1 = (tmpl: int, arrs: str[], pre: str, epre: str, pos: int) -> int[]:
     stmts: int[]
-    body: int[]
     out = "{pre}o"
     lens: int[]
     loop a in arrs:
@@ -3105,21 +3109,59 @@ bc_loop1 = (tmpl: int, arrs: str[], pre: str, epre: str, pos: int) -> int[]:
     loop k in 0.. and a in arrs:
         if len(a) == 0: continue
         stmts.push(bc_let("{pre}s{k}", bc_step(bc_call("len", [bc_ident(a, pos)], pos), pos), pos))
+    stmts.push(bc_let(out, mk(.array, pos), pos))
+    stmts.push(bc_stmt(bc_method(bc_ident(out, pos), "reserve", [bc_ident("{pre}n", pos)], pos), pos))
+    # (room for every element is reserved, in an array of the loop's own: it has all its
+    # elements from the start, zeros until written, and element i is written in step i)
+    stmts.push(bc_stmt(bc_call("__set_len", [bc_ident(out, pos), bc_ident("{pre}n", pos)], pos), pos))
+    # with every operand as long as the result (the usual case) element i of each is at i: a
+    # loop the compiler can run several elements at a time; else operands are stretched
+    all_one = 0
+    loop k in 0.. and a in arrs:
+        if len(a) == 0: continue
+        c = bc_bin(.eq, bc_ident("{pre}s{k}", pos), bc_int(1, pos), pos)
+        if all_one == 0: all_one = c
+        else:
+            x = mk(.and_, pos)
+            nodes[x].a = i32(all_one)
+            nodes[x].b = i32(c)
+            all_one = x
+    fast = bc_loop("{pre}i", bc_ident("{pre}n", pos), bc_body1(clone(tmpl), arrs, pre, epre, out, false, pos), pos)
+    if all_one == 0:
+        stmts.push(fast)
+    else:
+        slow = bc_loop("{pre}i", bc_ident("{pre}n", pos), bc_body1(tmpl, arrs, pre, epre, out, true, pos), pos)
+        ifn = mk(.if_, pos)
+        nodes[ifn].a = i32(all_one)
+        nodes[ifn].b = i32(bc_block([fast], pos))
+        nodes[ifn].c = i32(bc_block([slow], pos))
+        stmts.push(ifn)
+    stmts.push(bc_stmt(bc_ident(out, pos), pos))
+    stmts
+
+# the body of the loop over 1-D operands: their elements (at i, or at i * step when stretched),
+# then the result's element i
+bc_body1 = (tmpl: int, arrs: str[], pre: str, epre: str, out: str, stretched: bool, pos: int) -> int[]:
+    body: int[]
+    loop k in 0.. and a in arrs:
+        if len(a) == 0: continue
         ix = mk(.index, pos)
         nodes[ix].a = i32(bc_ident(a, pos))
-        nodes[ix].b = i32(bc_bin(.star, bc_ident("{pre}i", pos), bc_ident("{pre}s{k}", pos), pos))
+        if stretched: nodes[ix].b = i32(bc_bin(.star, bc_ident("{pre}i", pos), bc_ident("{pre}s{k}", pos), pos))
+        else: nodes[ix].b = i32(bc_ident("{pre}i", pos))
         # (i < n, and an operand's step is 1 only when its length is n: in bounds)
         add_flag(ix, NF_INBOUNDS)
         body.push(bc_let("{epre}e{k}", ix, pos))
-    stmts.push(bc_let(out, mk(.array, pos), pos))
-    stmts.push(bc_stmt(bc_method(bc_ident(out, pos), "reserve", [bc_ident("{pre}n", pos)], pos), pos))
-    # (room for every element is reserved, in an array of the loop's own)
-    pu = bc_method(bc_ident(out, pos), "push", [tmpl], pos)
-    add_flag(pu, NF_INBOUNDS)
-    body.push(bc_stmt(pu, pos))
-    stmts.push(bc_loop("{pre}i", bc_ident("{pre}n", pos), body, pos))
-    stmts.push(bc_stmt(bc_ident(out, pos), pos))
-    stmts
+    ixo = mk(.index, pos)
+    nodes[ixo].a = i32(bc_ident(out, pos))
+    nodes[ixo].b = i32(bc_ident("{pre}i", pos))
+    add_flag(ixo, NF_INBOUNDS)
+    asg = mk(.assign, pos)
+    nodes[asg].a = i32(ixo)
+    nodes[asg].b = i32(tmpl)
+    nodes[asg].op = i32(int(Tok.assign))
+    body.push(asg)
+    body
 
 is_gpu_array = (t0: int) -> bool:
     t = prune(t0)

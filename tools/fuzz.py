@@ -88,7 +88,7 @@ class Gen:
         if op == "if": return f"(if {self.cond(d + 1)}: {a} else: {b})"
         if op == "min": return f"min({a}, {b})"
         if op == "cmpsel": return f"(int({a} < {b}) + int({a} == {b}) * 2)"
-        if op == "float" and self.floats: return f"fi({r.choice(self.floats)} * 3.0) % 100000"
+        if op == "float" and self.floats: return f"(fi({r.choice(self.floats)} * 3.0) % 100000)"
         if op == "match" and d <= 1 and self.ints:
             arms = []
             vals = r.sample(range(-3, 12), r.randint(1, 5))

@@ -48,6 +48,15 @@ o_operands = (ins: Ins) -> int:
             o_buf.push(bb)
             if int(ins.c) & M_INDEX != 0: o_buf.push(d)
             return -1
+        vst:
+            o_buf.push(a)
+            o_buf.push(bb)
+            o_buf.push(d)
+            return -1
+        vsplat:
+            o_buf.push(a)
+            return d
+        vzu: return -1
         copy:
             o_buf.push(a)
             o_buf.push(bb)
@@ -103,6 +112,12 @@ o_rewrite = (ins: mut Ins):
             ins.a = o_repl[a]
             ins.b = o_repl[bb]
             if int(ins.c) & M_INDEX != 0: ins.dst = o_repl[int(ins.dst)]
+        vst:
+            ins.a = o_repl[a]
+            ins.b = o_repl[bb]
+            ins.dst = o_repl[int(ins.dst)]
+        vsplat: ins.a = o_repl[a]
+        vzu: pass
         mov, neg, not_, fneg, fsqrt, fabs, ffloor, fceil, ftrunc, sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits:
             ins.a = o_repl[a]
         _:
@@ -117,6 +132,7 @@ o_pure = (op: Op) -> bool:
         fadd, fsub, fmul, fdiv, fneg, fsqrt, fmin, fmax, ffloor, fceil, fabs, ftrunc: true
         feq, fne, flt, fle, fgt, fge: true
         sext8, sext16, sext32, zext8, zext16, zext32, i2f, u2f, f2i, f2f, bits2f, f2bits: true
+        vld, vbin, vsplat: true
         _: false
 
 o_resize = (n: int):
@@ -268,10 +284,48 @@ o_tmp = () -> int:
 
 # can uses of d be replaced by s? both must be single-definition values defined before use
 o_can_alias = (d: int, s: int) -> bool:
-    if o_ndef[d] != 1 or o_ndef[s] != 1: return false
+    if o_ndef[d] != 1: return false
     if o_first[d] < o_defpos[d]: return false
+    if o_ndef[s] != 1: return vtype(d) == vtype(s) and o_holds(d, s)
     if s >= ir.nparams and o_first[s] < o_defpos[s]: return false
     vtype(d) == vtype(s)
+
+# d = s (s defined more than once, like a loop counter): may d's uses read s instead? Yes if s
+# is not redefined from there to d's last use, and the copy dominates the uses (the construct
+# open at the copy stays open: no path reaches a use around it, as through a loop's back edge).
+# A use in a loop entered after the copy sees s again on the next iteration: s must not change
+# anywhere in that loop either.
+o_lastuse: i32[]
+o_depth: i32[]          # open constructs at each position (an else counts as inside its if)
+o_holds = (d: int, s: int) -> bool:
+    q = int(o_defpos[d])
+    e = int(o_lastuse[d])
+    if q < 0 or e < q: return false
+    dq = o_depth[q]
+    # (constructs opened after the copy, and how deep the outermost loop among them is)
+    open: Op[]
+    loop_at = -1        # open.len() when the outermost such loop that is open at the last use opened
+    p = q + 1
+    loop p <= e or (loop_at >= 0 and open.len() > loop_at):
+        if p >= ir.code.len() or p - q > 4000: return false
+        ins = ir.code[p]
+        op = ins.op
+        if o_depth[p] < dq: return false
+        if op == .else_ and o_depth[p] == dq: return false
+        if o_defines(op) and int(ins.dst) == s: return false
+        if op == .zeroslots:
+            loop k in [0..int(ins.b)):
+                item = int(ir.args[int(ins.a) + k])
+                if item & 1 == 1 and item >> 1 == s: return false
+        if op == .block or op == .if_ or op == .loop: open.push(op)
+        else if op == .end and open.len() > 0: open.pop()
+        if p == e:
+            loop j in [0..open.len()):
+                if open[j] == .loop:
+                    loop_at = j
+                    break
+        p += 1
+    true
 
 # ---------------- common subexpressions ----------------
 # A hash table of available values keyed by (op, type, operands, immediate). Entries belong to
@@ -295,6 +349,7 @@ o_open: bool[]          # by scope serial
 o_scopes: int[]         # open scopes, innermost last
 
 const FACT_FALSE = 255  # pseudo-op key: "this condition is known to be false"
+const FACT_TRUE = 254   # ... "known to be true" (inside an if on it)
 
 ht_setup = (n: int):
     size = 64
@@ -394,7 +449,7 @@ cse_op = (op: Op) -> bool:
 
 o_defines = (op: Op) -> bool:
     match op:
-        nop, block, loop, end, else_, br, brif, brtable, if_, ret, trap, store, copy, zero, memcpy, memset, zeroslots, assume, vop: false
+        nop, block, loop, end, else_, br, brif, brtable, if_, ret, trap, store, copy, zero, memcpy, memset, zeroslots, assume, vop, vst, vzu: false
         _: true
 
 # append to the output, noting the new definition (invalidates entries that used the old value)
@@ -505,6 +560,13 @@ fact_false = (c: int) -> bool:
 add_fact_false = (c: int):
     if o_cse and stable(c): ht_put(FACT_FALSE, c, 0, c)
 
+fact_true = (c: int) -> bool:
+    if not o_cse or not stable(c): return false
+    ht_find(FACT_TRUE, c, 0, -1, 0, 0) >= 0
+
+add_fact_true = (c: int):
+    if o_cse and stable(c): ht_put(FACT_TRUE, c, 0, c)
+
 # simplify one instruction, appending the result to o_out
 o_simplify = (ins0: Ins, pos: int):
     ins = ins0
@@ -602,6 +664,223 @@ o_simplify = (ins0: Ins, pos: int):
             return
     o_emit(ins)
 
+# ---------------- small slots to registers ----------------
+# Vectors (vec2..vec4) are values in memory: each operation writes a temporary in the frame and
+# the next reads it back. A frame slot of at most 16 bytes whose address is only used to read,
+# write, copy, clear or do vector arithmetic on its 4-byte lanes (never handed on) becomes one
+# register per lane: vector arithmetic on it becomes scalar arithmetic, as a C compiler would
+# do with a struct of floats. (After inlining, most vector temporaries qualify.)
+sra_kind: int[]        # per slot lane (4 per slot): 0 not used as a value yet, 1 f32, 2 i32
+sra_sl: int[]          # per vreg: the slot it is an address in (-1: none) ...
+sra_soff: int[]        # ... and the offset
+sra_ok: bool[]         # per slot: becomes registers
+sra_lane: int[]        # per slot lane: its vreg
+sra_nv = 0
+
+# may n lanes from `off` in slot s be used as values of kind k (0: just bits, copied)?
+sra_lane_use = (s: int, off: int, n: int, k: int) -> bool:
+    if off < 0 or off % 4 != 0 or off + 4 * n > int(ir.slot_size[s]): return false
+    loop i in [0..n):
+        j = s * 4 + off / 4 + i
+        if k != 0:
+            if sra_kind[j] != 0 and sra_kind[j] != k: return false
+            sra_kind[j] = k
+    true
+
+sra_is_p = (v: int) -> bool: v >= 0 and v < sra_nv and sra_sl[v] >= 0 and sra_ok[sra_sl[v]]
+sra_lane_of = (v: int, i: int) -> int: sra_lane[sra_sl[v] * 4 + sra_soff[v] / 4 + i]
+
+# a lane value as a vreg of type ty, converting bits between f32 and i32 lanes
+sra_as_ty = (out: mut Ins[], x: int, ty: int) -> int:
+    if vtype(x) == ty: return x
+    t = vreg(ty)
+    if ty == VS: out.push(Ins(.bits2f, VS, i32(t), i32(x), 0, 0, 0))
+    else: out.push(Ins(.f2bits, VS, i32(t), i32(x), 0, 0, 0))
+    t
+
+o_sra = ():
+    ns = ir.slot_size.len()
+    if ns == 0: return
+    code = ir.code
+    nv = ir.vtypes.len()
+    sra_nv = nv
+    # addresses in slots: (slot, offset) of vregs defined once as a slot address or an
+    # address in one plus a constant
+    ndef = fill(0, nv)
+    loop ins in code:
+        d = int(ins.dst)
+        if d >= 0 and o_defines(ins.op): ndef[d] += 1
+    kconst = fill(false, nv)
+    kval = fill(0, nv)
+    addressed = fill(false, ns)
+    sl = fill(-1, nv)
+    soff = fill(0, nv)
+    any = false
+    loop ins in code:
+        d = int(ins.dst)
+        op = ins.op
+        if op == .iconst and ndef[d] == 1:
+            kconst[d] = true
+            kval[d] = ins.imm
+        else if op == .slot and ndef[d] == 1 and int(ir.slot_size[int(ins.a)]) <= 16:
+            sl[d] = int(ins.a)
+            addressed[int(ins.a)] = true
+            any = true
+        else if op == .mov and d >= 0 and ndef[d] == 1 and sl[int(ins.a)] >= 0:
+            # (another name for it, as an inlined function's parameter)
+            sl[d] = sl[int(ins.a)]
+            soff[d] = soff[int(ins.a)]
+        else if op == .add and d >= 0 and ndef[d] == 1 and sl[int(ins.a)] >= 0:
+            b = int(ins.b)
+            if is_kv(b) or kconst[b]:
+                k = if is_kv(b): kv_of(b) else: kval[b]
+                sl[d] = sl[int(ins.a)]
+                soff[d] = soff[int(ins.a)] + k
+    if not any: return
+    # what each slot's lanes hold: 0 not read or written as a value yet, 1 f32, 2 i32
+    ok = addressed
+    loop s in [0..ns):
+        if int(ir.slot_size[s]) % 4 != 0: ok[s] = false
+    sra_kind = fill(0, ns * 4)
+    loop ins in code:
+        op = ins.op
+        a = int(ins.a)
+        b = int(ins.b)
+        c = int(ins.c)
+        # every use of a slot address must be one of these
+        if op == .load and a >= 0 and sl[a] >= 0 and c & M_INDEX == 0:
+            if c & 15 != 4 or not sra_lane_use(sl[a], soff[a] + ins.imm, 1, if c & M_FLOAT != 0: 1 else: 2): ok[sl[a]] = false
+            continue
+        if op == .store:
+            if b >= 0 and sl[b] >= 0: ok[sl[b]] = false
+            if c & M_INDEX != 0 and int(ins.dst) >= 0 and sl[int(ins.dst)] >= 0: ok[sl[int(ins.dst)]] = false
+            if a >= 0 and sl[a] >= 0:
+                if c & M_INDEX != 0 or c & 15 != 4 or not sra_lane_use(sl[a], soff[a] + ins.imm, 1, if c & M_FLOAT != 0: 1 else: 2): ok[sl[a]] = false
+            continue
+        if op == .vop:
+            n = (ins.imm >> 4) & 7
+            if a >= 0 and sl[a] >= 0 and not sra_lane_use(sl[a], soff[a], n, 1): ok[sl[a]] = false
+            if ins.imm & VOP_SPLAT_B != 0:
+                if b >= 0 and sl[b] >= 0: ok[sl[b]] = false
+            else if b >= 0 and sl[b] >= 0 and not sra_lane_use(sl[b], soff[b], n, 1): ok[sl[b]] = false
+            if ins.imm & VOP_SPLAT_C != 0:
+                if c >= 0 and sl[c] >= 0: ok[sl[c]] = false
+            else if c >= 0 and sl[c] >= 0 and not sra_lane_use(sl[c], soff[c], n, 1): ok[sl[c]] = false
+            continue
+        if op == .copy:
+            if a >= 0 and sl[a] >= 0 and (ins.imm % 4 != 0 or not sra_lane_use(sl[a], soff[a], int(ins.imm / 4), 0)): ok[sl[a]] = false
+            if b >= 0 and sl[b] >= 0 and (ins.imm % 4 != 0 or not sra_lane_use(sl[b], soff[b], int(ins.imm / 4), 0)): ok[sl[b]] = false
+            continue
+        if op == .zero:
+            if a >= 0 and sl[a] >= 0 and (ins.imm % 4 != 0 or not sra_lane_use(sl[a], soff[a], int(ins.imm / 4), 0)): ok[sl[a]] = false
+            continue
+        if (op == .add or op == .mov) and int(ins.dst) >= 0 and sl[int(ins.dst)] >= 0: continue
+        if op == .slot: continue
+        if op == .zeroslots: continue
+        o_operands(ins)
+        loop u in o_buf:
+            if sl[u] >= 0: ok[sl[u]] = false
+    # a register per lane
+    lane = fill(-1, ns * 4)
+    any = false
+    loop s in [0..ns):
+        if not ok[s]: continue
+        loop i in [0..int(ir.slot_size[s]) / 4):
+            ty = if sra_kind[s * 4 + i] == 1: VS else: VI
+            lane[s * 4 + i] = vreg(ty)
+            any = true
+    if not any: return
+    # rewrite
+    sra_sl = sl
+    sra_soff = soff
+    sra_ok = ok
+    sra_lane = lane
+    out: Ins[]
+    out.reserve(code.len() + code.len() / 4)
+    loop ins in code:
+        op = ins.op
+        a = int(ins.a)
+        b = int(ins.b)
+        c = int(ins.c)
+        d = int(ins.dst)
+        if (op == .slot or op == .add or op == .mov) and sra_is_p(d): continue
+        if op == .load and sra_is_p(a):
+            x = sra_lane_of(a, int(ins.imm / 4))
+            if c & M_FLOAT != 0: out.push(Ins(.mov, VS, i32(d), i32(sra_as_ty(out, x, VS)), 0, 0, 0))
+            else if c & M_SIGNED != 0: out.push(Ins(.sext32, VI, i32(d), i32(sra_as_ty(out, x, VI)), 0, 0, 0))
+            else: out.push(Ins(.zext32, VI, i32(d), i32(sra_as_ty(out, x, VI)), 0, 0, 0))
+            continue
+        if op == .store and sra_is_p(a):
+            x = sra_lane_of(a, int(ins.imm / 4))
+            out.push(Ins(.mov, i32(vtype(x)), i32(x), i32(sra_as_ty(out, b, vtype(x))), 0, 0, 0))
+            continue
+        if op == .vop and (sra_is_p(a) or (ins.imm & VOP_SPLAT_B == 0 and sra_is_p(b)) or (ins.imm & VOP_SPLAT_C == 0 and sra_is_p(c))):
+            n = (ins.imm >> 4) & 7
+            fop = [Op.fadd, Op.fsub, Op.fmul, Op.fdiv][ins.imm & 3]
+            xs: int[]
+            loop i in [0..n):
+                x = b
+                if ins.imm & VOP_SPLAT_B == 0:
+                    if sra_is_p(b): x = sra_as_ty(out, sra_lane_of(b, i), VS)
+                    else:
+                        x = vreg(VS)
+                        out.push(Ins(.load, VS, i32(x), i32(b), 0, i32(4 | M_FLOAT), 4 * i))
+                y = c
+                if ins.imm & VOP_SPLAT_C == 0:
+                    if sra_is_p(c): y = sra_as_ty(out, sra_lane_of(c, i), VS)
+                    else:
+                        y = vreg(VS)
+                        out.push(Ins(.load, VS, i32(y), i32(c), 0, i32(4 | M_FLOAT), 4 * i))
+                r = vreg(VS)
+                out.push(Ins(fop, VS, i32(r), i32(x), i32(y), 0, 0))
+                # (lane i of the result needs only lane i of the operands: written at once, so
+                # it is computed right into its lane, even when the destination is a source)
+                if sra_is_p(a):
+                    t = sra_lane_of(a, i)
+                    out.push(Ins(.mov, i32(vtype(t)), i32(t), i32(sra_as_ty(out, r, vtype(t))), 0, 0, 0))
+                else: out.push(Ins(.store, VS, 0, i32(a), i32(r), i32(4 | M_FLOAT), 4 * i))
+            continue
+        if op == .copy and (sra_is_p(a) or sra_is_p(b)):
+            n = int(ins.imm / 4)
+            xs: int[]
+            loop i in [0..n):
+                if sra_is_p(b): xs.push(sra_lane_of(b, i))
+                else:
+                    ty = if sra_is_p(a): vtype(sra_lane_of(a, i)) else: VI
+                    x = vreg(ty)
+                    m = 4
+                    if ty == VS: m = 4 | M_FLOAT
+                    out.push(Ins(.load, i32(ty), i32(x), i32(b), 0, i32(m), 4 * i))
+                    xs.push(x)
+            loop i in [0..n):
+                if sra_is_p(a):
+                    t = sra_lane_of(a, i)
+                    out.push(Ins(.mov, i32(vtype(t)), i32(t), i32(sra_as_ty(out, xs[i], vtype(t))), 0, 0, 0))
+                else:
+                    m = 4
+                    if vtype(xs[i]) == VS: m = 4 | M_FLOAT
+                    out.push(Ins(.store, i32(vtype(xs[i])), 0, i32(a), i32(xs[i]), i32(m), 4 * i))
+            continue
+        if op == .zero and sra_is_p(a):
+            loop i in [0..int(ins.imm / 4)):
+                t = sra_lane_of(a, i)
+                if vtype(t) == VS:
+                    out.push(Ins(.fconst, VS, i32(t), 0, 0, 0, 0))
+                else: out.push(Ins(.mov, VI, i32(t), i32(k_vreg(0)), 0, 0, 0))
+            continue
+        out.push(ins)
+        if op == .zeroslots:
+            # (lanes of slots cleared here start at zero)
+            loop k in [0..b):
+                item = int(ir.args[a + k])
+                if item & 1 == 0 and ok[item >> 1] and int(ir.slot_size[item >> 1]) <= 16:
+                    s = item >> 1
+                    loop i in [0..int(ir.slot_size[s]) / 4):
+                        t = lane[s * 4 + i]
+                        if vtype(t) == VS: out.push(Ins(.fconst, VS, i32(t), 0, 0, 0, 0))
+                        else: out.push(Ins(.mov, VI, i32(t), i32(k_vreg(0)), 0, 0, 0))
+    ir.code = out
+
 # ---------------- loops ----------------
 # What each loop (in order of appearance) defines and stores to. Entering a loop must forget
 # values computed from vregs it redefines (they change on the next iteration even if the
@@ -656,6 +935,7 @@ enter_loop = ():
     if k & 4 != 0 or ir.raw_mem: o_genh += 1
 
 optimize = ():
+    o_sra()
     nv = ir.vtypes.len()
     o_resize(nv)
     loop p in [0..ir.nparams):
@@ -670,10 +950,18 @@ optimize = ():
             o_cval[v] = ir.kval[v]
             if let c = o_kmap.get(ir.kval[v]): o_repl[v] = i32(c)
             else: o_kmap[ir.kval[v]] = v
+    o_lastuse.resize(nv)
+    loop v in [0..nv): o_lastuse[v] = -1
+    o_depth.resize(ir.code.len())
+    depth = 0
     loop pos in 0.. and ins in ir.code:
+        if ins.op == .end: depth -= 1
+        o_depth[pos] = i32(depth)
+        if ins.op == .block or ins.op == .loop or ins.op == .if_: depth += 1
         d = o_operands(ins)
         loop u in o_buf:
             if o_first[u] > pos: o_first[u] = i32(pos)
+            o_lastuse[u] = i32(pos)
         if d >= 0:
             o_ndef[d] += 1
             o_defpos[d] = i32(pos)
@@ -720,13 +1008,13 @@ optimize = ():
             continue
         if op == .if_:
             c = int(o_repl[int(ins.a)])
-            known = o_const[c] or fact_false(c)
+            known = o_const[c] or fact_false(c) or fact_true(c)
             if known:
                 # the if becomes a plain block so branch depths inside stay valid
                 o_out.push(Ins(.block, 0, 0, 0, 0, 0, 0))
                 ctl_c.push(-1)
                 ctl_nbr.push(o_nbr)
-                if o_const[c] and o_cval[c] != 0:
+                if (o_const[c] and o_cval[c] != 0) or fact_true(c):
                     ctl.push(1)
                     o_scope_open()
                 else:
@@ -737,17 +1025,20 @@ optimize = ():
             ctl_c.push(c)
             ctl_nbr.push(o_nbr)
             o_scope_open()
+            add_fact_true(c)
             ins2 = ins
             ins2.a = i32(c)
             o_out.push(ins2)
             continue
         if op == .else_:
+            c = ctl_c[ctl_c.len() - 1]
             ctl_c[ctl_c.len() - 1] = -1
             o_scope_close()
             if ctl[ctl.len() - 1] == 1:
                 skip = 1
                 continue
             o_scope_open()
+            if c >= 0: add_fact_false(c)
             o_out.push(ins)
             continue
         if op == .end:
@@ -764,6 +1055,16 @@ optimize = ():
                 continue
             o_out.push(ins)
             if noret: add_fact_false(c)
+            continue
+        if op == .brif:
+            # a branch on a known condition: always or never taken
+            c = int(o_repl[int(ins.a)])
+            if o_const[c] or fact_false(c) or fact_true(c):
+                if (o_const[c] and o_cval[c] != 0) or fact_true(c): o_emit(Ins(.br, 0, 0, 0, 0, 0, ins.imm))
+                continue
+            # (after it, in this construct, the condition is false)
+            o_simplify(ins, pos)
+            add_fact_false(c)
             continue
         if op == .zeroslots:
             kill_all()
@@ -796,12 +1097,130 @@ optimize = ():
         if keep[j]: code.push(ins)
     ir.code = o_cleanup(code)
 
+# ---------------- loop-invariant code motion ----------------
+# Arithmetic in a loop whose operands the loop does not change is moved in front of it (of the
+# outermost such loop), after the loop's entry test: it runs once instead of every iteration.
+# Only pure instructions that cannot trap move (float division gives inf or NaN, never traps); a value defined once is required, and every
+# definition dominates its uses, so the new place still precedes every use. (Release builds, on
+# the final code of each function.)
+# (only what costs more than the register it then holds through the loop: one-cycle integer
+# operations, which also fold into addresses, are left in place)
+licm_op = (op: Op) -> bool:
+    match op:
+        mul, i2f, u2f, f2f: true
+        fadd, fsub, fmul, fdiv, fmin, fmax: true
+        _: false
+
+o_licm = (code: Ins[]) -> Ins[]:
+    n = code.len()
+    nv = ir.vtypes.len()
+    # is there anything to move at all
+    kinds: Op[]
+    depth = 0
+    cands = 0
+    loop ins in code:
+        op = ins.op
+        if op == .block or op == .if_ or op == .loop:
+            kinds.push(op)
+            if op == .loop: depth += 1
+        else if op == .end:
+            if kinds.pop() == .loop: depth -= 1
+        else if depth > 0 and licm_op(op): cands += 1
+    if cands == 0: return code
+    # where each loop ends
+    lp_end = fill(-1, n)
+    open: int[]
+    loop i in 0.. and ins in code:
+        op = ins.op
+        if op == .block or op == .if_ or op == .loop: open.push(i)
+        else if op == .end:
+            st = open.pop()
+            if code[st].op == .loop: lp_end[st] = i
+    # definition positions of each vreg, ascending (doubled: an instruction moved in front of
+    # position p is at 2p - 1)
+    first = fill(0, nv + 1)
+    loop ins in code:
+        d = int(ins.dst)
+        if d >= 0 and o_defines(ins.op): first[d + 1] += 1
+        if ins.op == .zeroslots:
+            loop k in [0..int(ins.b)):
+                item = int(ir.args[int(ins.a) + k])
+                if item & 1 == 1: first[(item >> 1) + 1] += 1
+    loop v in [0..nv): first[v + 1] += first[v]
+    dpos = fill(0, first[nv])
+    at = first
+    loop i in 0.. and ins in code:
+        d = int(ins.dst)
+        if d >= 0 and o_defines(ins.op):
+            dpos[at[d]] = 2 * i
+            at[d] += 1
+        if ins.op == .zeroslots:
+            loop k in [0..int(ins.b)):
+                item = int(ir.args[int(ins.a) + k])
+                if item & 1 == 1:
+                    v = item >> 1
+                    dpos[at[v]] = 2 * i
+                    at[v] += 1
+    first = fill(0, nv + 1)
+    loop v in [0..nv): first[v + 1] = at[v]
+    # choose what moves where: (loop start, instruction) pairs, in instruction order
+    moved = fill(false, n)
+    moves: (int, int)[]
+    loops_open: int[]
+    loop i in 0.. and ins in code:
+        op = ins.op
+        if op == .loop: loops_open.push(i)
+        else if op == .end and loops_open.len() > 0 and lp_end[loops_open[loops_open.len() - 1]] == i: loops_open.pop()
+        if loops_open.len() == 0 or not licm_op(op): continue
+        d = int(ins.dst)
+        if d < 0 or first[d + 1] - first[d] != 1: continue
+        o_operands(ins)
+        # the outermost enclosing loop that defines none of the operands
+        target = -1
+        loop L in loops_open:
+            ok = true
+            loop u in o_buf:
+                if o_def_within(dpos, first[u], first[u + 1], 2 * L, 2 * lp_end[L]):
+                    ok = false
+                    break
+            if ok:
+                target = L
+                break
+        if target < 0: continue
+        moved[i] = true
+        moves.push((target, i))
+        dpos[first[d]] = 2 * target - 1
+    if moves.len() == 0: return code
+    moves.sort_by((m: (int, int)): m.0 * n + m.1)
+    out: Ins[]
+    out.reserve(n)
+    k = 0
+    loop i in 0.. and ins in code:
+        if moved[i]: continue
+        loop k < moves.len() and moves[k].0 == i:
+            out.push(code[moves[k].1])
+            k += 1
+        out.push(ins)
+    out
+
+# is any of dpos[lo..hi) (ascending, but for single entries) within [s, e]
+o_def_within = (dpos: int[], lo: int, hi: int, s: int, e: int) -> bool:
+    if hi - lo == 1: return dpos[lo] >= s and dpos[lo] <= e
+    a = lo
+    b = hi
+    loop a < b:
+        m = (a + b) / 2
+        if dpos[m] < s: a = m + 1
+        else: b = m
+    a < hi and dpos[a] <= e
+
 # Final tidying: drop unreachable code after unconditional jumps, branches to the very next
 # instruction, and copies of a value that was computed just for the copy (t = a + 1; x = t).
 o_cleanup = (code: Ins[]) -> Ins[]:
     out: Ins[]
     out.reserve(code.len())
     kinds: Op[]          # open constructs
+    starts: int[]        # ... and where in out they start
     dead = false
     depth = 0
     # how many instructions take the address of each frame slot
@@ -826,14 +1245,66 @@ o_cleanup = (code: Ins[]) -> Ins[]:
         if op == .end and out.len() > 0:
             last = out[out.len() - 1]
             if last.op == .br and last.imm == 0 and kinds[kinds.len() - 1] != .loop: out.pop()
+            # `if c { br d }` is `brif c, d - 1` (one branch instead of two)
+            if out.len() >= 2 and kinds[kinds.len() - 1] == .if_:
+                last = out[out.len() - 1]
+                prev = out[out.len() - 2]
+                if last.op == .br and last.imm >= 1 and prev.op == .if_:
+                    out.pop()
+                    out.pop()
+                    kinds.pop()
+                    starts.pop()
+                    out.push(Ins(.brif, 0, 0, prev.a, 0, 0, last.imm - 1))
+                    continue
+            # `block { ...; brif c, 0; br d }` (c a comparison used only there) is
+            # `...; brif !c, d - 1`
+            if out.len() >= 2 and kinds[kinds.len() - 1] == .block:
+                last = out[out.len() - 1]
+                prev = out[out.len() - 2]
+                st = starts[starts.len() - 1]
+                c = int(prev.a)
+                if last.op == .br and last.imm >= 1 and prev.op == .brif and prev.imm == 0 and c >= 0 and c < o_nuse.len() and o_nuse[c] == 1:
+                    # the comparison, inside the block, with no other branch there
+                    cd = -1
+                    plain = true
+                    loop j in [st + 1..out.len() - 2):
+                        eo = out[j].op
+                        if eo == .br or eo == .brif or eo == .brtable or eo == .block or eo == .loop or eo == .if_ or eo == .end or eo == .else_: plain = false
+                        if int(out[j].dst) == c and o_defines(eo): cd = j
+                    if plain and cd >= 0 and o_negate(out[cd].op) != .nop:
+                        e = out[cd]
+                        e.op = o_negate(e.op)
+                        out[cd] = e
+                        d = last.imm - 1
+                        out.pop()
+                        out.pop()
+                        out.remove(st)
+                        kinds.pop()
+                        starts.pop()
+                        out.push(Ins(.brif, 0, 0, i32(c), 0, 0, d))
+                        continue
         if op == .mov and out.len() > 0:
-            last = out[out.len() - 1]
             t = int(ins.a)
             d = int(ins.dst)
-            if t != d and int(last.dst) == t and o_nuse[t] == 1 and vtype(t) == vtype(d) and o_retargetable(last.op):
-                last.dst = i32(d)
-                out[out.len() - 1] = last
-                continue
+            if t != d and t >= 0 and t < o_nuse.len() and o_nuse[t] == 1 and vtype(t) == vtype(d):
+                # (also a few instructions back, in straight-line code that leaves d alone:
+                # vector lanes computed one after the other, then copied)
+                j = out.len() - 1
+                done = false
+                loop j >= 0 and j >= out.len() - 8:
+                    e = out[j]
+                    eo = e.op
+                    if int(e.dst) == t and o_defines(eo):
+                        if o_retargetable(eo):
+                            e.dst = i32(d)
+                            out[j] = e
+                            done = true
+                        break
+                    if eo == .block or eo == .loop or eo == .if_ or eo == .else_ or eo == .end or eo == .br or eo == .brif or eo == .brtable or eo == .zeroslots: break
+                    ed = o_operands(e)
+                    if ed == d or o_buf.contains(d) or ed == t: break
+                    j -= 1
+                if done: continue
         if op == .copy and out.len() > 0:
             # vector arithmetic into a temporary that is then copied: compute into the copy's target
             last = out[out.len() - 1]
@@ -843,12 +1314,31 @@ o_cleanup = (code: Ins[]) -> Ins[]:
                 out[out.len() - 1] = last
                 continue
         out.push(ins)
-        if op == .block or op == .loop or op == .if_: kinds.push(op)
-        else if op == .end: kinds.pop()
+        if op == .block or op == .loop or op == .if_:
+            kinds.push(op)
+            starts.push(out.len() - 1)
+        else if op == .end:
+            kinds.pop()
+            starts.pop()
         else if op == .br or op == .ret or op == .trap or (op == .call and ins.c == 1):
             dead = true
             depth = 0
     out
+
+# the comparison that is true exactly when op is false (integers only: floats have NaN)
+o_negate = (op: Op) -> Op:
+    match op:
+        eq: .ne
+        ne: .eq
+        lts: .ges
+        ges: .lts
+        les: .gts
+        gts: .les
+        ltu: .geu
+        geu: .ltu
+        leu: .gtu
+        gtu: .leu
+        _: .nop
 
 # instructions whose result register may be renamed
 o_retargetable = (op: Op) -> bool:

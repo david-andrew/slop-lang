@@ -17,12 +17,21 @@ enum Op:
     call, calli, callc, syscall, intr,
     block, loop, if_, else_, end, br, brif, ret, trap, select,
     assume,           # a = vreg, imm = A_* fact (no code)
-    brtable           # a = index, b = count, c = args start (depths), imm = default depth; index >= count (unsigned) -> default
+    brtable,          # a = index, b = count, c = args start (depths), imm = default depth; index >= count (unsigned) -> default
+    # vectors (made by the loop vectorizer, x86-64 only); ty = VX or VY; lanes of one element
+    # kind (Ins.c for memory, Ins.imm otherwise): 0 f32, 1 f64, 2 i32, 3 i64
+    vld,              # dst = [a + b * element size + imm]
+    vst,              # [a + dst * element size + imm] = b
+    vbin,             # dst = a op b, c = op: 0 add, 1 sub, 2 mul, 3 div, 4 min, 5 max, 6 and, 7 or, 8 xor
+    vsplat,           # dst = a (a scalar) in every lane
+    vzu               # leave 256-bit code (vzeroupper)
 
 const VI = 0
 const VF = 1
 const VS = 2
 const VK = 3          # integer constant: no defining instruction, value in IrFn.kval (behaves as VI)
+const VX = 4          # 128-bit vector (SSE2)
+const VY = 5          # 256-bit vector (AVX2)
 
 # memory access encodings (Ins.c for load/store)
 const M_SIGNED = 16
@@ -118,7 +127,13 @@ new_slot = (size: int, align: int) -> int:
     ir.slot_align.push(i32(a))
     ir.slot_size.len() - 1
 
-emit = (op: Op, ty: int, dst: int, a: int, b: int, c: int, imm: int) -> int:
+# calls emitted while this is set are on a rarely taken path (c = 2 marks such a direct call;
+# 1 marks one that never returns): register allocation weighs them as if outside any loop
+ir_cold = false
+
+emit = (op: Op, ty: int, dst: int, a: int, b: int, c0: int, imm: int) -> int:
+    c = c0
+    if ir_cold and op == .call and c == 0: c = 2
     ir.code.push(Ins(op, i32(ty), i32(dst), i32(a), i32(b), i32(c), imm))
     ir.code.len() - 1
 

@@ -7,6 +7,7 @@ use 'ir.jot'
 use 'opt.jot'
 
 const INLINE_MAX = 24       # callee size limit, in IR instructions
+const INLINE_LOOP_MAX = 96  # ... for a call in a loop to a leaf (a function that calls nothing)
 
 rel_fns: IrFn[]             # lowered functions, in lowering order
 rel_by_index: int[]         # lfunc index -> position in rel_fns (-1: not collected)
@@ -16,12 +17,17 @@ rel_collect = ():
     rel_by_index[ir.fn_index] = rel_fns.len()
     rel_fns.push(ir)
 
-inlinable = (f: IrFn) -> bool:
-    if f.cabi or len(f.export_name) > 0 or f.code.len() > INLINE_MAX: return false
+# 0: not inlined, 1: small (inlined anywhere), 2: a leaf inlined into loops
+inlinable = (f: IrFn) -> int:
+    if f.cabi or len(f.export_name) > 0 or f.code.len() > INLINE_LOOP_MAX: return 0
+    leaf = true
     loop ins in f.code:
-        if ins.op == .call and ins.imm == f.fn_index: return false     # recursive
-        if ins.op == .intr and ins.imm >= 2: return false             # setjmp-like intrinsics
-    true
+        if ins.op == .call and ins.imm == f.fn_index: return 0         # recursive
+        if ins.op == .intr and ins.imm >= 2: return 0                 # setjmp-like intrinsics
+        if (ins.op == .call and ins.c != 1) or ins.op == .calli or ins.op == .callc or ins.op == .syscall: leaf = false
+    if f.code.len() <= INLINE_MAX: return 1
+    if leaf: return 2
+    0
 
 defines_value = (op: Op) -> bool:
     match op:
@@ -101,30 +107,52 @@ inline_call = (call: Ins, callee: IrFn, out: mut Ins[]):
                 out.push(Ins(.mov, i32(vtype(int(call.dst))), call.dst, i32(vm[int(ci.a)]), 0, 0, 0))
             out.push(Ins(.br, 0, 0, 0, 0, 0, depth))
             continue
-        out.push(remap(ci, callee, vm, sm))
+        ni = remap(ci, callee, vm, sm)
+        # (the calls of a callee inlined on a rarely taken path are on it too)
+        if call.c == 2 and op == .call and ni.c == 0: ni.c = 2
+        out.push(ni)
         if op == .block or op == .loop or op == .if_: depth += 1
         else if op == .end: depth -= 1
     out.push(Ins(.end, 0, 0, 0, 0, 0, 0))
 
+# the callee to inline for a call in a loop nest `depth` deep (-1: none)
+inline_target = (ins: Ins, depth: int, self_pos: int, snap: IrFn[], can: int[]) -> int:
+    if ins.op != .call or ins.c == 1 or ins.imm >= rel_by_index.len(): return -1
+    j = rel_by_index[int(ins.imm)]
+    if j < 0 or j == self_pos or int(ins.b) != snap[j].nparams: return -1
+    if can[j] == 1 or (can[j] == 2 and depth > 0): return j
+    -1
+
 # inline small callees into the current function (ir); returns true if anything changed
-inline_into = (self_pos: int, snap: IrFn[], can: bool[]) -> bool:
+inline_into = (self_pos: int, snap: IrFn[], can: int[]) -> bool:
     any = false
+    depth = 0
+    kinds: Op[]
     loop ins in ir.code:
-        if ins.op == .call and ins.c != 1 and ins.imm < rel_by_index.len():
-            j = rel_by_index[int(ins.imm)]
-            if j >= 0 and j != self_pos and can[j] and int(ins.b) == snap[j].nparams:
-                any = true
-                break
+        if inline_target(ins, depth, self_pos, snap, can) >= 0:
+            any = true
+            break
+        if ins.op == .block or ins.op == .loop or ins.op == .if_:
+            kinds.push(ins.op)
+            if ins.op == .loop: depth += 1
+        else if ins.op == .end:
+            if kinds.pop() == .loop: depth -= 1
     if not any: return false
     out: Ins[]
     out.reserve(ir.code.len() * 2)
     old = ir.code
+    depth = 0
+    kinds.clear()
     loop ins in old:
-        if ins.op == .call and ins.c != 1 and ins.imm < rel_by_index.len():
-            j = rel_by_index[int(ins.imm)]
-            if j >= 0 and j != self_pos and can[j] and int(ins.b) == snap[j].nparams:
-                inline_call(ins, snap[j], out)
-                continue
+        j = inline_target(ins, depth, self_pos, snap, can)
+        if j >= 0:
+            inline_call(ins, snap[j], out)
+            continue
         out.push(ins)
+        if ins.op == .block or ins.op == .loop or ins.op == .if_:
+            kinds.push(ins.op)
+            if ins.op == .loop: depth += 1
+        else if ins.op == .end:
+            if kinds.pop() == .loop: depth -= 1
     ir.code = out
     true

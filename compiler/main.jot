@@ -16,6 +16,7 @@ use 'ir.jot'
 use 'lower.jot'
 use 'opt.jot'
 use 'inline.jot'
+use 'loops.jot'
 use 'x64.jot'
 use 'elf.jot'
 use 'wasm.jot'
@@ -113,17 +114,68 @@ release_pipeline = ():
         optimize()
         rel_fns[k] = ir
     snap = rel_fns
-    can = fill(false, snap.len())
+    can = fill(0, snap.len())
     loop k in 0.. and f in snap: can[k] = inlinable(f)
-    loop k in [0..rel_fns.len()):
-        ir = rel_fns[k]
+    # callees before callers: a function is inlined with what it inlined itself (so whether it
+    # is small enough is judged by what it finally is)
+    loop k in callee_order(snap):
+        ir = snap[k]
         kc_fn += 1
-        if inline_into(k, snap, can): optimize()
+        if inline_into(k, snap, can):
+            optimize()
+            snap[k] = ir
+            can[k] = inlinable(ir)
+    loop k in [0..snap.len()):
+        ir = snap[k]
+        kc_fn += 1
+        loop_versioning()
+        ir.code = o_licm(ir.code)
         emit_function()
     rel_fns = []
 
+# the functions in an order where each comes after the ones it calls (but in cycles)
+callee_order = (fs: IrFn[]) -> int[]:
+    n = fs.len()
+    state = fill(0, n)              # 0 not seen, 1 on the path, 2 placed
+    order: int[]
+    stack: int[]
+    next_ins: int[]                 # per stack entry: where to continue scanning its code
+    loop r in [0..n):
+        if state[r] != 0: continue
+        stack.push(r)
+        next_ins.push(0)
+        state[r] = 1
+        loop stack.len() > 0:
+            top = stack.len() - 1
+            k = stack[top]
+            fc = fs[k].code
+            i = next_ins[top]
+            child = -1
+            loop i < fc.len() and child < 0:
+                ins = fc[i]
+                i += 1
+                if ins.op == .call and ins.c != 1 and ins.imm < rel_by_index.len():
+                    j = rel_by_index[int(ins.imm)]
+                    if j >= 0 and state[j] == 0: child = j
+            next_ins[top] = i
+            if child >= 0:
+                state[child] = 1
+                stack.push(child)
+                next_ins.push(0)
+            else:
+                state[k] = 2
+                order.push(k)
+                stack.pop()
+                next_ins.pop()
+    order
+
 compile = (path: str, out0: str) -> str:
     t0 = time()
+    ra_stat = env("JOT_RASTAT") != none
+    ra_verbose = (env("JOT_RASTAT") ?? "") == "v"
+    if env("JOT_RA_LINEAR") != none: ra_prio = false
+    ra_dump = env("JOT_RADUMP") ?? ""
+    ra_only = env("JOT_RA_ONLY") ?? ""
     scan_build_block(path)
     if cli_release: opt_release = true
     if lower_only: opt_release = false
@@ -134,6 +186,7 @@ compile = (path: str, out0: str) -> str:
     out = out0
     if target_wasm and not ends_with(out, ".html"): out = out + ".html"
     init_types()
+    want_cpu_flag = opt_release and not target_wasm and not lower_only
     check_program(path)
     # (functions left unchecked after errors in them cannot be lowered)
     if lower_only and ide_skip.len() > 0: return ""
@@ -152,6 +205,12 @@ compile = (path: str, out0: str) -> str:
     if main_fn != 0: main_lf = lf_of_inst(main_fn)
     pinit = init_fns[0]
     pinit_lf = roots[0]
+    # (vectorized loops ask whether the processor has AVX2: the runtime finds out at start)
+    lx_vec_on = opt_release and not target_wasm and not lower_only
+    if lx_vec_on:
+        cs = prelude.get(intern("__cpu_avx2")) ?? 0
+        if cs != 0 and syms[cs].kind == .global: global_addr_off(int(syms[cs].ref))
+        else: lx_vec_on = false
     i = 0
     loop true:
         loop i < lfuncs.len():
@@ -221,6 +280,7 @@ compile = (path: str, out0: str) -> str:
         ok = write_elf(out, code, entry, rodata, data_size + 8 + bss_reserve)
         size = code.len()
     t3 = time()
+    if ra_stat: eprint("regalloc: spill cost {ra_spill_cost}, save cost {ra_save_cost} (int) {ra_save_x} (float), of {ra_total} weighted accesses\n")
     if timing:
         eprint("check {(t1 - t0) * 1000.0:.1} ms, lower+codegen {(t2 - t1) * 1000.0:.1} ms, write {(t3 - t2) * 1000.0:.1} ms; {lfuncs.len()} functions, {nodes.len()} nodes, {size} bytes of code")
     if not ok: return ""

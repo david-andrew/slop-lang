@@ -1,0 +1,15 @@
+zeros 0 300
+fzeros 0.0
+nones 0
+resized 0
+strs s0,s1,s2,s3,s4,s5,s6,s7,s8,s9,,,,|
+p 7 none
+p 3 none
+q 7 none
+ 0 none
+ 0 none
+dotted [4.0, 6.0, 8.0, 10.0, 12.0]
+dotted str ["a!", "b!", "c!"]
+map 200 v0 v199 none
+built 300 56789
+nested [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
