@@ -1,0 +1,161 @@
+# Windows x64 executables (PE32+): sloppy build --target windows.
+#
+# Sections: .text (code), .rdata (read-only data), .data: an import table for kernel32.dll
+# (pe_imports: what everything else is looked up with at run time, as on Linux, and what that
+# needs: lib/core/windows.jo) followed by the program's globals (zero at start, not in the
+# file). The import address table ends where the globals begin, so code finds its entries at
+# fixed offsets below them (pe_iat_off).
+
+use 'util.jo'
+use 'elf.jo'
+
+const PE_BASE = 0x400000
+const PE_SECT = 0x1000         # section alignment in memory
+const PE_FILE = 0x200          # in the file
+const PE_HEADERS = 0x400       # DOS header, PE headers and section table, padded
+
+pe_imports = ["ExitProcess", "LoadLibraryA", "GetProcAddress", "VirtualAlloc", "VirtualFree"]
+
+# where import k's address is: from the start of the globals (the table ends with a zero entry)
+pe_iat_off = (k: int) -> int: -8 * (pe_imports.len() + 1) + 8 * k
+pe_iat_size = () -> int: 8 * (pe_imports.len() + 1)
+
+align_to = (x: int, a: int) -> int: (x + a - 1) / a * a
+
+# the import table (at rva in memory): descriptors, lookup table, names, then the address table
+# (last: an entry for each import and a zero)
+pe_idata = (rva: int) -> u8[]:
+    desc_size = 40                       # one descriptor and the zero one
+    ilt_off = desc_size
+    names_off = ilt_off + 8 * (pe_imports.len() + 1)
+    names: u8[]
+    name_rvas: int[]
+    loop nm in pe_imports:
+        name_rvas.push(rva + names_off + names.len())
+        put16(names, 0)                  # hint
+        loop c in nm: names.push(c)
+        names.push(0)
+        if names.len() % 2 == 1: names.push(0)
+    dll_off = names_off + names.len()
+    dll = "kernel32.dll"
+    size = align_to(dll_off + len(dll) + 1 + pe_iat_size(), 16)
+    iat_off = size - pe_iat_size()
+    out: u8[]
+    put32(out, rva + ilt_off)            # OriginalFirstThunk
+    put32(out, 0)
+    put32(out, 0)
+    put32(out, rva + dll_off)            # Name
+    put32(out, rva + iat_off)            # FirstThunk
+    loop i in [0..20): out.push(0)
+    loop r in name_rvas: put64(out, r)
+    put64(out, 0)
+    append_bytes(out, names)
+    loop c in dll: out.push(c)
+    out.push(0)
+    loop out.len() < iat_off: out.push(0)
+    loop r in name_rvas: put64(out, r)
+    put64(out, 0)
+    out
+
+# where the sections go: (text rva, rodata rva, data rva, size of the import table)
+pe_layout = (text_len: int, ro_len: int) -> (int, int, int, int):
+    text_rva = PE_SECT
+    ro_rva = text_rva + align_to(max(text_len, 1), PE_SECT)
+    data_rva = ro_rva + align_to(max(ro_len, 1), PE_SECT)
+    (text_rva, ro_rva, data_rva, pe_idata(data_rva).len())
+
+write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui: bool) -> bool:
+    text_rva, ro_rva, data_rva, idata_size = pe_layout(text.len(), ro.len())
+    idata = pe_idata(data_rva)
+    data_vsize = idata_size + data_size + 8
+    image_size = data_rva + align_to(data_vsize, PE_SECT)
+    text_raw = align_to(text.len(), PE_FILE)
+    ro_raw = align_to(max(ro.len(), 1), PE_FILE)
+    data_raw = align_to(idata.len(), PE_FILE)
+    text_off = PE_HEADERS
+    ro_off = text_off + text_raw
+    data_off = ro_off + ro_raw
+    out: u8[]
+    out.reserve(data_off + data_raw)
+    # DOS header: "MZ", and where the PE header is
+    out.push('M')
+    out.push('Z')
+    loop out.len() < 0x3C: out.push(0)
+    put32(out, 0x40)
+    # PE signature and COFF header
+    loop c in ['P', 'E', 0, 0]: out.push(u8(c))
+    put16(out, 0x8664)                   # x86-64
+    put16(out, 3)                        # sections
+    put32(out, 0)                        # time stamp
+    put32(out, 0)
+    put32(out, 0)
+    put16(out, 240)                      # size of the optional header
+    put16(out, 0x0023)                   # executable, no relocations, large addresses
+    # optional header (PE32+)
+    put16(out, 0x20B)
+    out.push(1)                          # linker version
+    out.push(0)
+    put32(out, text_raw)                 # size of code
+    put32(out, ro_raw + data_raw)        # initialized data
+    put32(out, data_vsize - idata_size)  # uninitialized data
+    put32(out, text_rva + entry_off)     # entry point
+    put32(out, text_rva)                 # base of code
+    put64(out, PE_BASE)
+    put32(out, PE_SECT)
+    put32(out, PE_FILE)
+    put16(out, 6)                        # OS version 6.0 (Vista and later)
+    put16(out, 0)
+    put16(out, 0)                        # image version
+    put16(out, 0)
+    put16(out, 6)                        # subsystem version
+    put16(out, 0)
+    put32(out, 0)
+    put32(out, image_size)
+    put32(out, PE_HEADERS)
+    put32(out, 0)                        # checksum
+    sub = 3                              # console
+    if gui: sub = 2
+    put16(out, sub)
+    put16(out, 0x8100)                   # NX compatible, terminal server aware (no ASLR)
+    put64(out, 0x800000)                 # stack reserve: 8 MB, all committed (no probing)
+    put64(out, 0x800000)
+    put64(out, 0x100000)                 # heap reserve and commit
+    put64(out, 0x1000)
+    put32(out, 0)
+    put32(out, 16)                       # data directories
+    loop i in [0..16):
+        if i == 1:
+            put32(out, data_rva)         # imports
+            put32(out, 40)
+        else if i == 12:
+            put32(out, data_rva + idata_size - pe_iat_size())   # import address table
+            put32(out, pe_iat_size())
+        else: put64(out, 0)
+    # section table
+    pe_section(out, ".text", text.len(), text_rva, text_raw, text_off, 0x60000020)
+    pe_section(out, ".rdata", max(ro.len(), 1), ro_rva, ro_raw, ro_off, 0x40000040)
+    pe_section(out, ".data", data_vsize, data_rva, data_raw, data_off, 0xC0000040)
+    out.resize(text_off)
+    append_bytes(out, text)
+    out.resize(ro_off)
+    append_bytes(out, ro)
+    out.resize(data_off)
+    append_bytes(out, idata)
+    out.resize(data_off + data_raw)
+    delete_file(path)
+    if not write_bytes(path, out): return false
+    chmod(path, 0x1ED)
+
+pe_section = (out: mut u8[], name: str, vsize: int, rva: int, raw: int, off: int, flags: int):
+    loop i in [0..8):
+        if i < len(name): out.push(name[i])
+        else: out.push(0)
+    put32(out, vsize)
+    put32(out, rva)
+    put32(out, raw)
+    put32(out, off)
+    put32(out, 0)
+    put32(out, 0)
+    put16(out, 0)
+    put16(out, 0)
+    put32(out, flags)

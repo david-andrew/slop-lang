@@ -556,11 +556,13 @@ the game/graphics/audio API) is always available without importing.
 
 ```gdscript
 build:                          # build options live in the source
-    target = wasm               # native (default) | wasm
+    target = wasm               # native (default: this machine) | linux | windows | wasm
     opt = release               # debug | release
     output = "mygame"
 
 when TARGET == "wasm":          # compile-time conditional; the dead branch is not compiled
+    ...
+else when TARGET == "windows":  # (TARGET is "linux", "windows" or "wasm")
     ...
 else:
     ...

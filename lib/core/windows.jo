@@ -1,0 +1,303 @@
+# The operating system layer of Windows programs (sloppy build --target windows): what
+# os.jo and rt.jo do with Linux system calls, done with the functions of Windows' DLLs. Those
+# are looked up on first use (with LoadLibraryA and GetProcAddress, which the program imports
+# with ExitProcess: compiler/pe.jo), like the C functions of `extern` declarations on Linux.
+
+when TARGET == "windows":
+    # ---------------- C functions of DLLs ----------------
+    __win_libs: str[]
+    __win_handles: *u8[]
+
+    # (threads may look functions up at once: one at a time; a plain global, zero before any
+    # initializer runs, as functions may be looked up that early)
+    __win_lock = 0
+
+    __ffi_resolve = (lib: str, name: str) -> *u8:
+        lk = &__win_lock
+        loop __atomic_cas(lk, 0, 1) != 0: pass
+        h = __win_lib(lib)
+        p: *u8 = null
+        if h != null: p = GetProcAddress(h, data(__zstr(name)))
+        __atomic_cas(lk, 1, 0)
+        if h == null: panic("cannot load {lib} (needed for {name})")
+        if p == null: panic("function {name} not found in {lib}")
+        p
+
+    __win_lib = (lib: str) -> *u8:
+        loop i in 0.. and n in __win_libs:
+            if n == lib: return __win_handles[i]
+        h = LoadLibraryA(data(__zstr(lib)))
+        __win_libs.push(lib)
+        __win_handles.push(h)
+        h
+
+    # true if the library can be loaded on this system
+    lib_available = (lib: str) -> bool: __win_lib(lib) != null
+
+    # (these are imported by the program: compiler/pe.jo, pe_imports)
+    @lib("kernel32.dll")
+    extern ExitProcess = (code: u32)
+    @lib("kernel32.dll")
+    extern LoadLibraryA = (name: *u8) -> *u8
+    @lib("kernel32.dll")
+    extern GetProcAddress = (h: *u8, name: *u8) -> *u8
+    @lib("kernel32.dll")
+    extern GetStdHandle = (which: u32) -> *u8
+    @lib("kernel32.dll")
+    extern WriteFile = (h: *u8, buf: *u8, n: u32, written: *u32, ov: *u8) -> i32
+    @lib("kernel32.dll")
+    extern ReadFile = (h: *u8, buf: *u8, n: u32, got: *u32, ov: *u8) -> i32
+    @lib("kernel32.dll")
+    extern CreateFileW = (name: *u16, access: u32, share: u32, sec: *u8, disposition: u32, flags: u32, template: *u8) -> *u8
+    @lib("kernel32.dll")
+    extern GetFileSizeEx = (h: *u8, size: *int) -> i32
+    @lib("kernel32.dll")
+    extern CloseHandle = (h: *u8) -> i32
+    @lib("kernel32.dll")
+    extern DeleteFileW = (name: *u16) -> i32
+    @lib("kernel32.dll")
+    extern GetFileAttributesW = (name: *u16) -> u32
+    @lib("kernel32.dll")
+    extern CreateDirectoryW = (name: *u16, sec: *u8) -> i32
+    @lib("kernel32.dll")
+    extern FindFirstFileW = (pattern: *u16, found: *u8) -> *u8
+    @lib("kernel32.dll")
+    extern FindNextFileW = (h: *u8, found: *u8) -> i32
+    @lib("kernel32.dll")
+    extern FindClose = (h: *u8) -> i32
+    @lib("kernel32.dll")
+    extern GetModuleFileNameW = (module: *u8, buf: *u16, n: u32) -> u32
+    @lib("kernel32.dll")
+    extern GetCommandLineW = () -> *u16
+    @lib("shell32.dll")
+    extern CommandLineToArgvW = (cmd: *u16, argc: *i32) -> **u16
+    @lib("kernel32.dll")
+    extern GetEnvironmentVariableW = (name: *u16, buf: *u16, n: u32) -> u32
+    @lib("kernel32.dll")
+    extern QueryPerformanceCounter = (count: *int) -> i32
+    @lib("kernel32.dll")
+    extern QueryPerformanceFrequency = (freq: *int) -> i32
+    @lib("kernel32.dll")
+    extern Sleep = (ms: u32)
+    @lib("kernel32.dll")
+    extern VirtualAlloc = (p: *u8, size: int, kind: u32, protect: u32) -> *u8
+    @lib("kernel32.dll")
+    extern VirtualFree = (p: *u8, size: int, kind: u32) -> i32
+    @lib("kernel32.dll")
+    extern SetConsoleOutputCP = (cp: u32) -> i32
+    @lib("kernel32.dll")
+    extern CreateProcessW = (app: *u16, cmd: *u16, psec: *u8, tsec: *u8, inherit: i32, flags: u32, envb: *u8, dir: *u16, si: *u8, pi: *u8) -> i32
+    @lib("kernel32.dll")
+    extern WaitForSingleObject = (h: *u8, ms: u32) -> u32
+    @lib("kernel32.dll")
+    extern GetExitCodeProcess = (h: *u8, code: *u32) -> i32
+
+    # ---------------- text: UTF-8 <-> UTF-16 ----------------
+    # a NUL-terminated UTF-16 copy of s (what the W functions take)
+    __wide = (s: str) -> u16[]:
+        out: u16[]
+        out.reserve(len(s) + 1)
+        i = 0
+        n = len(s)
+        loop i < n:
+            c = int(s[i])
+            cp = c
+            k = 1
+            if c >= 0xF0 and i + 3 < n:
+                cp = ((c & 7) << 18) | ((int(s[i + 1]) & 63) << 12) | ((int(s[i + 2]) & 63) << 6) | (int(s[i + 3]) & 63)
+                k = 4
+            else if c >= 0xE0 and i + 2 < n:
+                cp = ((c & 15) << 12) | ((int(s[i + 1]) & 63) << 6) | (int(s[i + 2]) & 63)
+                k = 3
+            else if c >= 0xC0 and i + 1 < n:
+                cp = ((c & 31) << 6) | (int(s[i + 1]) & 63)
+                k = 2
+            if cp >= 0x10000:
+                cp -= 0x10000
+                out.push(u16(0xD800 + (cp >> 10)))
+                out.push(u16(0xDC00 + (cp & 1023)))
+            else: out.push(u16(cp))
+            i += k
+        out.push(0)
+        out
+
+    # UTF-16 (n units, or up to a NUL when n < 0) as UTF-8
+    __narrow = (p: *u16, n0: int) -> str:
+        n = n0
+        if n < 0:
+            n = 0
+            loop p[n] != 0: n += 1
+        b: u8[]
+        b.reserve(n)
+        i = 0
+        loop i < n:
+            cp = int(p[i])
+            i += 1
+            if cp >= 0xD800 and cp < 0xDC00 and i < n:
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (int(p[i]) - 0xDC00)
+                i += 1
+            if cp < 0x80: b.push(u8(cp))
+            else if cp < 0x800:
+                b.push(u8(0xC0 | (cp >> 6)))
+                b.push(u8(0x80 | (cp & 63)))
+            else if cp < 0x10000:
+                b.push(u8(0xE0 | (cp >> 12)))
+                b.push(u8(0x80 | ((cp >> 6) & 63)))
+                b.push(u8(0x80 | (cp & 63)))
+            else:
+                b.push(u8(0xF0 | (cp >> 18)))
+                b.push(u8(0x80 | ((cp >> 12) & 63)))
+                b.push(u8(0x80 | ((cp >> 6) & 63)))
+                b.push(u8(0x80 | (cp & 63)))
+        str_from_bytes(b)
+
+    # ---------------- output, files ----------------
+    __win_out: *u8 = null
+    __win_err: *u8 = null
+
+    __win_write = (fd: int, p: *u8, n: int):
+        if __win_out == null:
+            SetConsoleOutputCP(65001)                         # (UTF-8)
+            __win_out = GetStdHandle(u32(0xFFFFFFF5))
+            __win_err = GetStdHandle(u32(0xFFFFFFF4))
+        h = __win_out
+        if fd == 2: h = __win_err
+        w: u32[] = [0]
+        off = 0
+        loop off < n:
+            if WriteFile(h, p + off, u32(min(n - off, 1 << 30)), data(w), null) == 0 or w[0] == 0: return
+            off += int(w[0])
+
+    __win_open_file = (path: str, write: bool) -> *u8:
+        wp = __wide(path)
+        h: *u8 = null
+        if write: h = CreateFileW(data(wp), u32(0x40000000), 1, null, 2, 0x80, null)      # GENERIC_WRITE, CREATE_ALWAYS
+        else: h = CreateFileW(data(wp), u32(0x80000000), 7, null, 3, 0x80, null)          # GENERIC_READ, OPEN_EXISTING
+        if (h as int) == -1: return null
+        h
+
+    __win_read_file = (path: str) -> str?:
+        h = __win_open_file(path, false)
+        if h == null: return none
+        defer CloseHandle(h)
+        size = [0]
+        if GetFileSizeEx(h, data(size)) == 0: return none
+        p = __str_new(size[0])
+        got = 0
+        r: u32[] = [0]
+        loop got < size[0]:
+            if ReadFile(h, p + 24 + got, u32(min(size[0] - got, 1 << 30)), data(r), null) == 0 or r[0] == 0: break
+            got += int(r[0])
+        (p as *int)[1] = got
+        p as str
+
+    __win_write_file = (path: str, contents: str) -> bool:
+        h = __win_open_file(path, true)
+        if h == null: return false
+        defer CloseHandle(h)
+        off = 0
+        n = len(contents)
+        w: u32[] = [0]
+        loop off < n:
+            if WriteFile(h, data(contents) + off, u32(min(n - off, 1 << 30)), data(w), null) == 0: return false
+            off += int(w[0])
+        true
+
+    __win_exists = (path: str) -> bool:
+        wp = __wide(path)
+        GetFileAttributesW(data(wp)) != u32(0xFFFFFFFF)
+
+    __win_delete = (path: str) -> bool:
+        wp = __wide(path)
+        DeleteFileW(data(wp)) != 0
+
+    __win_mkdir = (path: str) -> bool:
+        wp = __wide(path)
+        CreateDirectoryW(data(wp), null) != 0 or __win_exists(path)
+
+    # (WIN32_FIND_DATAW: the name, 260 UTF-16 units, is at 44)
+    __win_list_dir = (path: str) -> str[]:
+        out: str[]
+        wp = __wide(path + "\\*")
+        found = fill(u8(0), 600)
+        h = FindFirstFileW(data(wp), data(found))
+        if (h as int) == -1: return out
+        loop true:
+            name = __narrow((data(found) + 44) as *u16, -1)
+            if name != "." and name != "..": out.push(name)
+            if FindNextFileW(h, data(found)) == 0: break
+        FindClose(h)
+        out
+
+    # ---------------- the process ----------------
+    __win_args = () -> str[]:
+        out: str[]
+        n: i32[] = [0]
+        argv = CommandLineToArgvW(GetCommandLineW(), data(n))
+        if argv == null: return out
+        loop i in [0..int(n[0])): out.push(__narrow(argv[i], -1))
+        out
+
+    __win_env = (name: str) -> str?:
+        wn = __wide(name)
+        buf = fill(u16(0), 512)
+        n = int(GetEnvironmentVariableW(data(wn), data(buf), 512))
+        if n == 0: return none
+        if n > 512:
+            buf = fill(u16(0), n)
+            n = int(GetEnvironmentVariableW(data(wn), data(buf), u32(n)))
+        __narrow(data(buf), n)
+
+    __win_exe_path = () -> str:
+        buf = fill(u16(0), 4096)
+        n = int(GetModuleFileNameW(null, data(buf), 4096))
+        __narrow(data(buf), n)
+
+    __win_qpf = 0
+
+    __win_time_ns = () -> int:
+        if __win_qpf == 0:
+            f = [0]
+            QueryPerformanceFrequency(data(f))
+            __win_qpf = f[0]
+        c = [0]
+        QueryPerformanceCounter(data(c))
+        # (in two parts: count * 1e9 overflows after some hours of uptime)
+        (c[0] / __win_qpf) * 1000000000 + (c[0] % __win_qpf) * 1000000000 / __win_qpf
+
+    __win_sleep = (seconds: f64):
+        if seconds > 0.0: Sleep(u32(seconds * 1000.0))
+
+    __win_exit = (code: int): ExitProcess(u32(code))
+
+    __win_pages = (size: int) -> *u8:
+        p = VirtualAlloc(null, size, u32(0x3000), 4)           # MEM_COMMIT | MEM_RESERVE, read/write
+        if p == null: __out_of_memory()
+        p
+
+    __win_free_pages = (p: *u8): VirtualFree(p, 0, u32(0x8000))   # MEM_RELEASE
+
+    # run a program and wait for it: its exit code (-1: it could not be started)
+    __win_run = (path: str, argv: str[], wait: bool) -> int:
+        cmd = ""
+        loop i in 0.. and a in argv:
+            if i > 0: cmd += " "
+            if len(a) > 0 and find(a, " ") < 0 and find(a, "\"") < 0: cmd += a
+            else: cmd += "\"" + replace(a, "\"", "\\\"") + "\""
+        wcmd = __wide(cmd)
+        wpath = __wide(path)
+        si = fill(u8(0), 104)
+        (data(si) as *u32)[0] = 104
+        pi = fill(u8(0), 24)
+        flags = u32(0)
+        if not wait: flags = u32(0x00000008)                    # DETACHED_PROCESS
+        if CreateProcessW(data(wpath), data(wcmd), null, null, 0, flags, null, null, data(si), data(pi)) == 0: return -1
+        h = (data(pi) as **u8)[0]
+        if not wait:
+            CloseHandle(h)
+            CloseHandle((data(pi) as **u8)[1])
+            return 0
+        WaitForSingleObject(h, u32(0xFFFFFFFF))
+        code: u32[] = [0]
+        GetExitCodeProcess(h, data(code))
+        int(code[0])

@@ -1219,7 +1219,7 @@ static void add_universe(void) {
   for (size_t i = 0; i < sizeof tys / sizeof *tys; i++) scope_add(universe, internc(tys[i].n), S_TYPE, tys[i].t, NULL);
   // compile-time constants
   struct { const char *n; Node *v; } cs[4];
-  Node *tv = new_node(N_STR, (Pos){0}); tv->sval = internc(g_target_wasm ? "wasm" : "native");
+  Node *tv = new_node(N_STR, (Pos){0}); tv->sval = internc(g_target_wasm ? "wasm" : "linux");
   Node *dv = new_node(N_BOOL, (Pos){0}); dv->ival = 1;
   Node *bv = new_node(N_BOOL, (Pos){0}); bv->ival = 1;
   Node *wv = new_node(N_BOOL, (Pos){0}); wv->ival = 0;

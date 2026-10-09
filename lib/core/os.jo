@@ -9,6 +9,8 @@ args = () -> str[]:
         b = __wasm_bytes((p: *u8, cap: int): __wasm_args(p, cap))
         if b.len() > 0:
             loop a in split(str_from_bytes(b), "\0"): out.push(a)
+    else when TARGET == "windows":
+        return __win_args()
     else:
         sp = __argv() as *int
         argc = sp[0]
@@ -35,6 +37,8 @@ env = (name: str) -> str?:
             buf = fill(u8(0), n)
             __wasm_env(data(name), len(name), data(buf), n)
         return str_from_bytes(buf[..n))
+    else when TARGET == "windows":
+        return __win_env(name)
     else:
         sp = __argv() as *int
         argc = sp[0]
@@ -74,6 +78,8 @@ read_file = (path: str) -> str?:
     when TARGET == "wasm":
         if not __wasm_has(path): return none
         return str_from_bytes(__wasm_bytes((p: *u8, cap: int): __wasm_read_file(data(path), len(path), p, cap)))
+    else when TARGET == "windows":
+        return __win_read_file(path)
     else:
         fd = syscall(2, data(__zstr(path)), 0, 0)
         if fd < 0: return none
@@ -97,6 +103,8 @@ read_bytes = (path: str) -> u8[]?:
 write_file = (path: str, contents: str) -> bool:
     when TARGET == "wasm":
         return __wasm_write_file(data(path), len(path), data(contents), len(contents)) == 1
+    else when TARGET == "windows":
+        return __win_write_file(path, contents)
     else:
         fd = syscall(2, data(__zstr(path)), 0x241, 0x1A4)
         if fd < 0: return false
@@ -114,18 +122,24 @@ write_bytes = (path: str, b: u8[]) -> bool: write_file(path, str_from_bytes(b))
 file_exists = (path: str) -> bool:
     when TARGET == "wasm":
         return __wasm_has(path)
+    else when TARGET == "windows":
+        return __win_exists(path)
     else:
         syscall(21, data(__zstr(path)), 0) == 0
 
 make_executable = (path: str) -> bool:
     when TARGET == "wasm":
         return false
+    else when TARGET == "windows":
+        return true
     else:
         syscall(90, data(__zstr(path)), 0x1ED) == 0
 
 delete_file = (path: str) -> bool:
     when TARGET == "wasm":
         return false
+    else when TARGET == "windows":
+        return __win_delete(path)
     else:
         syscall(87, data(__zstr(path))) == 0
 
@@ -133,6 +147,8 @@ delete_file = (path: str) -> bool:
 time = () -> f64:
     when TARGET == "wasm":
         return __wasm_now() / 1000.0
+    else when TARGET == "windows":
+        return f64(__win_time_ns()) * 1e-9
     else:
         ts: (int, int)
         syscall(228, 1, &ts)
@@ -142,13 +158,17 @@ time = () -> f64:
 time_ns = () -> int:
     when TARGET == "wasm":
         return int(__wasm_now() * 1000000.0)
+    else when TARGET == "windows":
+        return __win_time_ns()
     else:
         ts: (int, int)
         syscall(228, 1, &ts)
         ts.0 * 1000000000 + ts.1
 
 sleep = (seconds: f64):
-    when TARGET != "wasm":
+    when TARGET == "windows":
+        __win_sleep(seconds)
+    else when TARGET == "linux":
         ts = (int(seconds), int((seconds - floor(seconds)) * 1e9))
         syscall(35, &ts, 0)
 
@@ -174,6 +194,8 @@ list_dir = (path: str) -> str[]:
         b = __wasm_bytes((p: *u8, cap: int): __wasm_list_dir(data(path), len(path), p, cap))
         if b.len() > 0:
             loop n in split(str_from_bytes(b), "\n"): out.push(n)
+    else when TARGET == "windows":
+        return __win_list_dir(path)
     else:
         fd = syscall(2, data(__zstr(path)), 0x10000, 0)
         if fd < 0: return out
@@ -197,6 +219,8 @@ exe_path = () -> str:
         a = args()
         if a.len() > 0: return a[0]
         return ""
+    else when TARGET == "windows":
+        return __win_exe_path()
     else:
         buf = __alloc(4096)
         n = syscall(89, data("/proc/self/exe"), buf, 4095)
@@ -212,6 +236,12 @@ exe_path = () -> str:
 exec = (path: str, argv: str[]) -> bool:
     when TARGET == "wasm":
         return false
+    else when TARGET == "windows":
+        # (Windows cannot replace a process: run the program, then end with its exit code)
+        code = __win_run(path, argv, true)
+        if code < 0: return false
+        __win_exit(code)
+        return true
     else:
         ptrs = __alloc(8 * (argv.len() + 1))
         pp = ptrs as **u8
@@ -228,6 +258,8 @@ exec = (path: str, argv: str[]) -> bool:
 spawn_detached = (path: str, argv: str[]) -> bool:
     when TARGET == "wasm":
         return false
+    else when TARGET == "windows":
+        return __win_run(path, argv, false) == 0
     else:
         pid = syscall(57)                            # fork
         if pid < 0: return false
@@ -245,12 +277,16 @@ spawn_detached = (path: str, argv: str[]) -> bool:
 chmod = (path: str, mode: int) -> bool:
     when TARGET == "wasm":
         return false
+    else when TARGET == "windows":
+        return true
     else:
         syscall(90, data(__zstr(path)), mode) == 0
 
 mkdir = (path: str) -> bool:
     when TARGET == "wasm":
         return true
+    else when TARGET == "windows":
+        return __win_mkdir(path)
     else:
         r = syscall(83, data(__zstr(path)), 0x1ED)
         r == 0 or r == -17

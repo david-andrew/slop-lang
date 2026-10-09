@@ -27,6 +27,8 @@ __job_idle = (lo: int, hi: int): pass
 cpu_count = () -> int:
     when TARGET == "wasm":
         return 1
+    else when TARGET == "windows":
+        return max(int(GetActiveProcessorCount(u16(0xFFFF))), 1)
     else:
         mask = fill(0, 16)
         r = syscall(204, 0, 128, data(mask))           # sched_getaffinity
@@ -40,8 +42,36 @@ cpu_count = () -> int:
         if n < 1: n = 1
         n
 
-__futex_wait = (p: *int, v: int): syscall(202, p, 128, v, 0)      # FUTEX_WAIT_PRIVATE
-__futex_wake = (p: *int): syscall(202, p, 129, 0x7FFFFFFF)        # FUTEX_WAKE_PRIVATE (all)
+when TARGET == "windows":
+    @lib("kernel32.dll")
+    extern GetActiveProcessorCount = (group: u16) -> u32
+    @lib("kernelbase.dll")
+    extern WaitOnAddress = (p: *u8, compare: *u8, size: int, ms: u32) -> i32
+    @lib("kernelbase.dll")
+    extern WakeByAddressAll = (p: *u8)
+    @lib("kernel32.dll")
+    extern CreateThread = (sec: *u8, stack: int, start: *u8, param: *u8, flags: u32, id: *u32) -> *u8
+
+    __futex_wait = (p: *int, v: int):
+        cmp = [v]
+        WaitOnAddress(p as *u8, data(cmp) as *u8, 8, u32(0xFFFFFFFF))
+    __futex_wake = (p: *int): WakeByAddressAll(p as *u8)
+
+    # a worker starts on a small stack of Windows' and moves to its own in __tstack_base (where
+    # __tid finds which worker it is), entering __win_worker as if called
+    @cabi
+    __win_thread_start = (id: int) -> int:
+        top = __tstack_base + (id << __TSTACK_SHIFT) - 16
+        (top as *int)[1] = 0
+        entry: cfn() = __win_worker
+        __jump(entry as *u8, top + 8)
+        0
+
+    @cabi
+    __win_worker = (): __worker_main(__tid())
+else:
+    __futex_wait = (p: *int, v: int): syscall(202, p, 128, v, 0)      # FUTEX_WAIT_PRIVATE
+    __futex_wake = (p: *int): syscall(202, p, 129, 0x7FFFFFFF)        # FUTEX_WAKE_PRIVATE (all)
 
 # claim and run chunks of the current job until none are left
 __run_chunks = ():
@@ -80,14 +110,28 @@ __pool_start = ():
         __pool_ctl = __alloc(64) as *int
         # one reserved region for all worker stacks (pages are only touched as needed)
         size = __MAX_THREADS << __TSTACK_SHIFT
-        base = syscall(9, 0, size, 3, 0x22 | 0x4000, -1, 0)       # MAP_PRIVATE|ANON|NORESERVE
-        if base < 0 and base > -4096: return
-        __tstack_base = base as *u8
-        entry: cfn(int) = __worker_main
-        loop i in [0..n):
-            top = __tstack_base + ((i + 1) << __TSTACK_SHIFT)
-            if __clone_thread(entry as *u8, i + 1, top) < 0: break
-            __pool_workers += 1
+        when TARGET == "windows":
+            # (what the workers call, looked up here first)
+            __futex_wake(__pool_ctl)
+            __futex_wait(__pool_ctl, 1)
+            base = VirtualAlloc(null, size, u32(0x2000), 4)               # MEM_RESERVE
+            if base == null: return
+            __tstack_base = base
+            start: cfn(int) -> int = __win_thread_start
+            loop i in [0..n):
+                # (a worker's stack is committed whole: no guard pages to grow it)
+                if VirtualAlloc(base + (i << __TSTACK_SHIFT), 1 << __TSTACK_SHIFT, u32(0x1000), 4) == null: break
+                if CreateThread(null, 65536, start as *u8, (i + 1) as *u8, 0, null) == null: break
+                __pool_workers += 1
+        else:
+            base = syscall(9, 0, size, 3, 0x22 | 0x4000, -1, 0)       # MAP_PRIVATE|ANON|NORESERVE
+            if base < 0 and base > -4096: return
+            __tstack_base = base as *u8
+            entry: cfn(int) = __worker_main
+            loop i in [0..n):
+                top = __tstack_base + ((i + 1) << __TSTACK_SHIFT)
+                if __clone_thread(entry as *u8, i + 1, top) < 0: break
+                __pool_workers += 1
 
 # run f(lo, hi) over 0..total split into chunks, on all threads; returns when everything is done
 __parallel_run = (total: int, f: (int, int) -> void):

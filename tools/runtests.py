@@ -25,13 +25,17 @@ for t in tests:
     exp_path = t[:-3] + ".out"
     expected = open(exp_path).read() if os.path.exists(exp_path) else None
     exe = f"/tmp/sloppy-tests/{name}"
+    if target == "windows":
+        # (run under Wine: SLOPPY_WINE_DIR is shared with the container SLOPPY_WINE runs in)
+        exe = os.path.join(os.environ.get("SLOPPY_WINE_DIR", "/tmp/winshare"), "tests", name)
+        os.makedirs(os.path.dirname(exe), exist_ok=True)
     if compiler == "sloppy0" and "# requires: sloppy" in open(t).read(2000):
         continue
     if compiler == "sloppy0":
         cmd = [os.path.join(root, "stage0", "sloppy0"), t, "-o", exe]
     else:
         sloppy = os.path.join(root, "bin", "sloppy") if compiler == "sloppy" else os.path.abspath(compiler)
-        cmd = [sloppy, "build", t, "-o", exe] + (["--target", "wasm"] if target == "wasm" else []) + (["--release"] if release else [])
+        cmd = [sloppy, "build", t, "-o", exe] + (["--target", target] if target != "native" else []) + (["--release"] if release else [])
         env = dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib"))
     t0 = time.time()
     r = subprocess.run(cmd, capture_output=True, text=True, env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")))
@@ -41,6 +45,8 @@ for t in tests:
         continue
     if target == "wasm":
         run = ["node", os.path.join(root, "tools", "runwasm.js"), exe + ".html"]
+    elif target == "windows":
+        run = os.environ.get("SLOPPY_WINE", "podman exec sloppy-win /w/run.sh").split() + ["tests/" + name + ".exe"]
     else:
         run = [exe]
     try:

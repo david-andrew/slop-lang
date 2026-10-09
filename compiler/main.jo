@@ -21,6 +21,7 @@ use 'loops.jo'
 use 'x64.jo'
 use 'dwarf.jo'
 use 'elf.jo'
+use 'pe.jo'
 use 'wasm.jo'
 use 'ide.jo'
 use 'lsp.jo'
@@ -204,10 +205,18 @@ compile = (path: str, out0: str) -> str:
     if lower_only: opt_release = false
     tgt = build_target
     if len(cli_target) > 0: tgt = cli_target
+    if tgt == "" or tgt == "native": tgt = "linux"
+    if tgt != "linux" and tgt != "windows" and tgt != "wasm":
+        eprint("sloppy: unknown target '{tgt}' (native, linux, windows or wasm)")
+        exit(2)
     target_wasm = tgt == "wasm"
+    target_windows = tgt == "windows"
     if target_wasm: ptr_size = 4
     out = out0
     if target_wasm and not ends_with(out, ".html"): out = out + ".html"
+    if target_windows:
+        if ends_with(out, ".bin"): out = out[..len(out) - 4)
+        if not ends_with(out, ".exe"): out = out + ".exe"
     init_types()
     want_cpu_flag = opt_release and not target_wasm and not lower_only
     check_program(path)
@@ -295,6 +304,16 @@ compile = (path: str, out0: str) -> str:
         s = rfind(title, "/")
         if s >= 0: title = title[s + 1..]
         ok = write_html(out, mod, title)
+    else if target_windows:
+        x64_stubs()
+        entry = x64_entry_win(roots, main_lf)
+        text_rva, ro_rva, data_rva, idata_size = pe_layout(code.len(), rodata.len())
+        img_text_addr = PE_BASE + text_rva
+        img_ro_addr = PE_BASE + ro_rva
+        img_data_addr = PE_BASE + data_rva + idata_size
+        x64_resolve(img_text_addr, img_ro_addr, img_data_addr)
+        ok = write_pe(out, code, entry, rodata, data_size + 8 + bss_reserve, update_fn != 0 or draw_fn != 0)
+        size = code.len()
     else:
         x64_stubs()
         entry = x64_entry(roots, main_lf)

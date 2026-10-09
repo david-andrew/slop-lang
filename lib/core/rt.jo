@@ -67,6 +67,8 @@ __os_pages = (size: int) -> *u8:
         p = __wasm_grow(pages)
         if p < 0: __out_of_memory()
         return (p * 65536) as *u8
+    else when TARGET == "windows":
+        return __win_pages(size)
     else:
         p = syscall(9, 0, size, 3, 0x22, -1, 0)
         if p < 0 and p > -4096: __out_of_memory()
@@ -75,7 +77,9 @@ __os_pages = (size: int) -> *u8:
         return p as *u8
 
 __os_free_pages = (p: *u8, size: int):
-    when TARGET != "wasm":
+    when TARGET == "windows":
+        __win_free_pages(p)
+    else when TARGET == "linux":
         syscall(11, p, size)
 
 __out_of_memory = ():
@@ -200,7 +204,7 @@ __grow_big = (p: *u8, used: int, size: int) -> *u8:
     h = (p - 16) as *int
     total = (size + 16 + 65535) & ~65535
     if total <= h[0]: return p
-    when TARGET != "wasm":
+    when TARGET == "linux":
         q = syscall(25, h, h[0], total, 1, 0)
         if q < 0 and q > -4096: __out_of_memory()
         if total >= 2 << 20: syscall(28, q, total, 14)       # MADV_HUGEPAGE
@@ -264,6 +268,8 @@ __mem_eq = (a: *u8, b: *u8, n: int) -> bool:
 __write_fd = (fd: int, p: *u8, n: int):
     when TARGET == "wasm":
         __wasm_write(fd, p, n)
+    else when TARGET == "windows":
+        __win_write(fd, p, n)
     else:
         off = 0
         loop off < n:
@@ -276,6 +282,8 @@ __write_err = (s: str): __write_fd(2, data(s), len(s))
 __exit = (code: int):
     when TARGET == "wasm":
         __wasm_exit(code)
+    else when TARGET == "windows":
+        __win_exit(code)
     else:
         syscall(231, code)
 

@@ -8,6 +8,7 @@ use 'types.jo'
 use 'check.jo'
 use 'ast.jo'
 use 'elf.jo'
+use 'pe.jo'
 
 const RAX = 0
 const RCX = 1
@@ -1277,6 +1278,41 @@ emit_call_args = (start: int, n: int, extra: int, extra_dst: int):
     emit_parallel(moves)
     call_stack_bytes = pad + stack_args.len() * 8
 
+# a call of a C function on Windows: the first four arguments in rcx, rdx, r8, r9 or xmm0-3 by
+# position, the rest on the stack above 32 bytes the callee may use ("shadow space")
+emit_call_args_win64 = (start: int, n: int, extra: int, extra_dst: int):
+    regs = [RCX, RDX, 8, 9]
+    stack_args: int[]
+    moves: PMove[]
+    loop k in [0..n):
+        v = int(ir.args[start + k])
+        if k < 4:
+            if vtype(v) == VI: moves.push(PMove(regs[k], v))
+            else: moves.push(PMove(XMM + k, v))
+        else: stack_args.push(v)
+    if extra >= 0: moves.push(PMove(extra_dst, extra))
+    pad = (stack_args.len() % 2) * 8
+    if pad > 0:
+        rex(true, 0, 0, RSP, false)
+        b(0x83)
+        modrr(5, RSP)
+        b(8)
+    i = stack_args.len() - 1
+    loop i >= 0:
+        v = stack_args[i]
+        if vtype(v) == VI: ld(RAX, v)
+        else:
+            lds(0, v, vtype(v))
+            movq_rx(RAX, 0)
+        b(0x50)
+        i -= 1
+    rex(true, 0, 0, RSP, false)              # sub rsp, 32
+    b(0x83)
+    modrr(5, RSP)
+    b(32)
+    emit_parallel(moves)
+    call_stack_bytes = pad + stack_args.len() * 8 + 32
+
 pop_call_stack = ():
     if call_stack_bytes > 0:
         rex(true, 0, 0, RSP, false)
@@ -1823,7 +1859,8 @@ emit_ins = (pos: int, ins: Ins):
             b(0x8D)
             b(((r & 7) << 3) | 5)
             b32(0)
-            call_fix.push((code.len() - 4, int(ins.imm)))
+            if target_windows and lf_is_cabi(int(ins.imm)): cabi_fix.push((code.len() - 4, int(ins.imm)))
+            else: call_fix.push((code.len() - 4, int(ins.imm)))
             st(d, r)
         copy:
             size = int(ins.imm)
@@ -1998,7 +2035,8 @@ emit_ins = (pos: int, ins: Ins):
             pop_call_stack()
             store_result(ins)
         calli, callc:
-            emit_call_args(a, bb, int(ins.c), R11)
+            if op == .callc and target_windows: emit_call_args_win64(a, bb, int(ins.c), R11)
+            else: emit_call_args(a, bb, int(ins.c), R11)
             b(0x41); b(0xFF); b(0xD3)     # call r11
             call_site(ins)
             pop_call_stack()
@@ -2014,6 +2052,12 @@ emit_ins = (pos: int, ins: Ins):
             if ins.imm == 1:
                 r = dreg(d, RAX)
                 rel_fixup_lea(r, 1, 0)
+                mov_rm(r, r, 0)
+                st(d, r)
+            else if ins.imm == 10:
+                # the function in entry c of the import address table, below the globals (pe.jo)
+                r = dreg(d, RAX)
+                rel_fixup_lea(r, 1, pe_iat_off(int(ins.c)))
                 mov_rm(r, r, 0)
                 st(d, r)
             else:
@@ -2174,6 +2218,10 @@ x64_function = ():
         if ci < call_pos.len() and call_pos[ci] == pos: ci += 1
     elf_syms.push((sym_name(ir.name), fn_start, code.len() - fn_start))
     fn_len[ir.fn_index] = code.len() - fn_start
+    if target_windows and ir.cabi:
+        pts: int[]
+        loop p in [0..ir.nparams): pts.push(vtype(p))
+        x64_cabi_adapter(ir.fn_index, pts)
     if ra_stat:
         if ra_verbose:
             sp = 0
@@ -2215,6 +2263,80 @@ sym_name = (n: str) -> str:
             if c < '0' or c > '9': return s
         return s[..u)
     s
+
+# the entry point of a Windows program: called with the stack 8 bytes off 16-byte alignment;
+# the initializers and main, then ExitProcess(0) from the import table
+x64_entry_win = (inits: int[], main_lf: int) -> int:
+    loop code.len() % 16 != 0: b(0xCC)
+    start = code.len()
+    line_rows.push(code.len())
+    line_rows.push(0)
+    row_pos = 0
+    rex(true, 0, 0, RSP, false)               # sub rsp, 8
+    b(0x83)
+    modrr(5, RSP)
+    b(8)
+    loop f in inits:
+        b(0xE8)
+        b32(0)
+        call_fix.push((code.len() - 4, f))
+    if main_lf >= 0:
+        b(0xE8)
+        b32(0)
+        call_fix.push((code.len() - 4, main_lf))
+    b(0x31); b(0xC9)                          # xor ecx, ecx
+    rex(true, 0, 0, RSP, false)               # sub rsp, 32 (shadow space)
+    b(0x83)
+    modrr(5, RSP)
+    b(32)
+    b(0xFF); b(0x15); b32(0)                  # call [rip + ExitProcess]
+    data_fix.push((code.len() - 4, 1, pe_iat_off(0)))
+    b(0xCC)
+    elf_syms.push(("_start", start, code.len() - start))
+    start
+
+# Windows calls a @cabi function (a window procedure...) with its own convention: an adapter
+# moves the arguments where Sloppy code expects them and keeps what Windows expects kept
+# (rdi, rsi, xmm6-15). Taking the function's address gives the adapter's (cabi_fix).
+cabi_adapter: {int: int} = {}       # function -> its adapter's offset
+cabi_fix: (int, int)[]
+
+x64_cabi_adapter = (lf: int, ptypes: int[]):
+    if ptypes.len() > 4: fatal(0, "a @cabi function called from C on Windows takes at most 4 parameters ({lfuncs[lf].name} takes {ptypes.len()})")
+    loop code.len() % 16 != 0: b(0xCC)
+    cabi_adapter[lf] = code.len()
+    b(0x55)                                   # push rbp
+    mov_rr(RBP, RSP)
+    b(0x57)                                   # push rdi
+    b(0x56)                                   # push rsi
+    rex(true, 0, 0, RSP, false)               # sub rsp, 160
+    b(0x81)
+    modrr(5, RSP)
+    b32(160)
+    loop i in [0..10): vmov_mr(RSP, 16 * i, 6 + i, VX)
+    # (in order: no argument is overwritten before it is moved)
+    wregs = [RCX, RDX, 8, 9]
+    ni = 0
+    nf = 0
+    loop k in 0.. and t in ptypes:
+        if t == VI:
+            mov_rr(int_arg_regs[ni], wregs[k])
+            ni += 1
+        else:
+            vmov_rr(nf, k, VX)
+            nf += 1
+    b(0xE8)
+    b32(0)
+    call_fix.push((code.len() - 4, lf))
+    loop i in [0..10): vmov_rm(6 + i, RSP, 16 * i, VX)
+    rex(true, 0, 0, RSP, false)               # add rsp, 160
+    b(0x81)
+    modrr(0, RSP)
+    b32(160)
+    b(0x5E)                                   # pop rsi
+    b(0x5F)                                   # pop rdi
+    b(0x5D)                                   # pop rbp
+    b(0xC3)
 
 x64_entry = (inits: int[], main_lf: int) -> int:
     loop code.len() % 16 != 0: b(0xCC)
@@ -2436,8 +2558,14 @@ x64_stubs = ():
                0x5B, 0xC3,                               # pop rbx; ret
                0x31, 0xC0, 0x5B, 0xC3]: b(x)             # no: xor eax, eax; pop rbx; ret
 
+lf_is_cabi = (lf: int) -> bool: lfuncs[lf].kind == LK_INST and fns[lfuncs[lf].inst].cabi
+
 x64_resolve = (text_addr: int, ro_addr: int, data_addr: int):
     if stub_fix.len() > 0 and stub_addr[2] < 0: ice("stubs not emitted")
+    loop f in cabi_fix:
+        a = cabi_adapter.get(f.1) ?? -1
+        if a < 0: ice("no adapter for {lfuncs[f.1].name}")
+        patch32(f.0, a - (f.0 + 4))
     loop f in stub_fix: patch32(f.0, stub_addr[f.1] - (f.0 + 4))
     loop f in call_fix:
         target = fn_addr[f.1]

@@ -352,22 +352,24 @@ dl_error = () -> str:
     __cstr(dl_error_fn())
 
 # resolve a C function for `@lib(...) extern fn` declarations (called on first use)
-__ffi_resolve = (lib: str, name: str) -> *u8:
-    h = __lib_handle(lib)
-    if h == null: panic("cannot load library {lib} (needed for {name}): {dl_error()}")
-    p = dl_sym(h, name)
-    if p == null: panic("function {name} not found in {lib}")
-    p
+# (Windows programs: lib/core/windows.jo)
+when TARGET != "windows":
+    __ffi_resolve = (lib: str, name: str) -> *u8:
+        h = __lib_handle(lib)
+        if h == null: panic("cannot load library {lib} (needed for {name}): {dl_error()}")
+        p = dl_sym(h, name)
+        if p == null: panic("function {name} not found in {lib}")
+        p
 
-__lib_names: str[]
-__lib_handles: *u8[]
-__lib_handle = (lib: str) -> *u8:
-    loop i in 0.. and n in __lib_names:
-        if n == lib: return __lib_handles[i]
-    h = dl_open(lib)
-    __lib_names.push(lib)
-    __lib_handles.push(h)
-    h
+    __lib_names: str[]
+    __lib_handles: *u8[]
+    __lib_handle = (lib: str) -> *u8:
+        loop i in 0.. and n in __lib_names:
+            if n == lib: return __lib_handles[i]
+        h = dl_open(lib)
+        __lib_names.push(lib)
+        __lib_handles.push(h)
+        h
 
-# true if the library can be loaded on this system
-lib_available = (lib: str) -> bool: __lib_handle(lib) != null
+    # true if the library can be loaded on this system
+    lib_available = (lib: str) -> bool: __lib_handle(lib) != null

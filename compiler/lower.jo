@@ -11,6 +11,7 @@ use 'check.jo'
 use 'expr.jo'
 use 'ir.jo'
 use 'glsl.jo'
+use 'pe.jo'
 
 const VC_VOID = 0
 const VC_INT = 1
@@ -4069,11 +4070,17 @@ lower_extern_thunk = (lf: int, f: int):
     ffi_offs.push(slot)
     ffi_keys.push("ffi|{lib}|{nm}")
     fp = vreg(VI)
-    e_mov(fp, e_load(VI, e_gaddr(slot), 0, 8))
-    iff(e_bin(.eq, VI, fp, e_iconst(0)))
-    e_mov(fp, e_call(rt("__ffi_resolve"), [e_daddr(str_data(lib)), e_daddr(str_data(nm))], VI))
-    e_store(e_gaddr(slot), 0, fp, 8)
-    endc()
+    imp = -1
+    if target_windows and lower(lib) == "kernel32.dll": imp = pe_imports.index_of(nm)
+    if imp >= 0:
+        # (one of the functions the program imports: from the import table, compiler/pe.jo)
+        emit(.intr, VI, fp, 0, 0, i32(imp), 10)
+    else:
+        e_mov(fp, e_load(VI, e_gaddr(slot), 0, 8))
+        iff(e_bin(.eq, VI, fp, e_iconst(0)))
+        e_mov(fp, e_call(rt("__ffi_resolve"), [e_daddr(str_data(lib)), e_daddr(str_data(nm))], VI))
+        e_store(e_gaddr(slot), 0, fp, 8)
+        endc()
     r = e_calli(fp, ps, ret_vt(ret), true)
     if vc(ret) == VC_INT: r = norm(r, ret)
     e_ret(r)

@@ -1420,6 +1420,7 @@ check_intrinsic = (n: int, id: IN, args: int[], expected: int) -> int:
         else if types[t].kind == .array: r = mk_ptr(int(types[t].elem))
         else: fatal(nodes[n].pos, "data() needs an array or string")
     else if id == .syscall:
+        if target_windows: fatal(nodes[n].pos, "syscall() is Linux's: a Windows program calls the system's DLL functions (lib/core/windows.jo)")
         if nargs < 1 or nargs > 7: fatal(nodes[n].pos, "syscall takes 1 to 7 arguments")
         loop i in [0..nargs):
             t = arg_type(args, i, 0)
