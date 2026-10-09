@@ -347,7 +347,7 @@ is_managed = (t0: int) -> bool:
     false
 
 # can a value of this type hold a function value (a closure)? (through arrays, optionals, tuples,
-# struct and enum fields, union members and type arguments)
+# struct and enum fields, and union members)
 has_fn_memo: {int: int} = {}          # 1: being worked out (a recursive type), 2: yes, 3: no
 
 type_has_fn = (t0: int) -> bool:
@@ -365,8 +365,10 @@ type_has_fn = (t0: int) -> bool:
     si = int(types[t].st)
     check_struct_fields(si)
     r = false
-    loop i in [0..int(structs[si].ntargs)):
-        if type_has_fn(struct_targ(si, i)): r = true
+    # (a union's members are its type arguments; other structs hold only what their fields do)
+    if structs[si].union_:
+        loop i in [0..int(structs[si].ntargs)):
+            if type_has_fn(struct_targ(si, i)): r = true
     loop i in [0..int(structs[si].nfields)):
         if type_has_fn(int(fields[int(structs[si].fields) + i].type)): r = true
     loop v in [0..int(structs[si].nvariants)):

@@ -1,0 +1,14 @@
+# xs.push(S(...)): an element made from the array itself holds the array as it was before
+# requires: sloppy
+struct Node:
+    name: str
+    children: Node[]
+make = () -> int:
+    xs: Node[]
+    xs.push(Node("a"))
+    xs.push(Node("b", xs))
+    xs[1].children.len()
+base = alloc_count()
+n = 0
+loop i in [0..50): n = make()
+print(n, alloc_count() - base <= 1)

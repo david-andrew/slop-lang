@@ -1,6 +1,6 @@
 # A language server (`sloppy lsp`): the Language Server Protocol over standard input and output,
 # for editors. Each question about a program is answered by checking it in a child process
-# (fork): the checker then always starts afresh, sees the editor's unsaved text (ide_texts), and
+# (fork; on Windows, this program again: run_child_w32): the checker then always starts afresh, sees the editor's unsaved text (ide_texts), and
 # writes what it learned as lines (see ide.jo). Checks take tens of milliseconds, so there is no
 # incremental state to keep right; results of the last check are kept for hover, go to
 # definition, references, rename, signature help and inlay hints.

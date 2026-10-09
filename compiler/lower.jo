@@ -2213,6 +2213,8 @@ is_plain_ctor = (e: int) -> bool:
     loop i in [0..nkids(e)):
         a = kid(e, i)
         if a != 0 and not is_plain_expr(a): return false
+        # (a value that could hold the array being pushed to is read before it grows: xs.push(S(xs)))
+        if a != 0 and is_managed(ntype(a)) and types[prune(ntype(a))].kind != .str_: return false
     true
 
 is_plain_expr = (e: int) -> bool:

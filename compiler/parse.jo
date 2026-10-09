@@ -726,6 +726,10 @@ parse_postfix = (e0: int) -> int:
                 t = advance()
                 txt = tok_src(t)
                 d = find_byte(txt, '.')
+                ok = d > 0 and d < len(txt) - 1
+                loop i in [0..len(txt)):
+                    if i != d and (txt[i] < '0' or txt[i] > '9'): ok = false
+                if not ok: fatal(toks[t].pos, "expected a field name or a tuple index after '.', found '{txt}'")
                 nodes[f].name = i32(intern(txt[..d)))
                 nodes[f].aux = -2
                 nodes[f].ival = to_int(txt[..d)) ?? 0

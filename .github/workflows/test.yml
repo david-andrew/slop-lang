@@ -24,6 +24,7 @@ jobs:
           python3 tools/lsptest.py
           python3 tools/rendertest.py --no-gpu
           python3 tools/watchtest.py
+          python3 tools/fuzz_errors.py 3000 --seed 1
       - name: Keep the rendered frames (when a test failed)
         if: failure()
         uses: actions/upload-artifact@v4

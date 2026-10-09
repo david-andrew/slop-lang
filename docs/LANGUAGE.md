@@ -152,7 +152,10 @@ precedence, so `flags & MASK == 0` is `(flags & MASK) == 0`. `x in xs` tests mem
 Every type in Sloppy is a *value*: assignment copies. Arrays, strings and maps are
 reference counted with copy-on-write, so copies are O(1) and a real copy only
 happens when you mutate something that is shared. There are no reference types,
-so reference cycles (and leaks) are impossible, and there is no garbage collector.
+so reference cycles (and leaks) do not happen, and there is no garbage collector. (Two ways
+around that remain: raw pointers, and a function that stores a copy of an array into an element
+of that same array which it is changing through a `mut` parameter, as in
+`attach(nodes[0], nodes)` with `attach = (n: mut Node, all: Node[]): n.children = all`.)
 
 ```gdscript
 a = [1, 2, 3]

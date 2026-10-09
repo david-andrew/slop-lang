@@ -121,6 +121,7 @@ bin/sloppy check file.jo        # type check only
 ```
 
 `bin/sloppy` finds the standard library in `lib/` next to its own directory (or `$SLOPPY_LIB`).
+Working on the compiler itself: [docs/COMPILER.md](docs/COMPILER.md).
 
 **In the browser:** `tools/playground.py` builds `build/playground.html`, one self-contained
 page (1.4 MB) with an editor, examples and the Sloppy compiler itself, compiled to WebAssembly:

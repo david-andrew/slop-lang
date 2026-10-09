@@ -14,34 +14,24 @@ games, with the shortest path from an idea to something running and shippable.
 Items are in priority order. Sizes: S = days, M = a week or two, L = several weeks. (This order
 was revised after an outside review of the project; its verified findings are in item 1.)
 
-## 1. Correctness first, and kept that way (M, then ongoing)
+## 1. Correctness first, and kept that way (ongoing)
 
-What Sloppy already promises has to hold before more is built on it. Verified problems:
+Done in 0.3.1, from the outside review: closures can no longer form reference cycles (a local
+variable that can hold functions cannot be shared with closures); a generic type that expands
+without end is an error, not a compiler crash; `sloppy check` and the language server follow the
+build block's target; the build block's `output` works and its mistakes are errors; `load_wav`
+reads 24/32-bit and float64 files and rejects what it cannot read; `reverse(str)` keeps
+characters whole; `to_int` is none for numbers that do not fit. Gates: error tests reject
+compiler crashes, compiles time out, CI runs the web target in release mode and a mutation
+fuzzer (`tools/fuzz_errors.py`: real programs broken at random must get an error, never a crash);
+docs/COMPILER.md describes the compiler for contributors.
 
-- **Closures can form reference cycles that leak**: an array of closures that capture the array
-  itself is never freed (`fs: (() -> int)[]; f = () -> int: fs.len(); fs.push(f)` leaks 3
-  allocations per call). The docs say cycles cannot happen. Decide the rule (forbid a closure
-  from capturing a container it is stored in, weak captures, or a cycle collector for closure
-  environments only), test it, and correct the docs now.
-- **The compiler overflows its stack** printing a type that expands without end
-  (`struct Box[T]: child: Box[T[]][]`, then `print(Box[int]())`): bound generic expansion and
-  report an error at the source.
-- **`sloppy check` and the language server ignore `target = windows`** (they only set up the
-  wasm target), so `when TARGET == "windows"` branches are checked the wrong way round. One
-  shared target/configuration setup for build, check and the LSP.
-- **The `build:` block's `output` option is ignored**, and misspelled keys (`targte`) are
-  accepted silently. One parser for the build block, with errors for unknown keys.
-- **24-bit WAV files load as silence**: support 24-bit PCM, and reject formats that are not
-  supported with a clear error instead of zeros.
-- **`reverse(str)` reverses bytes**, which breaks UTF-8: reverse code points.
-- **`to_int` wraps out-of-range input** (`to_int("18446744073709551616")` is `0`): return none.
-
-And the gates that keep it this way:
-- Error tests must see a compiler diagnostic, never an internal panic; every compile in the test
-  runner has a timeout; CI also runs the web target in release mode.
-- Fuzz malformed and unusual programs (the existing fuzzer only makes valid ones) and keep each
-  crash found as a test.
-- A short contributor guide to the compiler: its phases, what state each owns, how to add a test.
+Left:
+- An element changed through a `mut` parameter while the function also holds a copy of its
+  array can be made to contain that copy (`attach(nodes[0], nodes)` storing `nodes` into the
+  node): a cycle, and a write the copy sees. Copy-in/copy-out for such arguments would close it,
+  at a cost to the common `update(players[i])`; decide with real game code in hand.
+- Keep each bug found as a test; run the fuzzers before releases.
 
 ## 2. Finish one small game, with its tutorial (M, ongoing)
 
