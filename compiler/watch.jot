@@ -978,8 +978,10 @@ w_i64 = (b: u8[], at: int) -> int:
 watch_run = ():
     a: i32[] = [-1, -1]
     b: i32[] = [-1, -1]
+    c: i32[] = [-1, -1]                               # (closed by exec: then the file can go)
     syscall(293, data(a), 0x80000)
     syscall(293, data(b), 0x80000)
+    syscall(293, data(c), 0x80000)
     pid = syscall(57)
     if pid == 0:
         syscall(33, int(a[0]), 3)
@@ -990,9 +992,15 @@ watch_run = ():
         syscall(60, 127)
     syscall(3, int(a[0]))
     syscall(3, int(b[1]))
+    syscall(3, int(c[1]))
     w_to = int(a[1])
     w_from = int(b[0])
     w_pid = pid
+    # the running program keeps its file: nothing is left behind (also after ctrl-c)
+    one = [0]
+    syscall(0, int(c[0]), data(one), 1)
+    syscall(3, int(c[0]))
+    delete_file(w_out)
 
 watch_stop = ():
     if w_pid < 0: return
