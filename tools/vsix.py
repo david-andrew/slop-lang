@@ -21,7 +21,12 @@ for dirpath, _, names in os.walk(src):
     for n in sorted(names):
         if n.endswith(".vsix"): continue
         full = os.path.join(dirpath, n)
-        files.append((full, "extension/" + os.path.relpath(full, src)))
+        arc = "extension/" + os.path.relpath(full, src)
+        # (as vsce does: the marketplace fails, "TF400898: An Internal Error Occurred", on a file
+        # without an extension, whose content type would be the one for "")
+        if arc == "extension/LICENSE": arc += ".txt"
+        if arc == "extension/README.md": arc = "extension/readme.md"
+        files.append((full, arc))
 
 manifest = f"""<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
@@ -38,6 +43,7 @@ manifest = f"""<?xml version="1.0" encoding="utf-8"?>
       <Property Id="Microsoft.VisualStudio.Code.ExtensionPack" Value="" />
       <Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="workspace" />
       <Property Id="Microsoft.VisualStudio.Code.LocalizedLanguages" Value="" />
+      <Property Id="Microsoft.VisualStudio.Code.EnabledApiProposals" Value="" />
       <Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true" />
       <Property Id="Microsoft.VisualStudio.Code.ExecutesCode" Value="true" />
       <Property Id="Microsoft.VisualStudio.Services.Content.Pricing" Value="Free" />
@@ -47,7 +53,7 @@ manifest = f"""<?xml version="1.0" encoding="utf-8"?>
       <Property Id="Microsoft.VisualStudio.Services.Links.Support" Value="{pkg['bugs']['url']}" />
       <Property Id="Microsoft.VisualStudio.Services.Links.Learn" Value="{pkg['homepage']}" />
     </Properties>
-    <License>extension/LICENSE</License>
+    <License>extension/LICENSE.txt</License>
     <Icon>extension/images/icon.png</Icon>
   </Metadata>
   <Installation>
@@ -56,18 +62,28 @@ manifest = f"""<?xml version="1.0" encoding="utf-8"?>
   <Dependencies/>
   <Assets>
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
-    <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
+    <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/readme.md" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Icons.Default" Path="extension/images/icon.png" Addressable="true" />
-    <Asset Type="Microsoft.VisualStudio.Services.Content.License" Path="extension/LICENSE" Addressable="true" />
+    <Asset Type="Microsoft.VisualStudio.Services.Content.License" Path="extension/LICENSE.txt" Addressable="true" />
   </Assets>
 </PackageManifest>
 """
-types = """<?xml version="1.0" encoding="utf-8"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension=".json" ContentType="application/json"/><Default Extension=".js" ContentType="application/javascript"/><Default Extension=".md" ContentType="text/markdown"/><Default Extension=".png" ContentType="image/png"/><Default Extension="" ContentType="text/plain"/><Default Extension=".vsixmanifest" ContentType="text/xml"/></Types>
-"""
+# a content type for each extension in the package
+mime = {".js": "application/javascript", ".json": "application/json", ".md": "text/markdown",
+        ".png": "image/png", ".txt": "text/plain", ".vsixmanifest": "text/xml"}
+exts = sorted({os.path.splitext(arc)[1].lower() for _, arc in files} | {".vsixmanifest"})
+for e in exts:
+    if e not in mime: sys.exit(f"vsix.py: no content type for {e!r} files (add it to mime)")
+types = ('<?xml version="1.0" encoding="utf-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+         + "".join(f'<Default Extension="{e}" ContentType="{mime[e]}"/>' for e in exts) + "</Types>\n")
+def entry(name):
+    i = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+    i.external_attr = 0o100644 << 16       # a regular file, rw-r--r--
+    i.compress_type = zipfile.ZIP_DEFLATED
+    return i
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-    z.writestr("extension.vsixmanifest", manifest)
-    z.writestr("[Content_Types].xml", types)
+    z.writestr(entry("extension.vsixmanifest"), manifest)
+    z.writestr(entry("[Content_Types].xml"), types)
     for full, arc in files:
-        z.write(full, arc)
+        z.writestr(entry(arc), open(full, "rb").read())
 print(out)
