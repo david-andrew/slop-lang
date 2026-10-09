@@ -7,7 +7,7 @@
 # (`sloppy update` runs it with SLOPPY_CURRENT, the version installed: nothing to do if it is the latest)
 set -euo pipefail
 
-REPO="david-andrew/slop-lang"
+REPO="david-andrew/sloppy-lang"
 ASSET="sloppy-linux-x86_64.tar.gz"
 VERSION="${1:-latest}"
 INSTALL="${SLOPPY_INSTALL:-$HOME/.sloppy}"

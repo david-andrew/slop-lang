@@ -18,7 +18,7 @@ Design goals, in priority order:
 
 ## 1. A taste
 
-```sloppy
+```gdscript
 # hello.jo
 print("hello, world")
 
@@ -93,7 +93,7 @@ none null and or xor not is let mut when defer extern test build pass` (`loop le
 
 ## 3. Variables and constants
 
-```sloppy
+```gdscript
 x = 10               # declares x (there is no x yet), type inferred (int)
 x = x + 1            # assigns (x exists)
 let x = "text"       # always a new variable (shadows the outer x)
@@ -152,7 +152,7 @@ reference counted with copy-on-write, so copies are O(1) and a real copy only
 happens when you mutate something that is shared. There are no reference types,
 so reference cycles (and leaks) are impossible, and there is no garbage collector.
 
-```sloppy
+```gdscript
 a = [1, 2, 3]
 b = a           # O(1), shares storage
 b.push(4)       # b is shared, so b gets its own copy here
@@ -162,21 +162,21 @@ print(a, b)     # [1, 2, 3] [1, 2, 3, 4]
 Function parameters are borrowed (passed without copying, read-only).
 Mark a parameter `mut` to let the function modify the caller's variable:
 
-```sloppy
+```gdscript
 grow = (xs: mut int[]): xs.push(0)
 grow(nums)
 ```
 
 To modify array elements in a loop, use `loop mut`:
 
-```sloppy
+```gdscript
 loop mut p in particles:
     p.pos += p.vel * dt
 ```
 
 ## 5. Functions
 
-```sloppy
+```gdscript
 area = (w: f64, h: f64) -> f64: w * h            # the last expression is the result
 clamp01 = (x: f64, lo: f64 = 0, hi: f64 = 1) -> f64:
     if x < lo: return lo
@@ -202,7 +202,7 @@ written inside an expression is a lambda.
 
 ### Functions as values, closures, partial application
 
-```sloppy
+```gdscript
 double = (x: int): x * 2
 nums.map(double)
 nums.map((x): x * 2)            # parameter types inferred from context
@@ -219,7 +219,7 @@ print(half(10))                 # 5
 function sees (and can change) that function's variables, just as a closure at the top level
 sees and changes globals.
 
-```sloppy
+```gdscript
 make_counter = () -> () -> int:
     n = 0
     ():
@@ -236,7 +236,7 @@ variables on every iteration, so closures made in a loop each see their own.)
 
 ## 6. Control flow
 
-```sloppy
+```gdscript
 if a > b: print("a") else if a == b: print("eq") else: print("b")
 m = if a > b: a else: b                # if is an expression
 if let v = lookup(key): print(v)       # bind the value of an optional when present
@@ -263,7 +263,7 @@ defer close(f)                         # runs when the enclosing block exits
 
 **Combined loops.** Bindings and conditions join with `and` / `or` in one loop header:
 
-```sloppy
+```gdscript
 loop i in 0.. and v in values: ...             # counts alongside: stops when values runs out
 loop i in 0.. and v in values and v ^ 2 < limit: ...   # also stops at the first false condition
 loop a in xs or b in ys: ...                   # until both run out; a finished one gives none
@@ -276,7 +276,7 @@ until all have run out (the variables of finished ones are `none`, so they are o
 
 **Comprehensions** are a loop inside brackets; `if` filters, nested loops flatten:
 
-```sloppy
+```gdscript
 squares = [loop i in [1..5]: i ^ 2]
 evens = [loop n in [0..10): if n % 2 == 0: n]
 pairs = [loop i in [0..3): loop j in [0..3): (i, j)]
@@ -284,7 +284,7 @@ pairs = [loop i in [0..3): loop j in [0..3): (i, j)]
 
 **Match:**
 
-```sloppy
+```gdscript
 match value:
     0: print("zero")
     1, 2: print("small")
@@ -295,7 +295,7 @@ match value:
 
 ## 7. Structs, unions, enums, optionals, tuples
 
-```sloppy
+```gdscript
 struct Player:
     name: str
     pos: vec2
@@ -317,7 +317,7 @@ if d == .north: ...                     # `.name` when the type is known
 been tested *is* that type where the test holds — in the `if`, after an `if` that returns or
 breaks, on the right of `and`, and in `match` arms:
 
-```sloppy
+```gdscript
 struct Circle: r: f64
 struct Rect: w: f64; h: f64
 type Shape = Circle | Rect
@@ -351,7 +351,7 @@ the value it holds. `T | none` is `T?`.
 
 **Optionals:**
 
-```sloppy
+```gdscript
 best: int? = none
 if let v = lookup(key): print(v)        # bind when present
 if best is int: print(best + 1)         # `is` works on optionals too
@@ -361,7 +361,7 @@ k = lookup(key)!                        # unwrap or panic
 
 **Tuples:**
 
-```sloppy
+```gdscript
 pair = (1, "one")
 a, b = pair
 print(pair.0)
@@ -382,7 +382,7 @@ apply element by element, and `f.(xs)` applies any function to each element. Arr
 different shapes broadcast like numpy: a scalar, or a dimension of length 1, stretches to fit.
 A whole dotted expression runs as one loop, without temporary arrays:
 
-```sloppy
+```gdscript
 xs = linspace(0, 1, 5)
 ys = 3.0 .* xs .^ 2 .+ 1.0       # one loop
 mask = xs .> 0.5                 # bool[]
@@ -396,7 +396,7 @@ in numpy: `T[,]`, `T[,,]` ... all name the same type (the commas are for the rea
 `m.shape` holds the dimensions. Rows are separated by `;` or line breaks; `[a; b]` stacks arrays
 (1-D arrays become rows, n-dimensional ones gain a dimension).
 
-```sloppy
+```gdscript
 m = [1.0 2.0; 3.0 4.0]
 grid = [0 1 0
         1 1 1]
@@ -417,7 +417,7 @@ left out at the end mean whole axes). A part is an array of its own; assigning t
 the array: `m[.., 0] = xs`, `m[0, ..] = 0.0`. `sum(m, axis)`, `mean`, `min` and `max` reduce along
 one axis (`sum(m, 0)` adds up the rows: one sum per column).
 
-```sloppy
+```gdscript
 img = zeros(480, 640, 3)
 img[.., .., 0] = 1.0             # the red channel
 top = img[0..239, ..]
@@ -439,7 +439,7 @@ element itself: `p.x` reads (or, in `loop mut`, writes) only the `x` array, so a
 at two fields of a large struct touches only those two arrays. Using `p` as a whole value reads
 every field. `ps.x` is the whole field array, for elementwise math:
 
-```sloppy
+```gdscript
 ps: soa Particle[] = make_particles()
 loop mut p in ps:
     p.pos += p.vel * dt                 # reads vel, writes pos: no other field is touched
@@ -451,7 +451,7 @@ expression whose arrays are GPU arrays runs on the GPU as one fragment program, 
 the expression at compile time — functions applied with `f.(g)` are translated to GLSL like
 shader functions, and the numbers in the expression become uniforms:
 
-```sloppy
+```gdscript
 g = gpu(rand(4_000_000))
 h = wave.(g) .* 0.5 .+ g          # one GPU program
 ys = cpu(h)
@@ -478,7 +478,7 @@ the game/graphics/audio API) is always available without importing.
 
 ## 10. Compile-time features
 
-```sloppy
+```gdscript
 build:                          # build options live in the source
     target = wasm               # native (default) | wasm
     opt = release               # debug | release
@@ -526,7 +526,7 @@ costs what it would in C.
 
 Data-parallel helpers run a function over many elements on all CPU cores (fork-join):
 
-```sloppy
+```gdscript
 lengths = parallel_map(words, (w): expensive(w))      # [loop x in xs: f(x)]
 parallel_update(particles, (p): step(p, dt))          # xs[i] = f(xs[i]) in place
 rows = parallel_range(height, (y): render_row(y))     # [loop i in [0..n): f(i)]
@@ -544,7 +544,7 @@ A program runs its top-level statements, then `main()` if defined.
 If the program defines `update(dt: f64)` and/or `draw()`, a window opens and they are
 called every frame (this is also how programs run in the browser).
 
-```sloppy
+```gdscript
 pos = vec2(100, 100)
 
 update = (dt: f64):
@@ -580,7 +580,7 @@ uses the whole window.
 design size), whatever the window's real size; `screen_fit` says how that area fits a window
 of another shape, and the render resolution says how many pixels draw it:
 
-```sloppy
+```gdscript
 screen_fit(.expand)       # (default) scaled to fit, centered; a wider or taller window shows more
                           # around it (visible_rect() is what is shown)
 screen_fit(.letterbox)    # just the design area, with bars (letterbox_color(c))
@@ -678,7 +678,7 @@ Native programs can call functions from system shared libraries; the library is 
 first time one of its functions is called, so a missing library only matters to code that
 actually uses it (check with `lib_available("libfoo.so.1")`).
 
-```sloppy
+```gdscript
 @lib("libm.so.6")
 extern cbrt = (x: f64) -> f64
 

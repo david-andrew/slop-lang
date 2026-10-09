@@ -60,7 +60,7 @@ for sub, title in SECTIONS:
             out.append("")
             out.extend(h + "  " for h in header)
         out.append("")
-        out.append("```")
+        out.append("```gdscript")     # (see tools/site.py: GitHub has no Sloppy grammar)
         for sig, doc in entries:
             out.append(sig + (f"    # {doc}" if doc else ""))
         out.append("```")

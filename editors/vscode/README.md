@@ -22,7 +22,7 @@ The extension needs the `sloppy` compiler (Linux x86-64). If it cannot find one,
 install the latest release into `~/.sloppy`; or install it from a terminal, which also puts it
 on your PATH:
 
-```
+```sh
 curl -fsSL https://sloppy-lang.org/install | bash
 ```
 
@@ -35,4 +35,4 @@ repository is the open folder, else `sloppy` from the PATH, else `~/.sloppy/bin/
 ## Links
 
 - [sloppy-lang.org](https://sloppy-lang.org): the language, its standard library, and a playground
-- [Source and issues](https://github.com/david-andrew/slop-lang)
+- [Source and issues](https://github.com/david-andrew/sloppy-lang)

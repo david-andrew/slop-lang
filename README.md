@@ -7,9 +7,9 @@
 <p align="center"><b>a simple game dev language</b></p>
 
 <p align="center">
-  <a href="https://github.com/david-andrew/slop-lang/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/david-andrew/slop-lang?label=release&color=2f6a7a"></a>
-  <a href="https://github.com/david-andrew/slop-lang/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/david-andrew/slop-lang/test.yml?label=tests"></a>
-  <a href="https://sloppy-lang.org/"><img alt="Website" src="https://img.shields.io/github/actions/workflow/status/david-andrew/slop-lang/site.yml?label=website"></a>
+  <a href="https://github.com/david-andrew/sloppy-lang/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/david-andrew/sloppy-lang?label=release&color=2f6a7a"></a>
+  <a href="https://github.com/david-andrew/sloppy-lang/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/david-andrew/sloppy-lang/test.yml?label=tests"></a>
+  <a href="https://sloppy-lang.org/"><img alt="Website" src="https://img.shields.io/github/actions/workflow/status/david-andrew/sloppy-lang/site.yml?label=website"></a>
   <a href="https://sloppy-lang.org/playground/"><img alt="Try it in the browser" src="https://img.shields.io/badge/playground-try%20it%20in%20the%20browser-2f6a7a"></a>
   <img alt="Platform: Linux x86-64 and the web" src="https://img.shields.io/badge/platform-linux%20x86--64%20%7C%20web-555">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-555"></a>
@@ -20,7 +20,7 @@ built for making games. `sloppy game.jo` compiles the whole program and runs it 
 `sloppy build game.jo` writes a fully static Linux executable, and with `target = wasm` a
 single self-contained `.html` file that runs in a browser straight from disk.
 
-```sloppy
+```gdscript
 # hello.jo
 print("hello, world")
 
@@ -38,7 +38,7 @@ print(nums .* 2.5 .+ 1, sqrt.([4.0 9.0]), [1 2; 3 4] * [1 0; 0 1])
 
 A complete (tiny) game:
 
-```sloppy
+```gdscript
 pos = vec2(400, 300)
 
 update = (dt: f64):
@@ -89,7 +89,7 @@ draw = ():
 
 Install (Linux x86-64; into `~/.sloppy`, added to your PATH; `sloppy update` installs newer releases):
 
-```
+```sh
 curl -fsSL https://sloppy-lang.org/install | bash
 ```
 
@@ -99,7 +99,7 @@ From source:
 
 Requirements: Linux x86-64; a C compiler is needed once, to build the bootstrap compiler.
 
-```
+```sh
 tools/bootstrap.sh            # stage0 (C) -> sloppy1 -> sloppy2 -> sloppy3, checks sloppy2 == sloppy3, installs bin/sloppy
 bin/sloppy                       # an interactive prompt
 bin/sloppy examples/shapes.jo   # compile and run

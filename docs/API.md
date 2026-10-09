@@ -9,7 +9,7 @@ without imports. Functions can be called as `f(x, y)` or `x.f(y)`.
 
 Generic array utilities. Arrays are values with copy-on-write storage.  
 
-```
+```gdscript
 is_empty[T] = (xs: T[]) -> bool
 first[T] = (xs: T[]) -> T
 last[T] = (xs: T[]) -> T
@@ -44,7 +44,7 @@ sorted[T] = (xs: T[]) -> T[]
 Hash map {K: V}: insertion ordered, open addressing over a dense entry list.  
 The first two fields must stay `keys` and `vals` (the compiler iterates them in for loops).  
 
-```
+```gdscript
 struct Map[K, V]
 hash = (x: int) -> u64    # full 64-bit avalanche (murmur3 finalizer): every key bit affects the low bits used for slots, so keys like multiples of 4096 or float bit patterns spread out
 hash = (x: u64) -> u64
@@ -68,7 +68,7 @@ remove[K, V] = (m: mut Map[K, V], k: K) -> bool    # remove a key; returns true 
 
 Math basics.  
 
-```
+```gdscript
 const PI = 3.141592653589793
 const TAU = 6.283185307179586
 const E = 2.718281828459045
@@ -133,7 +133,7 @@ random_int = (lo: int, hi: int) -> int    # random int in [lo, hi)
 
 Operating system access: files, arguments, environment, time.  
 
-```
+```gdscript
 exit = (code: int)
 args = () -> str[]    # command line arguments (args()[0] is the program path)
 env = (name: str) -> str?    # an environment variable (in a web page: the page's URL parameter of that name, where `SLOPPY_X` may also be written `x`, and a bare `?x` is "1")
@@ -163,7 +163,7 @@ Sloppy core runtime: memory, refcounted objects, arrays, strings.
 Everything here is called by compiler-generated code. Heap objects (arrays, strings)  
 share one layout: [rc: int][len: int][cap: int][data...]. rc < 0 means immortal.  
 
-```
+```gdscript
 alloc_count = () -> int    # number of live heap allocations (useful for leak tests)
 ```
 
@@ -171,7 +171,7 @@ alloc_count = () -> int    # number of live heap allocations (useful for leak te
 
 String utilities. Strings are immutable UTF-8 byte sequences; indexing gives bytes.  
 
-```
+```gdscript
 is_digit = (c: u8) -> bool
 is_alpha = (c: u8) -> bool
 is_alnum = (c: u8) -> bool
@@ -227,7 +227,7 @@ The dotted operators work element by element on arrays of any shape, and broadca
 xs .< 0.5, and f.(xs) applies f to each element. A whole dotted expression runs as one loop.  
 On 2-D arrays the plain operators follow linear algebra: a * b is the matrix product.  
 
-```
+```gdscript
 type Array[T] = T[]    # another spelling of T[]
 struct NDArray[T]
 ndarray[T] = (data: T[], shape: int[]) -> NDArray[T]
@@ -303,7 +303,7 @@ The function runs on several threads at once: it may read anything, but it must 
 globals or the variables it captured (that would be a data race); return results instead.  
 On the web target everything runs on the calling thread.  
 
-```
+```gdscript
 cpu_count = () -> int    # number of hardware threads available to this process
 parallel_map[T, U] = (xs: T[], f: (T) -> U) -> U[]
 parallel_update[T] = (xs: mut T[], f: (T) -> T)
@@ -319,7 +319,7 @@ interleaved, at the mixer rate). Each frame the mixer renders just enough sample
 keep the output device fed. Native: ALSA (loaded at runtime; silent if unavailable).  
 Web: WebAudio.  
 
-```
+```gdscript
 struct Sound
 struct Voice
 enum Wave: sine, square, triangle, saw, noise
@@ -362,7 +362,7 @@ where we started. From then on dlopen/dlsym are ordinary C function pointers.
 If anything is missing (no ld.so, unusual system) dl_init() returns false and the  
 caller falls back to software rendering.  
 
-```
+```gdscript
 dl_init = () -> bool
 dl_open = (name: str) -> *u8    # open a shared library (RTLD_NOW | RTLD_GLOBAL); null if unavailable
 dl_sym = (lib: *u8, name: str) -> *u8
@@ -375,7 +375,7 @@ lib_available = (lib: str) -> bool    # true if the library can be loaded on thi
 2D drawing: batched shapes, textured sprites, SDF text, transforms, blend modes and  
 render targets. Coordinates are in pixels with (0, 0) at the top-left.  
 
-```
+```gdscript
 struct Texture
 struct RenderTarget
 enum Blend: alpha, add, multiply, premultiplied
@@ -425,7 +425,7 @@ text_centered = (s: str, center: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1
 Draw calls made during draw() are recorded and rendered (shadow pass, then the lit  
 pass) before any 2D drawing that follows them, so a HUD can be drawn on top.  
 
-```
+```gdscript
 struct Vertex3D
 struct Instance3D
 struct LitParams
@@ -497,7 +497,7 @@ input_axis() also follows the left stick and the d-pad, so keyboard games work w
 Native builds read the Linux joystick device (/dev/input/js0); web builds use the browser's  
 Gamepad API.  
 
-```
+```gdscript
 enum PadButton: a, b, x, y, lb, rb, back, start, home, lstick, rstick, up, down, left, right
 gamepad_connected = () -> bool
 gamepad_axis = (i: int) -> f64    # axis value in -1..1 (triggers 0..1): 0 left x, 1 left y, 2 right x, 3 right y, 4 left trigger, 5 right trigger
@@ -512,7 +512,7 @@ right_stick = () -> vec2
 
 Common game helpers: noise, collision shapes, easing, timers and 2D particles.  
 
-```
+```gdscript
 noise = (x: f64, y: f64) -> f64    # smooth value noise in [0, 1]
 fbm = (x: f64, y: f64, octaves: int = 4) -> f64    # fractal noise (several octaves) in roughly [0, 1]
 ease_in_out = (t: f64) -> f64
@@ -540,7 +540,7 @@ every = (id: int, period: f64) -> bool
 Portable OpenGL ES 3.0 / WebGL2 layer. Native builds load the system driver  
 (libGLESv2) at runtime; web builds call WebGL2 through the page's JavaScript.  
 
-```
+```gdscript
 const GL_DEPTH_BUFFER_BIT = 0x100
 const GL_COLOR_BUFFER_BIT = 0x4000
 const GL_POINTS = 0
@@ -621,7 +621,7 @@ prog = make_shader(shader(vs, fs))
 m = mesh(vertices)  
 draw(prog, m, Params(mvp))  
 
-```
+```gdscript
 struct ShaderSource    # produced by the compiler from shader(vs, fs)
 struct ShaderAttrib
 struct ShaderUniform
@@ -658,7 +658,7 @@ so programs work everywhere; gpu_available() tells which.
 Textures hold four values per texel (RGBA), as wide as the GPU allows: up to about a billion  
 values on a typical desktop GPU (64 million where textures are at most 4096 wide).  
 
-```
+```gdscript
 struct GpuArray[T]
 gpu_available = () -> bool
 gpu = (xs: f32[]) -> GpuArray[f32]
@@ -686,7 +686,7 @@ max = (g: GpuArray[i32]) -> i32
 
 Images: RGBA8 pixel buffers, PNG decoding (with a built-in inflate), procedural helpers.  
 
-```
+```gdscript
 struct Image
 image = (w: int, h: int, fill: vec4 = vec4(0, 0, 0, 0)) -> Image
 set = (img: mut Image, x: int, y: int, c: vec4)
@@ -729,7 +729,7 @@ up smoothly: faster where pixels cost (3D, the software renderer).
 Drawing that needs it goes to an offscreen canvas, put on the window when the frame ends; the  
 mouse is mapped back the same way (mouse_pos() is in 2D units).  
 
-```
+```gdscript
 enum Fit: expand, letterbox, crop, stretch, native
 screen_fit = (mode: Fit)
 letterbox_color = (c: vec4)
@@ -745,7 +745,7 @@ for machines without a GPU driver (or with SLOPPY_SOFTWARE=1). Shaders written i
 the compiled Sloppy functions they are; triangles are rasterized in horizontal bands on all  
 cores. Frames are rendered at a reduced internal resolution and scaled up on screen.  
 
-```
+```gdscript
 soft_rendering = () -> bool
 sgl_clear_color = (r: f32, g: f32, b: f32, a: f32)
 sgl_clear = (mask: u32)
@@ -785,7 +785,7 @@ screen, and frames that took much longer than usual (stutter). show_stats() turn
 SLOPPY_STATS=1 and, in a web page, ?stats in the URL. SLOPPY_STATS=log (?stats=log) prints the same  
 numbers every two seconds instead, and each long frame as it happens.  
 
-```
+```gdscript
 show_stats = (on: bool = true)
 ```
 
@@ -794,7 +794,7 @@ show_stats = (on: bool = true)
 Vector and matrix math for the built-in vec2/vec3/vec4/mat4 types (f32 components).  
 mat4 is column-major: m[i] is column i.  
 
-```
+```gdscript
 dot = (a: vec2, b: vec2) -> f32
 dot = (a: vec3, b: vec3) -> f32
 dot = (a: vec4, b: vec4) -> f32
@@ -886,7 +886,7 @@ Requests are built and events read in the wire format, then go through libwaylan
 resolution: the window's size is in the compositor's logical units, scaled by the output's  
 (possibly fractional) scale.  
 
-```
+```gdscript
 const WLK_NONE = 0
 const WLK_DISPLAY = 1
 const WLK_REGISTRY = 2
@@ -926,7 +926,7 @@ const WL_EDGE = 8              # pixels along the window's border that resize it
 Windows, the frame loop and input. Native: X11 + EGL (OpenGL ES 3) loaded from the  
 system at runtime. Web: a <canvas> with WebGL2 driven by requestAnimationFrame.  
 
-```
+```gdscript
 enum Key:
 enum Mouse: left, middle, right
 key_down = (k: Key) -> bool    # true while the key is held

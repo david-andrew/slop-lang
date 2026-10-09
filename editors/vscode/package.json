@@ -129,11 +129,11 @@
   "icon": "images/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/david-andrew/slop-lang"
+    "url": "https://github.com/david-andrew/sloppy-lang"
   },
   "license": "MIT",
   "homepage": "https://sloppy-lang.org",
   "bugs": {
-    "url": "https://github.com/david-andrew/slop-lang/issues"
+    "url": "https://github.com/david-andrew/sloppy-lang/issues"
   }
 }

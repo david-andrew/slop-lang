@@ -124,7 +124,7 @@ const https = require('https');
 const zlib = require('zlib');
 const crypto = require('crypto');
 
-const RELEASES = 'https://github.com/david-andrew/slop-lang/releases/latest/download/';
+const RELEASES = 'https://github.com/david-andrew/sloppy-lang/releases/latest/download/';
 const installDir = () => process.env.SLOPPY_INSTALL || path.join(os.homedir(), '.sloppy');
 
 const isExe = (p) => { try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch (e) { return false; } };

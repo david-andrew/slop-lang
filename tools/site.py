@@ -7,7 +7,7 @@ import html, os, re, shutil, subprocess, sys
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "build", "site")
 here = os.path.join(root, "tools", "site")
-REPO = "https://github.com/david-andrew/slop-lang"
+REPO = "https://github.com/david-andrew/sloppy-lang"
 
 # ---- Markdown (the subset the docs use) ----
 
@@ -94,7 +94,9 @@ def markdown(src):
                 body.append(lines[i])
                 i += 1
             i += 1
-            cls = "sloppy" if lang in ("", "sloppy") else lang
+            # Sloppy code is fenced as gdscript: GitHub has no grammar for Sloppy, and GDScript's
+            # (Godot's language) is the closest it has; here it gets Sloppy's own highlighting
+            cls = "sloppy" if lang in ("sloppy", "gdscript") else lang or "plain"
             out.append(f'<pre><code class="{cls}">' + html.escape("\n".join(body)) + "</code></pre>")
             continue
         m = re.match(r"^(#{1,4})\s+(.*)$", l)
@@ -173,7 +175,7 @@ def page(title, body, here_page, prefix, extra_head=""):
 {body}
 <footer>Sloppy &middot; <a href="{REPO}">source on GitHub</a> &middot; <a href="{REPO}/blob/master/LICENSE">MIT license</a></footer>
 <script src="{prefix}highlight.js"></script>
-<script>for (const c of document.querySelectorAll("pre code.jo")) c.innerHTML = sloppyHighlight(c.textContent, 0).replace(/\\n$/, "");</script>
+<script>for (const c of document.querySelectorAll("pre code.sloppy")) c.innerHTML = sloppyHighlight(c.textContent, 0).replace(/\\n$/, "");</script>
 </body></html>
 """
 

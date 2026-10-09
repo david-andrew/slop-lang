@@ -1,0 +1,3 @@
+# GitHub has no grammar for Sloppy yet: show .jo files with GDScript's (Godot's language, the
+# closest it has), and leave them out of the repository's language statistics
+*.jo linguist-language=GDScript linguist-detectable=false
