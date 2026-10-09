@@ -1,0 +1,60 @@
+# shader intrinsics: discard (which also keeps the fragment out of the depth buffer), texel,
+# texture_size, sample_lod, vertex_id and instance_id
+img = image(4, 4, vec4(0, 0, 0, 0))
+loop y in [0..4):
+    loop x in [0..4):
+        if (x + y) % 2 == 0: img.set(x, y, vec4(f32(x) / 3.0, f32(y) / 3.0, 1, 1))
+tex = texture(img, false)
+struct V:
+    pos: vec3
+    uv: vec2
+struct U:
+    mvp: mat4
+    tex: Texture
+struct O:
+    pos: vec4
+    uv: vec2
+vs = (v: V, u: U) -> O: O(u.mvp * vec4(v.pos, 1), v.uv)
+# the transparent texels are cut out: the quad behind shows through, not the background
+cut_fs = (i: O, u: U) -> vec4:
+    size = texture_size(u.tex)
+    c = texel(u.tex, ivec2(i32(i.uv.x * f32(size.x)), i32(i.uv.y * f32(size.y))))
+    if c.a < 0.5: discard()
+    c
+back_fs = (i: O, u: U) -> vec4: sample_lod(u.tex, i.uv, 0.0) * 0.0 + vec4(0.9, 0.3, 0.2, 1)
+cut = make_shader(shader(vs, cut_fs))
+back = make_shader(shader(vs, back_fs))
+quad = (x0: f32, y0: f32, x1: f32, y1: f32, z: f32) -> Mesh:
+    mesh([V(vec3(x0, y0, z), vec2(0, 0)), V(vec3(x1, y0, z), vec2(0.999, 0)), V(vec3(x1, y1, z), vec2(0.999, 0.999)),
+          V(vec3(x0, y0, z), vec2(0, 0)), V(vec3(x1, y1, z), vec2(0.999, 0.999)), V(vec3(x0, y1, z), vec2(0, 0.999))])
+front_q = quad(-0.9, -0.2, 0.3, 0.9, -0.5)
+back_q = quad(-0.6, -0.5, 0.6, 0.6, 0.5)
+
+# instances placed by their index, corners colored by theirs
+struct P:
+    pos: vec3
+struct I:
+    scale: f32
+struct Q:
+    mvp: mat4
+struct C:
+    pos: vec4
+    color: vec4
+inst_vs = (v: P, i: I, u: Q) -> C:
+    k = f32(instance_id())
+    corner = vertex_id()
+    col = vec4(1, 0, 0, 1)
+    if corner == 1: col = vec4(0, 1, 0, 1)
+    if corner == 2: col = vec4(0, 0, 1, 1)
+    C(u.mvp * vec4(v.pos * i.scale + vec3(0.45 + k * 0.12, -0.85 + k * 0.2, 0), 1), col)
+inst_fs = (c: C, u: Q) -> vec4: c.color
+inst = make_shader(shader(inst_vs, inst_fs))
+tri = mesh([P(vec3(0, 0, 0)), P(vec3(0.1, 0, 0)), P(vec3(0.05, 0.1, 0))])
+
+draw = ():
+    clear(vec4(0.1, 0.1, 0.12, 1))
+    glEnable(GL_DEPTH_TEST)
+    draw(cut, front_q, U(mat4(), tex))
+    draw(back, back_q, U(mat4(), tex))
+    glDisable(GL_DEPTH_TEST)
+    draw_instanced(inst, tri, [I(1.0), I(1.2), I(1.4), I(1.6)], Q(mat4()))

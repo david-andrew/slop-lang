@@ -80,6 +80,7 @@ mod = (x: int, y: int) -> int:
     r
 is_nan = (x: f64) -> bool: x != x
 lerp = (a: f64, b: f64, t: f64) -> f64: a + (b - a) * t
+mix = (a: f64, b: f64, t: f64) -> f64: a + (b - a) * t      # (GLSL's name for lerp)
 smoothstep = (e0: f64, e1: f64, x: f64) -> f64:
     t = clamp((x - e0) / (e1 - e0), 0.0, 1.0)
     t * t * (3.0 - 2.0 * t)

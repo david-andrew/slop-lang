@@ -79,6 +79,14 @@ __sw_sample = (id: int, uv: vec2) -> vec4:
     vec4(a[0] * wa + b[0] * wb + c[0] * wc + d[0] * wd, a[1] * wa + b[1] * wb + c[1] * wc + d[1] * wd,
          a[2] * wa + b[2] * wb + c[2] * wc + d[2] * wd, a[3] * wa + b[3] * wb + c[3] * wc + d[3] * wd)
 
+# texelFetch on the CPU (outside the texture: the nearest edge texel)
+__sw_texel = (id: int, x: int, y: int) -> vec4:
+    if id <= 0 or id >= __st.len(): return vec4(1, 1, 1, 1)
+    t = __st[id]
+    if t.p == null or t.w == 0: return vec4(0, 0, 0, 1)
+    q = t.p + (clamp(y, 0, t.h - 1) * t.w + clamp(x, 0, t.w - 1)) * 4
+    vec4(q[0], q[1], q[2], q[3])
+
 # floor of a float as an int (texture coordinates stay far from the int range)
 __floor_i = (x: f32) -> int:
     i = int(x)
@@ -123,6 +131,15 @@ __sp_fs: *u8[] = [null]
 __sp_out: int[] = [0]
 __sp_args: int[] = [0]
 __sp_flat: str[] = [""]
+__sp_discard: bool[] = [false]       # the fragment shader may discard()
+__sp_ids: bool[] = [false]           # the vertex shader asks for vertex_id() / instance_id()
+
+# per thread (by __tid()): the vertex and instance being shaded, and whether the fragment being
+# shaded was discarded (what vertex_id(), instance_id() and discard() read and write on the CPU)
+__sw_tls: *int = null
+
+__sw_tls_init = ():
+    if __sw_tls == null: __sw_tls = __alloc((__MAX_THREADS + 1) * 64) as *int
 
 # the window's framebuffer
 __sw_init_window = (w: int, h: int):
@@ -295,6 +312,8 @@ sgl_create_program = () -> int:
     __sp_out.push(0)
     __sp_args.push(0)
     __sp_flat.push("")
+    __sp_discard.push(false)
+    __sp_ids.push(false)
     __sp_vs.len() - 1
 
 # shader functions of a program made by make_shader
@@ -305,6 +324,10 @@ __sw_program_info = (prog: int, src: ShaderSource):
     __sp_out[prog] = src.out_size
     __sp_args[prog] = src.vs_args
     __sp_flat[prog] = src.flat
+    # (the GLSL is the compiler's: these are only there when the shader functions use them)
+    __sp_discard[prog] = find(src.fs, "discard;") >= 0
+    __sp_ids[prog] = find(src.vs, "gl_VertexID") >= 0 or find(src.vs, "gl_InstanceID") >= 0
+    __sw_tls_init()
 
 # read the window (or bound target) as RGBA bytes, bottom row first, scaled to w x h
 sgl_read_pixels = (x: int, y: int, w: int, h: int, out: *u8):
@@ -614,10 +637,16 @@ __sw_draw_mesh = (prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo:
     pv = fill(f32(0), total * pstride)
     pvp = data(pv)
     chunk = 256
+    ids = __sp_ids[prog]
+    tls = __sw_tls
     parallel_range((total + chunk - 1) / chunk, (k: int):
+        mine = tls + __tid() * 8
         loop g in [k * chunk..min((k + 1) * chunk, total)):
             o = clp + g * nf
             v = g % nverts
+            if ids:
+                mine[0] = v
+                mine[1] = g / nverts
             if vargs == 3: vs3(o as *u8, vb + v * stride, instb + (g / nverts) * istride, uni)
             else: vs2(o as *u8, vb + v * stride, uni)
             __sw_project(o, pvp + g * pstride, nf, vx, vy, vw, vh, fp)
@@ -673,6 +702,11 @@ __sw_draw_mesh = (prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo:
     dtest = __s_depth and dp != null
     dwrite = __s_depth_write and dp != null
     inv_scale = f32(1.0 / __s_fb_scale[__s_fb])
+    # a shader that may discard runs before the depth write, also when no color is written
+    # (alpha-tested leaves in a shadow map)
+    disc = __sp_discard[prog]
+    shade = color or disc
+    tls = __sw_tls
     __sw_raster(pvp, pstride, tp, ntris, (band: int, y: int, xa: int, xb: int, t: int, l0: f32, l1: f32, l2: f32, d0: f32, d1: f32, d2: f32):
         a = pvp + int(tp[t * 3]) * pstride
         b = pvp + int(tp[t * 3 + 1]) * pstride
@@ -685,18 +719,21 @@ __sw_draw_mesh = (prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo:
         sd = s0 + nf
         vin = sd + nf
         col = vin + nf
-        if color:
+        if shade:
             loop f in [0..nf):
                 s0[f] = l0 * a[4 + f] + l1 * b[4 + f] + l2 * c2[4 + f]
                 sd[f] = d0 * a[4 + f] + d1 * b[4 + f] + d2 * c2[4 + f]
+        mine = tls
+        if disc: mine = tls + __tid() * 8
         row = y * tw
         loop x in [xa..xb + 1):
             k = f32(x - xa)
             z = z0 + dz * k
             pix = row + x
             if dtest and not __depth_ok(z, dp[pix * 4]): continue
-            if dwrite: dp[pix * 4] = z
-            if not color: continue
+            if not disc:
+                if dwrite: dp[pix * 4] = z
+                if not color: continue
             iw = w0 + dw * k
             rw = 1.0 / iw
             loop f in [0..nf): vin[f] = (s0[f] + sd[f] * k) * rw
@@ -708,7 +745,12 @@ __sw_draw_mesh = (prog: int, mode: int, vbo: int, stride: int, nverts: int, ibo:
             vin[1] = (f32(y) + 0.5) * inv_scale
             vin[2] = z
             vin[3] = iw
+            if disc: mine[2] = 0
             fs(col as *u8, vin as *u8, uni)
+            if disc:
+                if mine[2] != 0: continue
+                if dwrite: dp[pix * 4] = z
+                if not color: continue
             __sw_put(cp + pix * 4, vec4(col[0], col[1], col[2], col[3]))
     )
 

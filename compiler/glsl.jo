@@ -19,6 +19,8 @@ gl_done_fns: {int: bool} = {}
 gl_done_structs: {int: bool} = {}
 gl_decls: str[]          # struct and function definitions, in dependency order
 
+gl_stage = ""            # "vertex" or "fragment": the stage being translated
+
 gl_err = (pos: int, msg: str): fatal(pos, "in shader code: {msg}")
 
 gl_type = (t0: int, pos: int) -> str:
@@ -75,7 +77,8 @@ builtin_map: {str: str} = {
     "fract": "fract", "mod": "mod", "min": "min", "max": "max", "clamp": "clamp", "mix": "mix", "lerp": "mix",
     "step": "step", "smoothstep": "smoothstep", "length": "length", "distance": "distance", "dot": "dot",
     "cross": "cross", "normalize": "normalize", "reflect": "reflect", "transpose": "transpose", "inverse": "inverse",
-    "sign": "sign", "sinf": "sin", "cosf": "cos", "sample": "texture", "exp2": "exp2", "log2": "log2",
+    "sign": "sign", "sinf": "sin", "cosf": "cos", "sample": "texture", "sample_lod": "textureLod",
+    "exp2": "exp2", "log2": "log2",
 }
 
 gl_fn_name = (f: int) -> str: "f_{gl_name(name_of(int(nodes[int(fns[f].decl)].name)))}_{f}"
@@ -298,6 +301,16 @@ gl_expr = (e: int) -> str:
         loop i in [0..nkids(e)): args.push(gl_expr(kid(e, i)))
         if modules[int(nodes[decl].mod)].is_prelude:
             if let g = builtin_map.get(nm): return "{g}({join(args, ", ")})"
+            # (lib/game/gpu.jo: what these do on the CPU, for the software renderer)
+            if nm == "discard":
+                if gl_stage != "fragment": gl_err(nodes[e].pos, "discard() can only be used in the fragment shader")
+                return "discard"
+            if nm == "instance_id" or nm == "vertex_id":
+                if gl_stage != "vertex": gl_err(nodes[e].pos, "{nm}() can only be used in the vertex shader")
+                if nm == "instance_id": return "gl_InstanceID"
+                return "gl_VertexID"
+            if nm == "texel": return "texelFetch({args[0]}, {args[1]}, 0)"
+            if nm == "texture_size": return "textureSize({args[0]}, 0)"
             # prelude helpers written in Sloppy (e.g. vector math) are translated like user code
         gl_function(f)
         return "{gl_fn_name(f)}({join(args, ", ")})"
@@ -349,11 +362,13 @@ glsl_build = (vsf: int, fsf: int) -> (str, str, str):
     if np == 3: itype = int(fns[vsf].ptypes[1])
     utype = int(fns[vsf].ptypes[np - 1])
     otype = int(fns[vsf].ret)
+    gl_stage = "vertex"
     gl_function(vsf)
     vdecls = gl_decls
     gl_decls = []
     gl_done_fns = {}
     gl_done_structs = {}
+    gl_stage = "fragment"
     gl_function(fsf)
     fdecls = gl_decls
     head = "#version 300 es\nprecision highp float;\nprecision highp int;\n"
@@ -448,6 +463,7 @@ glsl_kernel = (f: int, desc: str) -> str:
     gl_decls = []
     gl_done_fns = {}
     gl_done_structs = {}
+    gl_stage = "kernel"
     gl_function(f)
     pos = nodes[int(fns[f].decl)].pos
     src = "#version 300 es\nprecision highp float;\nprecision highp int;\nuniform ivec4 od;\nuniform int ow;\n"
