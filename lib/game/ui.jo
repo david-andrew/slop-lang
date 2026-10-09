@@ -1,0 +1,146 @@
+# Menus: a column of buttons, sliders and switches, worked with the keyboard, a gamepad or the
+# mouse. Immediate mode: describe the menu every frame (in draw), and each item says what was
+# done to it then.
+#
+#   draw = ():
+#       ...
+#       ui_begin("title", vec2(640, 320))
+#       if ui_button("Play"): start()
+#       music = ui_slider("Music", music)
+#       fullscreen = ui_switch("Fullscreen", fullscreen)
+#       if ui_button("Quit"): quit()
+#       ui_end()
+#
+# Up/down (arrows, W/S, d-pad, left stick) move between items, enter/space/A or a click choose,
+# left/right change sliders and switches; ui_back() is true when escape or B was pressed.
+
+struct UiStyle:
+    size: f64 = 34.0                        # text size of the items
+    spacing: f64 = 58.0                     # from one item to the next
+    width: f64 = 440.0                      # of a slider or switch row
+    color: vec4 = vec4(1, 1, 1, 0.72)
+    focus_color: vec4 = vec4(1, 0.9, 0.55, 1)
+    disabled_color: vec4 = vec4(1, 1, 1, 0.28)
+    bar_color: vec4 = vec4(1, 1, 1, 0.2)
+
+ui_style = UiStyle()
+
+__ui_menu = ""
+__ui_focus = 0
+__ui_count = 0                  # items so far in this frame's menu
+__ui_last_count = 0             # in the last frame's
+__ui_pos = vec2(0, 0)
+__ui_frame = -1
+__ui_stick_y = 0.0
+__ui_stick_x = 0.0
+__ui_mouse_last = vec2(-1, -1)
+__ui_mouse_moved = false
+__ui_nav = 0                    # -1 up, 1 down: this frame
+__ui_side = 0                   # -1 left, 1 right
+__ui_ok = false
+
+# start a menu: items go in a column centered on x, from y down. A new name starts with the
+# first item chosen.
+ui_begin = (name: str, top_center: vec2):
+    if name != __ui_menu:
+        __ui_menu = name
+        __ui_focus = 0
+        __ui_last_count = 0
+    __ui_pos = top_center
+    __ui_count = 0
+    m = mouse_pos()
+    __ui_mouse_moved = m != __ui_mouse_last
+    __ui_mouse_last = m
+    # (what the player did this frame, read once)
+    sy = gamepad_axis(1)
+    sx = gamepad_axis(0)
+    __ui_nav = 0
+    if key_typed(.up) or key_typed(.w) or gamepad_pressed(.up) or (sy < -0.6 and __ui_stick_y >= -0.6): __ui_nav = -1
+    if key_typed(.down) or key_typed(.s) or gamepad_pressed(.down) or (sy > 0.6 and __ui_stick_y <= 0.6): __ui_nav = 1
+    __ui_side = 0
+    if key_typed(.left) or key_typed(.a) or gamepad_pressed(.left) or (sx < -0.6 and __ui_stick_x >= -0.6): __ui_side = -1
+    if key_typed(.right) or key_typed(.d) or gamepad_pressed(.right) or (sx > 0.6 and __ui_stick_x <= 0.6): __ui_side = 1
+    __ui_stick_y = sy
+    __ui_stick_x = sx
+    __ui_ok = key_pressed(.enter) or key_pressed(.space) or gamepad_pressed(.a)
+    if __ui_last_count > 0 and __ui_nav != 0:
+        __ui_focus = (__ui_focus + __ui_nav + __ui_last_count) % __ui_last_count
+
+ui_end = ():
+    __ui_last_count = __ui_count
+    if __ui_focus >= __ui_count and __ui_count > 0: __ui_focus = __ui_count - 1
+
+# escape or the B button: go back (close the menu)
+ui_back = () -> bool: key_pressed(.escape) or gamepad_pressed(.b)
+
+# (the next item: its row, whether it has the focus, whether the mouse is on it)
+__ui_item = (w: f64) -> (int, vec2, bool):
+    i = __ui_count
+    __ui_count += 1
+    c = __ui_pos + vec2(0, f32(f64(i) * ui_style.spacing))
+    m = mouse_pos()
+    over = abs(f64(m.x - c.x)) < w / 2.0 and abs(f64(m.y - c.y)) < ui_style.spacing / 2.0
+    # (the mouse takes the focus when it moves onto an item)
+    if over and __ui_mouse_moved: __ui_focus = i
+    (i, c, __ui_focus == i)
+
+__ui_label = (s: str, c: vec2, focused: bool, enabled: bool):
+    col = ui_style.color
+    if focused: col = ui_style.focus_color
+    if not enabled: col = ui_style.disabled_color
+    shown = s
+    if focused and enabled: shown = "> {s} <"
+    text_centered(shown, c, ui_style.size, col)
+
+# a button: true in the frame it is chosen
+ui_button = (label: str, enabled: bool = true) -> bool:
+    w = text_width(label, ui_style.size) + 80.0
+    r = __ui_item(w)
+    over = abs(f64(mouse_pos().x - r.1.x)) < w / 2.0 and abs(f64(mouse_pos().y - r.1.y)) < ui_style.spacing / 2.0
+    __ui_label(label, r.1, r.2, enabled)
+    if not enabled: return false
+    (r.2 and __ui_ok) or (over and mouse_pressed(.left))
+
+# a value from 0 to 1, changed in steps of `step` (left/right, or dragging with the mouse)
+ui_slider = (label: str, value: f64, step: f64 = 0.1) -> f64:
+    w = ui_style.width
+    r = __ui_item(w)
+    c = r.1
+    v = value
+    if r.2: v = clamp(v + f64(__ui_side) * step, 0.0, 1.0)
+    # the bar: right half of the row
+    bx = f64(c.x) + 10.0
+    bw = w / 2.0 - 10.0
+    by = f64(c.y) - 4.0
+    m = mouse_pos()
+    if mouse_down(.left) and f64(m.x) >= bx - 10.0 and f64(m.x) <= bx + bw + 10.0 and abs(f64(m.y - c.y)) < ui_style.spacing / 2.0:
+        v = clamp((f64(m.x) - bx) / bw, 0.0, 1.0)
+    col = ui_style.color
+    if r.2: col = ui_style.focus_color
+    text(label, vec2(f32(f64(c.x) - w / 2.0), f32(f64(c.y) - ui_style.size * 0.5)), ui_style.size, col)
+    rect(bx, by, bw, 8, ui_style.bar_color)
+    rect(bx, by, bw * v, 8, col)
+    circle(vec2(f32(bx + bw * v), f32(by + 4.0)), 10, col)
+    v
+
+# on or off (left/right, enter, or a click)
+ui_switch = (label: str, on: bool) -> bool:
+    w = ui_style.width
+    r = __ui_item(w)
+    c = r.1
+    v = on
+    over = abs(f64(mouse_pos().x - c.x)) < w / 2.0 and abs(f64(mouse_pos().y - c.y)) < ui_style.spacing / 2.0
+    if (r.2 and (__ui_ok or __ui_side != 0)) or (over and mouse_pressed(.left)): v = not v
+    col = ui_style.color
+    if r.2: col = ui_style.focus_color
+    text(label, vec2(f32(f64(c.x) - w / 2.0), f32(f64(c.y) - ui_style.size * 0.5)), ui_style.size, col)
+    state = "off"
+    if v: state = "on"
+    text_centered(state, vec2(f32(f64(c.x) + w / 4.0), c.y), ui_style.size, col)
+    v
+
+# a line of text in the column (not an item: it cannot be chosen)
+ui_text = (s: str, size: f64 = 24.0, color: vec4 = vec4(1, 1, 1, 0.6)):
+    c = __ui_pos + vec2(0, f32(f64(__ui_count) * ui_style.spacing))
+    text_centered(s, c, size, color)
+    __ui_pos = __ui_pos + vec2(0, f32(ui_style.spacing))

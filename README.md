@@ -111,7 +111,7 @@ Requirements: Linux x86-64; a C compiler is needed once, to build the bootstrap 
 tools/bootstrap.sh            # stage0 (C) -> sloppy1 -> sloppy2 -> sloppy3, checks sloppy2 == sloppy3, installs bin/sloppy
 bin/sloppy                       # an interactive prompt
 bin/sloppy examples/shapes.jo   # compile and run
-bin/sloppy examples/lumen/lumen.jo          # the 2D demo game
+bin/sloppy examples/lumen/lumen.jo          # a small complete 2D game (four valleys, menus, saves)
 bin/sloppy examples/dunes/dunes.jo          # the 3D demo game
 bin/sloppy watch examples/lumen/lumen.jo    # ... reloaded as you edit it, without restarting
 bin/sloppy --web examples/dunes/dunes.jo    # the same game in the browser
@@ -193,7 +193,7 @@ lib/std/       thread pool and parallel helpers, numeric arrays (nd.jo)
 lib/game/      windows (Wayland, X11), input, OpenGL ES / WebGL, 2D, 3D, images, audio
 lib/web/       JavaScript glue embedded into web builds
 editors/       the VS Code extension (tools/vsix.py packages it)
-examples/      demos: lumen (2D), dunes (3D), shapes, cube, scene3d
+examples/      lumen (a complete 2D game), dunes (3D), shapes, cube, scene3d
 tests/         test programs with expected output (tools/runtests.py), render references
 bench/         benchmarks (Sloppy and equivalent C)
 tools/         bootstrap, test runner, render test, differential fuzzer, language server test,

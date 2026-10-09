@@ -437,7 +437,7 @@ sprite_region = (t: Texture, src: vec4, center: vec2, size: vec2, tint: vec4 = v
 draw_target = (rt: RenderTarget, pos: vec2 = vec2(0, 0), size: vec2 = vec2(0, 0), tint: vec4 = vec4(1, 1, 1, 1))    # draw a render target's texture (flipped: render targets are stored bottom-up)
 text_width = (s: str, size: f64 = 20.0) -> f64
 text = (s: str, pos: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1))    # draw text with its top-left corner at `pos`
-text_centered = (s: str, center: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1))    # text centered horizontally at `center`
+text_centered = (s: str, center: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1))    # text centered on `center` (horizontally and vertically)
 ```
 
 ### draw3d.jo
@@ -878,6 +878,35 @@ numbers every two seconds instead, and each long frame as it happens.
 
 ```gdscript
 show_stats = (on: bool = true)
+```
+
+### ui.jo
+
+Menus: a column of buttons, sliders and switches, worked with the keyboard, a gamepad or the  
+mouse. Immediate mode: describe the menu every frame (in draw), and each item says what was  
+done to it then.  
+  
+draw = ():  
+...  
+ui_begin("title", vec2(640, 320))  
+if ui_button("Play"): start()  
+music = ui_slider("Music", music)  
+fullscreen = ui_switch("Fullscreen", fullscreen)  
+if ui_button("Quit"): quit()  
+ui_end()  
+  
+Up/down (arrows, W/S, d-pad, left stick) move between items, enter/space/A or a click choose,  
+left/right change sliders and switches; ui_back() is true when escape or B was pressed.  
+
+```gdscript
+struct UiStyle
+ui_begin = (name: str, top_center: vec2)    # start a menu: items go in a column centered on x, from y down. A new name starts with the first item chosen.
+ui_end = ()
+ui_back = () -> bool    # escape or the B button: go back (close the menu)
+ui_button = (label: str, enabled: bool = true) -> bool    # a button: true in the frame it is chosen
+ui_slider = (label: str, value: f64, step: f64 = 0.1) -> f64    # a value from 0 to 1, changed in steps of `step` (left/right, or dragging with the mouse)
+ui_switch = (label: str, on: bool) -> bool    # on or off (left/right, enter, or a click)
+ui_text = (s: str, size: f64 = 24.0, color: vec4 = vec4(1, 1, 1, 0.6))    # a line of text in the column (not an item: it cannot be chosen)
 ```
 
 ### vmath.jo

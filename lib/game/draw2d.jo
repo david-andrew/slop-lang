@@ -532,6 +532,6 @@ text = (s: str, pos: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1)):
             __quad(vec2(x0, y0), vec2(x0 + s_, y0), vec2(x0 + s_, y0 + s_), vec2(x0, y0 + s_), vec2(u0, v0), vec2(u1, v0), vec2(u1, v1), vec2(u0, v1), color, 1)
         x += f32(__font_adv[gi]) * k
 
-# text centered horizontally at `center`
+# text centered on `center` (horizontally and vertically)
 text_centered = (s: str, center: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1)):
     text(s, center - vec2(f32(text_width(s, size) / 2.0), f32(size / 2.0)), size, color)

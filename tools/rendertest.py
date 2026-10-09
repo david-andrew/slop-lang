@@ -22,7 +22,10 @@ scenes = sorted(f[:-3] for f in os.listdir(refdir) if f.endswith(".jo"))
 for sc in scenes:
     games[sc] = f"tests/render/{sc}.jo"
 env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
-env.update(SLOPPY_LIB=os.path.join(root, "lib"), SLOPPY_SOFTWARE="1", SLOPPY_FRAMES="60")
+# (games that save progress start with nothing saved, so their frames do not depend on it)
+import shutil
+shutil.rmtree("/tmp/sloppy-render/saved-data", ignore_errors=True)
+env.update(SLOPPY_LIB=os.path.join(root, "lib"), SLOPPY_SOFTWARE="1", SLOPPY_FRAMES="60", SLOPPY_SAVE_DIR="/tmp/sloppy-render/saved-data")
 LIMIT = 1.0           # mean absolute difference allowed (0..255), for other CPUs' rounding
 GPU_LIMIT = 2.0       # against a GPU's frame: the software renderer works at half resolution
 failed = 0
