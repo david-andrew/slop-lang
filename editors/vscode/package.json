@@ -8,8 +8,8 @@
     "language server",
     "gamedev"
   ],
-  "version": "0.2.0",
-  "publisher": "sloppy-lang",
+  "version": "0.2.1",
+  "publisher": "RedFoxLabs",
   "engines": {
     "vscode": "^1.75.0"
   },
