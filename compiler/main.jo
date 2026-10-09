@@ -23,6 +23,7 @@ use 'dwarf.jo'
 use 'elf.jo'
 use 'pe.jo'
 use 'wasm.jo'
+use 'zip.jo'
 use 'ide.jo'
 use 'lsp.jo'
 use 'repl.jo'
@@ -232,7 +233,7 @@ compile = (path: str, out0: str) -> str:
     if lower_only: opt_release = false
     setup_target()
     out = out0
-    if target_wasm and not ends_with(out, ".html"): out = out + ".html"
+    if target_wasm and not ends_with(out, ".html") and not ends_with(out, ".zip"): out = out + ".html"
     if target_windows:
         if ends_with(out, ".bin"): out = out[..len(out) - 4)
         if not ends_with(out, ".exe"): out = out + ".exe"
@@ -319,10 +320,7 @@ compile = (path: str, out0: str) -> str:
     if target_wasm:
         mod = wasm_module(roots, main_lf, -1)
         size = mod.len()
-        title = path
-        s = rfind(title, "/")
-        if s >= 0: title = title[s + 1..]
-        ok = write_html(out, mod, title)
+        ok = write_html(out, mod, program_name, program_icon)
     else if target_windows:
         x64_stubs()
         entry = x64_entry_win(roots, main_lf)
@@ -331,7 +329,7 @@ compile = (path: str, out0: str) -> str:
         img_ro_addr = PE_BASE + ro_rva
         img_data_addr = PE_BASE + data_rva + idata_size
         x64_resolve(img_text_addr, img_ro_addr, img_data_addr)
-        ok = write_pe(out, code, entry, rodata, data_size + 8 + bss_reserve, update_fn != 0 or draw_fn != 0, pe_backtrace_info())
+        ok = write_pe(out, code, entry, rodata, data_size + 8 + bss_reserve, update_fn != 0 or draw_fn != 0, pe_backtrace_info(), program_icon)
         size = code.len()
     else:
         x64_stubs()

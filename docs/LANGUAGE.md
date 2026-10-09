@@ -577,6 +577,7 @@ build:                          # build options live in the source
     opt = release               # debug | release
     output = "mygame"           # the file `sloppy build` writes (beside the program)
     name = "My Game"            # PROGRAM_NAME: window title, and where save_data keeps data
+    icon = "icon.png"           # a square PNG (up to 256 px): the Windows .exe's icon, the page's
 
 when TARGET == "wasm":          # compile-time conditional; the dead branch is not compiled
     ...
@@ -737,7 +738,8 @@ screen.
 sloppy file.jo [args]     compile and run (wasm target: opens the browser)
 sloppy watch file.jo      run it, and reload it while its files change
 sloppy --web file.jo      compile for the web and open it in the browser
-sloppy build file.jo      write the executable / .html
+sloppy build file.jo      write the executable / .html (-o game.zip: the page as index.html in a
+                          zip, ready to upload to itch.io)
 sloppy test file.jo       run `test` blocks
 sloppy check file.jo      type check only
 sloppy update             install the latest release (when this is not it)

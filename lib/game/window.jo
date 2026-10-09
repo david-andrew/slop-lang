@@ -326,6 +326,8 @@ else when TARGET == "windows":
     @lib("user32.dll")
     extern LoadCursorW = (inst: *u8, name: int) -> *u8
     @lib("user32.dll")
+    extern LoadIconW = (inst: *u8, name: int) -> *u8
+    @lib("user32.dll")
     extern GetDC = (hwnd: *u8) -> *u8
     @lib("user32.dll")
     extern SetProcessDPIAware = () -> i32
@@ -410,6 +412,7 @@ else when TARGET == "windows":
         wp: cfn(*u8, u32, int, int) -> int = __w32_wndproc
         ((p + 8) as **u8)[0] = wp as *u8
         ((p + 24) as **u8)[0] = inst
+        ((p + 32) as **u8)[0] = LoadIconW(inst, 1)              # the build block's icon (compiler/pe.jo), if any
         ((p + 40) as **u8)[0] = LoadCursorW(null, 32512)        # IDC_ARROW
         ((p + 64) as **u16)[0] = data(cls)
         RegisterClassExW(p)

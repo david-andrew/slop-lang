@@ -1,0 +1,4 @@
+# error: cannot read the icon
+build:
+    icon = "no-such-icon.png"
+print(1)

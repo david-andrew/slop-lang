@@ -65,12 +65,67 @@ pe_layout = (text_len: int, ro_len: int) -> (int, int, int, int):
     data_rva = ro_rva + align_to(max(ro_len, 1), PE_SECT)
     (text_rva, ro_rva, data_rva, pe_idata(data_rva).len())
 
-write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui: bool, info: u8[]) -> bool:
+# the resources: the program's icon (a PNG, as Windows takes since Vista), as icon 1 in group 1
+# (the window class loads it: lib/game/window.jo). Directories by type, name, language; then the
+# data entries and the data.
+pe_rsrc = (rva: int, png: u8[]) -> u8[]:
+    out: u8[]
+    sub = 0x80000000
+    pe_rsrc_dir(out, [(3, 32 | sub), (14, 80 | sub)])      # RT_ICON, RT_GROUP_ICON
+    pe_rsrc_dir(out, [(1, 56 | sub)])                       # @32
+    pe_rsrc_dir(out, [(0x409, 128)])                        # @56
+    pe_rsrc_dir(out, [(1, 104 | sub)])                      # @80
+    pe_rsrc_dir(out, [(0x409, 144)])                        # @104
+    group: u8[]
+    put16(group, 0)
+    put16(group, 1)                                    # icons
+    put16(group, 1)                                    # how many
+    w = (int(png[16]) << 24) | (int(png[17]) << 16) | (int(png[18]) << 8) | int(png[19])
+    h = (int(png[20]) << 24) | (int(png[21]) << 16) | (int(png[22]) << 8) | int(png[23])
+    group.push(u8(w & 255))                            # (256: 0)
+    group.push(u8(h & 255))
+    group.push(0)
+    group.push(0)
+    put16(group, 1)                                    # planes
+    put16(group, 32)                                   # bits
+    put32(group, png.len())
+    put16(group, 1)                                    # the icon's id
+    icon_at = 160
+    group_at = align_to(icon_at + png.len(), 8)
+    put32(out, rva + icon_at)                          # @128: the icon
+    put32(out, png.len())
+    put32(out, 0)
+    put32(out, 0)
+    put32(out, rva + group_at)                         # @144: the group
+    put32(out, group.len())
+    put32(out, 0)
+    put32(out, 0)
+    append_bytes(out, png)
+    loop out.len() < group_at: out.push(0)
+    append_bytes(out, group)
+    out
+
+# a resource directory: (id, offset) entries; a set high bit marks a subdirectory
+pe_rsrc_dir = (out: mut u8[], entries: (int, int)[]):
+    put32(out, 0)
+    put32(out, 0)
+    put32(out, 0)
+    put16(out, 0)
+    put16(out, entries.len())
+    loop e in entries:
+        put32(out, e.0)
+        put32(out, e.1)
+
+write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui: bool, info: u8[], icon: u8[]) -> bool:
     text_rva, ro_rva, data_rva, idata_size = pe_layout(text.len(), ro.len())
     idata = pe_idata(data_rva)
     data_vsize = idata_size + data_size + 8
     info_rva = data_rva + align_to(data_vsize, PE_SECT)
-    image_size = info_rva + align_to(max(info.len(), 1), PE_SECT)
+    rsrc_rva = info_rva + align_to(max(info.len(), 1), PE_SECT)
+    rsrc: u8[]
+    if icon.len() > 0: rsrc = pe_rsrc(rsrc_rva, icon)
+    image_size = rsrc_rva + align_to(max(rsrc.len(), 1), PE_SECT)
+    if rsrc.len() == 0: image_size = rsrc_rva
     text_raw = align_to(text.len(), PE_FILE)
     ro_raw = align_to(max(ro.len(), 1), PE_FILE)
     data_raw = align_to(idata.len(), PE_FILE)
@@ -79,8 +134,12 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
     ro_off = text_off + text_raw
     data_off = ro_off + ro_raw
     info_off = data_off + data_raw
+    rsrc_raw = align_to(rsrc.len(), PE_FILE)
+    rsrc_off = info_off + info_raw
+    nsections = 4
+    if rsrc.len() > 0: nsections = 5
     out: u8[]
-    out.reserve(info_off + info_raw)
+    out.reserve(rsrc_off + rsrc_raw)
     # DOS header: "MZ", and where the PE header is
     out.push('M')
     out.push('Z')
@@ -89,7 +148,7 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
     # PE signature and COFF header
     loop c in ['P', 'E', 0, 0]: out.push(u8(c))
     put16(out, 0x8664)                   # x86-64
-    put16(out, 4)                        # sections
+    put16(out, nsections)
     put32(out, 0)                        # time stamp
     put32(out, 0)
     put32(out, 0)
@@ -100,7 +159,7 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
     out.push(1)                          # linker version
     out.push(0)
     put32(out, text_raw)                 # size of code
-    put32(out, ro_raw + data_raw + info_raw)   # initialized data
+    put32(out, ro_raw + data_raw + info_raw + rsrc_raw)   # initialized data
     put32(out, data_vsize - idata_size)  # uninitialized data
     put32(out, text_rva + entry_off)     # entry point
     put32(out, text_rva)                 # base of code
@@ -131,6 +190,9 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
         if i == 1:
             put32(out, data_rva)         # imports
             put32(out, 40)
+        else if i == 2 and rsrc.len() > 0:
+            put32(out, rsrc_rva)         # resources
+            put32(out, rsrc.len())
         else if i == 12:
             put32(out, data_rva + idata_size - pe_iat_size())   # import address table
             put32(out, pe_iat_size())
@@ -140,6 +202,7 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
     pe_section(out, ".rdata", max(ro.len(), 1), ro_rva, ro_raw, ro_off, 0x40000040)
     pe_section(out, ".data", data_vsize, data_rva, data_raw, data_off, 0xC0000040)
     pe_section(out, ".sloppy", max(info.len(), 1), info_rva, info_raw, info_off, 0x40000040)
+    if rsrc.len() > 0: pe_section(out, ".rsrc", rsrc.len(), rsrc_rva, rsrc_raw, rsrc_off, 0x40000040)
     out.resize(text_off)
     append_bytes(out, text)
     out.resize(ro_off)
@@ -149,6 +212,8 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
     out.resize(info_off)
     append_bytes(out, info)
     out.resize(info_off + info_raw)
+    append_bytes(out, rsrc)
+    out.resize(rsrc_off + rsrc_raw)
     delete_file(path)
     if not write_bytes(path, out): return false
     chmod(path, 0x1ED)

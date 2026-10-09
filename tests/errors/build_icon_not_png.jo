@@ -1,0 +1,4 @@
+# error: the icon must be a PNG file
+build:
+    icon = "build_icon_not_png.jo"
+print(1)

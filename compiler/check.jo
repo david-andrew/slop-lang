@@ -151,6 +151,7 @@ update_fn = 0
 draw_fn = 0
 init_fns: int[]
 build_node = 0
+program_icon: u8[] = []         # the build block's icon (a PNG), for Windows programs and web pages
 program_name = ""               # PROGRAM_NAME: the build block's name, else the main file's (set in check_program)
 global_ids: int[]
 
@@ -1843,12 +1844,25 @@ check_build_block = ():
             if word != "debug" and word != "release": fatal(nodes[v].pos, "build option 'opt' is debug or release")
         else if key == "output":
             if nodes[v].kind != .str_lit or nodes[v].aux != 0 or len(word) == 0: fatal(nodes[v].pos, "build option 'output' is a file name in quotes: output = \"game\"")
+        else if key == "icon":
+            if nodes[v].kind != .str_lit or nodes[v].aux != 0 or len(word) == 0: fatal(nodes[v].pos, "build option 'icon' is a PNG file in quotes: icon = \"icon.png\"")
+            path = word
+            d = files[pos_file(nodes[v].pos)].dir
+            if not is_abs_path(path) and len(d) > 0: path = "{d}/{path}"
+            b: u8[]
+            if let got = read_bytes(path): b = got
+            if b.len() == 0: fatal(nodes[v].pos, "cannot read the icon '{path}'")
+            if b.len() < 24 or b[0] != 0x89 or b[1] != 'P' or b[2] != 'N' or b[3] != 'G': fatal(nodes[v].pos, "the icon must be a PNG file ('{path}' is not one)")
+            w = (int(b[16]) << 24) | (int(b[17]) << 16) | (int(b[18]) << 8) | int(b[19])
+            h = (int(b[20]) << 24) | (int(b[21]) << 16) | (int(b[22]) << 8) | int(b[23])
+            if w != h or w > 256: fatal(nodes[v].pos, "the icon must be square and at most 256 pixels wide ('{path}' is {w}x{h})")
+            program_icon = b
         else if key == "name":
             if nodes[v].kind != .str_lit or nodes[v].aux != 0 or len(word) == 0: fatal(nodes[v].pos, "build option 'name' is the program's name in quotes: name = \"Star Garden\"")
             loop c in word:
                 if c == '/' or c == '\\' or c == ':' or c < ' ': fatal(nodes[v].pos, "the program's name is also its save folder's: it cannot contain / \\ or :")
         else:
-            fatal(nodes[int(nodes[s].a)].pos, "unknown build option '{key}' (the options are target, opt, output and name)")
+            fatal(nodes[int(nodes[s].a)].pos, "unknown build option '{key}' (the options are target, opt, output, name and icon)")
 
 # ---------------- program ----------------
 want_cpu_flag = false           # (release builds for x86-64: the vectorizer may use __cpu_avx2)

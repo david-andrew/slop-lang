@@ -2,6 +2,7 @@
 # Memory layout: [0,1024) unused | rodata | data (globals) | shadow stack (grows down) | heap
 
 use 'util.jo'
+use 'zip.jo'
 use 'ast.jo'
 use 'types.jo'
 use 'check.jo'
@@ -908,11 +909,19 @@ base64 = (b: u8[]) -> str:
         out.push('=')
     str_from_bytes(out)
 
-write_html = (path: str, wasm: u8[], title: str) -> bool:
+write_html = (path: str, wasm: u8[], title: str, icon: u8[]) -> bool:
+    page = html_page(wasm, title, icon)
+    # (game.zip: the page as index.html in a zip, for sites like itch.io)
+    if ends_with(path, ".zip"): return write_zip(path, [("index.html", bytes(page))])
+    write_file(path, page)
+
+html_page = (wasm: u8[], title: str, icon: u8[]) -> str:
+    link = ""
+    if icon.len() > 0: link = "<link rel=\"icon\" href=\"data:image/png;base64,{base64(icon)}\">\n"
     js = ""
     loop part in ["runtime.js", "gfx.js", "audio.js", "boot.js"]:
         src = read_file("{lib_dir}/web/{part}") ?? ""
         if len(src) == 0 and part != "audio.js": ice("missing {lib_dir}/web/{part}")
         js += src + "\n"
-    html = "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>{title}</title>\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<style>html,body\{margin:0;height:100%;background:#111;color:#ddd;font:14px monospace}canvas\{display:block;margin:auto;outline:none}#log\{white-space:pre-wrap;margin:8px;max-height:40vh;overflow:auto}</style>\n</head><body><canvas id=\"sloppy-canvas\" tabindex=\"1\" width=\"0\" height=\"0\"></canvas><div id=\"log\"></div>\n<script>\nconst SLOPPY_WASM = \"{base64(wasm)}\";\n{js}\n</script></body></html>\n"
-    write_file(path, html)
+    html = "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>{title}</title>\n{link}<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<style>html,body\{margin:0;height:100%;background:#111;color:#ddd;font:14px monospace}canvas\{display:block;margin:auto;outline:none}#log\{white-space:pre-wrap;margin:8px;max-height:40vh;overflow:auto}</style>\n</head><body><canvas id=\"sloppy-canvas\" tabindex=\"1\" width=\"0\" height=\"0\"></canvas><div id=\"log\"></div>\n<script>\nconst SLOPPY_WASM = \"{base64(wasm)}\";\n{js}\n</script></body></html>\n"
+    html
