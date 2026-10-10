@@ -1,0 +1,14 @@
+# requires: sloppy
+# a function assigning a global declared below it gets a warning (it changes the global), and
+# a top-level `k = 0` runs where it is, even after a function changed k
+f = () -> int:
+    k = 0
+    loop k < 3: k += 1
+    k
+print(f())
+xs: f64[] = [1.0, 2.0]
+k = 0
+loop k < xs.len():
+    xs[k] = 9.0
+    k += 1
+print(xs, k)

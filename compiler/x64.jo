@@ -2163,6 +2163,10 @@ ra_fn_base = 0
 
 fn_len: int[]               # lfunc -> its code's length (sloppy watch)
 
+save_next = 0               # (the caller-saved registers spilled around calls: see below)
+row_pos = -1                # (the line table: line_row)
+row_line = -1
+
 x64_function = ():
     loop fn_addr.len() <= ir.fn_index: fn_addr.push(-1)
     loop fn_len.len() <= ir.fn_index: fn_len.push(0)
@@ -2234,7 +2238,6 @@ x64_function = ():
             if vloc[v] == LOC_SPILL or vloc[v] >= 0: ra_total += v_weight[v]
 
 # store (before) or reload (after) caller-saved registers holding values live across the call at pos
-save_next = 0
 save_active: int[]
 
 save_around_call = (pos: int, before: bool, dst: int):
@@ -2425,9 +2428,7 @@ call_sites: int[]
 # (code offset, position) where the source position changes: the line table of debuggers
 # (dwarf.jo)
 line_rows: int[]
-row_pos = -1
 
-row_line = -1
 row_file = -1
 
 # (a row where the position changes; dwarf.jo leaves out those on the same line)

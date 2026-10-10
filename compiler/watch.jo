@@ -315,6 +315,8 @@ wk_extra = (n: int, m: int, h0: int) -> int:
     h
 
 # ---- the link map of a first build ----
+wd_path: str[]          # (wd_desc: the structs it is inside, for recursive types)
+
 watch_record_image = ():
     wm_clear()
     keys = wk_fn_keys()
@@ -739,6 +741,9 @@ w_ready = false             # it takes patches (its game loop runs, with room fo
 w_out = ""
 w_args: str[]
 
+w_ext = ""      # the main file's extension: other files with it are sources too
+w_cache = "/tmp/sloppy-cache"
+
 watch_main = (path: str, args: str[]):
     w_cache = os_path(temp_dir()) + "/sloppy-cache"
     mkdir(w_cache)
@@ -895,7 +900,6 @@ watch_drain = (ino: int) -> bool:
     any
 
 # the files built from, by directory/name (for file events: which matter)
-w_ext = ""      # the main file's extension: other files with it are sources too
 w_wds: {int: str} = {}
 w_watched: {str: bool} = {}
 
@@ -1124,7 +1128,6 @@ w_read8 = () -> int:
         got += r
     b[0]
 
-w_cache = "/tmp/sloppy-cache"
 
 # (what to type: on Linux a line, on Windows a key is enough)
 w_r = "r + enter"
@@ -1362,7 +1365,6 @@ watch_build_child = (path: str, state: str, res: str, first: bool, out: str):
 # F<size of element>,<count>(<element>) (a fixed-size array)
 # O<size of value>(<value>) S<size><name>{field@offset:<description>,...} R<name>; (the struct
 # of that name enclosing it: recursion) T<size>{@offset:<description>,...} X<size><layout>;
-wd_path: str[]
 
 wd_desc = (t0: int) -> str:
     t = prune(t0)

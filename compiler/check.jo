@@ -1369,6 +1369,31 @@ unnarrow_assign = (s: int):
     push_scope_sym(nm, new_sym(nm, .local, u, 0))
 
 # returns the (possibly replaced) statement node
+# `x = ...` in a function, where x is a global declared below the function in the same file:
+# that reads like a new local variable, but changes the global, so it gets a warning (a loop
+# counter `k` in a helper quietly being the script's `k` further down). Declaring the global
+# above the function says it is meant.
+late_warned: {int: bool}
+check_late_global = (s: int):
+    if cx < 0 or nodes[s].op != i32(int(Tok.assign)): return
+    if ctxs[cx].mod >= 0 and modules[int(ctxs[cx].mod)].is_prelude: return
+    lhs = int(nodes[s].a)
+    if nodes[lhs].kind != .ident: return
+    inst = int(ctxs[cx].inst)
+    if inst <= 0 or inst >= fns.len(): return
+    fd = int(fns[inst].decl)
+    if fd == 0: return
+    nm = int(nodes[lhs].name)
+    sym = lookup(nm)
+    if sym == 0 or syms[sym].kind != .global or syms[sym].decl == 0: return
+    gpos = nodes[int(syms[sym].decl)].pos
+    fpos = nodes[fd].pos
+    if pos_file(gpos) != pos_file(fpos) or pos_off(gpos) <= pos_off(fpos): return
+    key = fd * 65536 + (nm & 0xFFFF)
+    if late_warned.get(key, false): return
+    late_warned[key] = true
+    warn(nodes[lhs].pos, "'{name_of(nm)}' is the global variable declared below this function (at {pos_str(gpos)}), so this changes it: for a variable of the function's own, write `let {name_of(nm)} = ...` (or use another name); to mean the global, declare it above the function")
+
 check_assign = (s: int) -> int:
     if nodes[s].op == i32(int(Tok.assign)): unnarrow_assign(s)
     sl = soa_alias_of(int(nodes[s].a))
@@ -1565,6 +1590,7 @@ check_stmt = (s: int):
         assign_to_decl(s)
         check_vardecl(s)
     else if k == .assign:
+        check_late_global(s)
         r = check_assign(s)
         if r != s:
             nodes[s] = nodes[r]

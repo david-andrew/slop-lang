@@ -107,9 +107,15 @@ const SPEED = 300.0  # compile-time constant
 
 `x = value` declares `x` when no variable `x` is visible, and assigns otherwise: inside a
 function, assigning to a global changes the global. At the top level of a file, `x = 1`
-declares a global of that file (even if an imported file has an `x`).
+declares a global of that file, or assigns one the file `use`s (an `import`ed file's names are
+apart: `physics.x`).
 
-Top-level variables are globals, initialized in order before `main` runs.
+A function that assigns a global declared further down the file gets a warning: that changes
+the global, which a short name (`i`, `best`) does by accident. `let x = ...` makes a variable of
+the function's own; declaring the global above the function says the function means it.
+
+Top-level variables are globals, initialized in order before `main` runs (each where its line
+is, even `x = 0`).
 Top-level statements in the main file run in order, like a script.
 
 ## 4. Types

@@ -386,6 +386,7 @@ parse_string_token = (t: int) -> int:
     n
 
 # ---------------- expressions ----------------
+p_header = false      # parsing an if/loop/match header: `(x): ...` is not a function there
 # (inside a call's parentheses `(x): ...` is a function again, in an if or loop header too:
 # `if xs.any((x): x > 2): ...`)
 parse_args = (call: int):
@@ -423,7 +424,6 @@ id_from = 0
 
 # parser modes
 p_matrix = 0          # > 0 inside array brackets: a space separates elements
-p_header = false      # parsing an if/loop/match header: `(x): ...` is not a function there
 p_index: int[]         # the arrays being indexed (for `end`)
 
 parse_primary = () -> int:

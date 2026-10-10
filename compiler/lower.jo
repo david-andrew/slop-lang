@@ -2609,8 +2609,7 @@ gen_vardecl = (s: int):
         g = int(nodes[s].sym)
         iv = int(nodes[s].b)
         if iv == 0: return
-        ik = nodes[iv].kind
-        if (ik == .int_lit and nodes[iv].ival == 0) or ik == .null_lit or (ik == .bool_lit and nodes[iv].ival == 0): return
+        # (also `x = 0`: globals start as zero, but a function called above could have changed it)
         val = gen_owned(iv)
         store_val(int(globals[g].type), e_gaddr(global_addr_off(g)), 0, val.v)
         return
