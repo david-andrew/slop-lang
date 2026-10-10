@@ -3,3 +3,7 @@
 144000 frames at 48000 Hz, 3.000 s
 not an Ogg file
 damaged files: no crash
+music: 1 channel, 8000 Hz, 3.0 s
+streamed 143996 frames, largest difference from load_ogg below 1e-6: true
+looping: 148000 frames, the start again after the end: true
+mixed 141 times, playing: false, streams left: 0

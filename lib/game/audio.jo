@@ -14,6 +14,7 @@ struct Voice:
     pitch: f64
     looping: bool
     id: int
+    stream = false      # music, decoded as it plays (play_music): its __Stream has this id
 
 enum Wave: sine, square, triangle, saw, noise
 
@@ -39,8 +40,14 @@ stop = (id: int):
     loop i < __voices.len():
         if __voices[i].id == id: __voices.remove(i)
         else: i += 1
+    i = 0
+    loop i < __streams.len():
+        if __streams[i].id == id: __streams.remove(i)
+        else: i += 1
 
-stop_all = (): __voices.clear()
+stop_all = ():
+    __voices.clear()
+    __streams.clear()
 is_playing = (id: int) -> bool:
     loop v in __voices:
         if v.id == id: return true
@@ -61,6 +68,10 @@ __mix = (n: int):
     i = 0
     loop i < __voices.len():
         v = __voices[i]
+        if v.stream:
+            if __mix_stream(i, out, n): i += 1
+            else: __voices.remove(i)
+            continue
         src = data(v.sound.samples)
         total = v.sound.samples.len() / 2
         if total == 0:

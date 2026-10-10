@@ -19,3 +19,29 @@ loop round in [0..60):
     if random() < 0.2: f.truncate(random_int(0, f.len()))
     r = __ogg_decode(f)
 print("damaged files: no crash")
+# music: decoded while it plays, the same as decoded whole
+m = load_music(file)
+print("music: {m.channels} channel, {m.rate} Hz, {m.seconds} s")
+st = __Stream(1, __vdec_open(file), [], 0.0, false)
+streamed: f32[]
+loop true:
+    __stream_fill(st, 500)
+    loop x in st.buf: streamed.push(x)
+    st.buf.clear()
+    if st.ended: break
+worst = 0.0
+loop i in [0..min(streamed.len(), s.samples.len())): worst = max(worst, abs(f64(streamed[i]) - f64(s.samples[i])))
+print("streamed {streamed.len() / 2} frames, largest difference from load_ogg below 1e-6: {worst < 1e-6}")
+# looping: past the end it starts again
+lp = __Stream(1, __vdec_open(file), [], 0.0, true)
+__stream_fill(lp, frames(s) + 4000)
+again = 0.0
+loop i in [1000..6000): again = max(again, abs(f64(lp.buf[frames(s) * 2 + i]) - f64(s.samples[i])))
+print("looping: {lp.buf.len() / 2} frames, the start again after the end: {again < 1e-6}")
+# through the mixer, until it has played
+id = play_music(m, 1.0, false)
+mixed = 0
+loop is_playing(id) and mixed < 200:
+    __mix(1024)
+    mixed += 1
+print("mixed {mixed} times, playing: {is_playing(id)}, streams left: {__streams.len()}")

@@ -20,6 +20,103 @@ load_ogg = (file: u8[]) -> Sound:
         st[i * 2 + 1] = d.samples[i * d.channels + right]
     __resample(st, d.rate)
 
+# ---------------- music: decoded while it plays ----------------
+# A long piece of music played as it is decoded, a little ahead of where it is playing: no wait
+# when it loads and little memory (a three-minute song decoded whole is about 70 MB).
+#
+#   song = load_music(embed("song.ogg"))
+#   id = play_music(song, 0.6)          # looping; stop(id), set_volume(id, v) as for sounds
+struct Music:
+    file: u8[]
+    channels: int
+    rate: int
+    seconds: f64                # how long it is (0: unknown)
+
+load_music = (file: u8[]) -> Music:
+    d = __vdec_open(file)
+    if d.error != "": panic("load_music: {d.error}")
+    Music(file, d.ch, d.v.rate, f64(d.granule) / f64(max(d.v.rate, 1)))
+
+# play music from its start; returns a voice id for stop(), set_volume() and is_playing()
+play_music = (m: Music, volume: f64 = 1.0, looping: bool = true, pan: f64 = 0.0) -> int:
+    __audio_start()
+    __voice_id += 1
+    __streams.push(__Stream(__voice_id, __vdec_open(m.file), [], 0.0, looping))
+    __voices.push(Voice(Sound([]), 0.0, f32(volume), f32(clamp(pan, -1.0, 1.0)), 1.0, looping, __voice_id, true))
+    __voice_id
+
+struct __Stream:
+    id: int                     # its voice
+    dec: __VDec
+    buf: f32[]                  # stereo frames at the mixer's rate, ready to mix
+    frac: f64                   # where resampling is, in dec.out's frames
+    looping: bool
+    ended = false
+
+__streams: __Stream[]
+
+# at least `need` frames in s.buf (fewer only at the end of music that does not loop)
+__stream_fill = (s: mut __Stream, need: int):
+    ch = max(s.dec.ch, 1)
+    right = 0
+    if ch == 2: right = 1
+    else if ch >= 3: right = 2
+    step = f64(s.dec.v.rate) / f64(MIX_RATE)
+    loop s.buf.len() / 2 < need and not s.ended:
+        avail = s.dec.out.len() / ch
+        loop s.frac + 1.0 < f64(avail) and s.buf.len() / 2 < need:
+            ip = int(s.frac)
+            fr = f32(s.frac - f64(ip))
+            a = ip * ch
+            bq = a + ch
+            s.buf.push(s.dec.out[a] + (s.dec.out[bq] - s.dec.out[a]) * fr)
+            s.buf.push(s.dec.out[a + right] + (s.dec.out[bq + right] - s.dec.out[a + right]) * fr)
+            s.frac += step
+        if s.buf.len() / 2 >= need: break
+        # (what has been used: dropped, but for the frame the next values start from)
+        drop = int(s.frac)
+        if drop > 0 and drop * ch <= s.dec.out.len():
+            s.dec.out = s.dec.out[drop * ch..]
+            s.frac -= f64(drop)
+        if not __vdec_packet(s.dec):
+            if s.looping and s.dec.error == "" and s.dec.packets.len() > 3: __vdec_rewind(s.dec)
+            else:
+                s.ended = true
+                if s.dec.out.len() >= ch:
+                    last = s.dec.out.len() - ch
+                    s.buf.push(s.dec.out[last])
+                    s.buf.push(s.dec.out[last + right])
+
+# mix voice i (a music one) into out; false when it has finished
+__mix_stream = (vi: int, out: *f32, n: int) -> bool:
+    k = -1
+    loop j in 0.. and st in __streams:
+        if st.id == __voices[vi].id: k = j
+    if k < 0: return false
+    v = __voices[vi]
+    __stream_fill(__streams[k], int(f64(n) * v.pitch) + 2)
+    src = data(__streams[k].buf)
+    total = __streams[k].buf.len() / 2
+    gl_ = v.volume * f32(__master) * (1.0 - max(v.pan, 0.0))
+    gr = v.volume * f32(__master) * (1.0 + min(v.pan, 0.0))
+    pos = v.pos
+    loop f in [0..n):
+        ip = int(pos)
+        if ip + 1 >= total: break
+        fr = f32(pos - f64(ip))
+        l = src[ip * 2] + (src[ip * 2 + 2] - src[ip * 2]) * fr
+        r = src[ip * 2 + 1] + (src[ip * 2 + 3] - src[ip * 2 + 1]) * fr
+        out[f * 2] += l * gl_
+        out[f * 2 + 1] += r * gr
+        pos += v.pitch
+    used = min(int(pos), total)
+    __streams[k].buf = __streams[k].buf[used * 2..]
+    __voices[vi].pos = pos - f64(used)
+    if __streams[k].ended and __streams[k].buf.len() <= 2:
+        __streams.remove(k)
+        return false
+    true
+
 # the samples as the file has them (interleaved, d.channels of them, at d.rate)
 struct OggAudio:
     channels: int
@@ -685,22 +782,42 @@ __ogg_packets = (f: u8[]) -> (u8[][], int, str):
         p = body + total
     (packets, granule, "")
 
-__ogg_decode = (file: u8[]) -> OggAudio:
-    out = OggAudio(0, 0, [])
+# a decoder that goes a packet at a time (load_ogg runs it to the end; music plays as it goes)
+struct __VDec:
+    v: __VState
+    packets: u8[][]
+    granule: int                # the stream's length in samples (from its last page; 0: unknown)
+    next = 3                    # the next packet (the first three are headers)
+    ch = 0
+    mdct0: __VMdct
+    mdct1: __VMdct
+    bufs: f32[][]               # two blocks per channel, the last one and this one, taking turns:
+    which = 0                   # bufs[which * ch + c] is this one
+    spec: f32[]
+    prev_n = 0
+    floors: f32[][]
+    vecs: f32[][]
+    block: f32[]
+    windows: f32[][]            # short, then long by the flags of its neighbors
+    mode_bits = 0
+    out: f32[]                  # samples made and not taken yet (interleaved, ch of them)
+    made = 0                    # frames made since the start
+    error = ""
+
+__vdec_open = (file: u8[]) -> __VDec:
+    v = __VState()
     pk = __ogg_packets(file)
-    if pk.2 != "":
-        out.error = pk.2
-        return out
+    d = __VDec(v, pk.0, pk.1, 3, 0, __vmdct_for(64), __vmdct_for(64), [], 0, [], 0, [], [], [], [], 0, [], 0, pk.2)
+    if d.error != "": return d
     packets = pk.0
     if packets.len() < 3:
-        out.error = "not an Ogg Vorbis file (it has no Vorbis headers)"
-        return out
-    v = __VState()
+        d.error = "not an Ogg Vorbis file (it has no Vorbis headers)"
+        return d
     # identification
     b = __vbits_of(packets[0])
     if __vget(b, 8) != 1 or packets[0].len() < 30 or packets[0][1] != 'v' or packets[0][2] != 'o':
-        out.error = "not an Ogg Vorbis file (it may be Opus or FLAC in Ogg)"
-        return out
+        d.error = "not an Ogg Vorbis file (it may be Opus or FLAC in Ogg)"
+        return d
     loop k in [0..6): __vget(b, 8)
     __vget(b, 32)
     v.channels = __vget(b, 8)
@@ -711,141 +828,163 @@ __ogg_decode = (file: u8[]) -> OggAudio:
     v.bs0 = 1 << __vget(b, 4)
     v.bs1 = 1 << __vget(b, 4)
     if v.channels < 1 or v.rate < 1 or v.bs0 < 64 or v.bs1 < v.bs0 or v.bs1 > 8192:
-        out.error = "the Vorbis header is damaged"
-        return out
-    out.channels = v.channels
-    out.rate = v.rate
+        d.error = "the Vorbis header is damaged"
+        return d
     # setup (packets[1] is the comments)
     b = __vbits_of(packets[2])
     if __vget(b, 8) != 5:
-        out.error = "the Vorbis setup header is missing"
-        return out
+        d.error = "the Vorbis setup header is missing"
+        return d
     loop k in [0..6): __vget(b, 8)
     __vread_setup(b, v)
     if v.error != "":
-        out.error = v.error
-        return out
+        d.error = v.error
+        return d
+    d.v = v
     ch = v.channels
-    mdct0 = __vmdct_for(v.bs0)
-    mdct1 = __vmdct_for(v.bs1)
-    # (two blocks per channel, the last one and this one, taking turns: bufs[which * ch + c])
-    bufs: f32[][]
-    loop c in [0..2 * ch): bufs.push(fill(f32(0), v.bs1))
-    which = 0
-    spec = fill(f32(0), v.bs1 / 2)
-    prev_n = 0
-    pcm: f32[]
-    if pk.1 > 0 and pk.1 < (1 << 31): pcm.reserve(pk.1 * ch + v.bs1 * ch)
-    floors: f32[][]
-    vecs: f32[][]
+    d.ch = ch
+    d.mdct0 = __vmdct_for(v.bs0)
+    d.mdct1 = __vmdct_for(v.bs1)
+    loop c in [0..2 * ch): d.bufs.push(fill(f32(0), v.bs1))
+    d.spec = fill(f32(0), v.bs1 / 2)
     loop c in [0..ch):
-        floors.push(fill(f32(0), v.bs1 / 2))
-        vecs.push(fill(f32(0), v.bs1 / 2))
-    block = fill(f32(0), v.bs1)
-    windows: f32[][] = [[], [], [], [], []]      # short, then long by the flags of its neighbors
-    mode_bits = __vilog(v.modes.len() - 1)
-    loop pi in [3..packets.len()):
-        b = __vbits_of(packets[pi])
-        if packets[pi].len() == 0 or __vget(b, 1) != 0: continue
-        mi = __vget(b, mode_bits)
-        if mi >= v.modes.len(): continue
-        mode = v.modes[mi]
-        n = v.bs0
-        if mode.long: n = v.bs1
-        n2 = n / 2
-        pl = false
-        nl = false
-        if mode.long:
-            pl = __vget(b, 1) == 1
-            nl = __vget(b, 1) == 1
-        map = v.maps[mode.mapping]
-        # floors
-        silent = fill(false, ch)
-        loop c in [0..ch):
-            f = v.floors[map.sfloor[map.mux[c]]]
-            silent[c] = not __vfloor_curve(b, v, f, floors[c], n2)
-        # (a channel coupled with one that is not silent is decoded too)
-        loop s in [0..map.mags.len()):
-            if not silent[map.mags[s]] or not silent[map.angs[s]]:
-                silent[map.mags[s]] = false
-                silent[map.angs[s]] = false
-        loop c in [0..ch):
-            loop i in [0..n2): vecs[c][i] = 0.0
-        # residues, a submap at a time
-        loop s in [0..map.sresidue.len()):
-            r = v.residues[map.sresidue[s]]
-            idx: int[]
-            loop c in [0..ch):
-                if map.mux[c] == s: idx.push(c)
-            if r.kind == 2:
-                any = false
-                loop c in idx:
-                    if not silent[c]: any = true
-                if not any: continue
-                k = idx.len()
-                inter: f32[][] = [fill(f32(0), n2 * k)]
-                __vresidue(b, v, r, inter, [false], n2 * k, 1)
-                loop j in 0.. and c in idx:
-                    loop i in [0..n2): vecs[c][i] = inter[0][i * k + j]
-            else:
-                sub: f32[][]
-                skip: bool[]
-                loop c in idx:
-                    sub.push(fill(f32(0), n2))
-                    skip.push(silent[c])
-                __vresidue(b, v, r, sub, skip, n2, r.kind)
-                loop j in 0.. and c in idx:
-                    loop i in [0..n2): vecs[c][i] = sub[j][i]
-        # inverse coupling
-        s = map.mags.len() - 1
-        loop s >= 0:
-            mc = map.mags[s]
-            ac = map.angs[s]
-            loop i in [0..n2):
-                m = vecs[mc][i]
-                a = vecs[ac][i]
-                if m > 0.0:
-                    if a > 0.0:
-                        vecs[ac][i] = m - a
-                    else:
-                        vecs[ac][i] = m
-                        vecs[mc][i] = m + a
-                else:
-                    if a > 0.0:
-                        vecs[ac][i] = m + a
-                    else:
-                        vecs[ac][i] = m
-                        vecs[mc][i] = m - a
-            s -= 1
-        # floor times residue, back to samples, windowed, overlapped with the last block
-        wi = 0
-        if mode.long: wi = 1 + (int(pl) * 2) + int(nl)
-        if windows[wi].len() == 0: windows[wi] = __vwindow(n, v.bs0, mode.long, pl, nl)
-        w = windows[wi]
-        cur0 = which * ch
-        prev0 = (1 - which) * ch
-        loop c in [0..ch):
-            if silent[c]:
-                loop i in [0..n2): spec[i] = 0.0
-            else:
-                loop i in [0..n2): spec[i] = vecs[c][i] * floors[c][i]
-            if mode.long: __vimdct(mdct1, spec, block)
-            else: __vimdct(mdct0, spec, block)
-            loop i in [0..n): bufs[cur0 + c][i] = block[i] * w[i]
-        if prev_n > 0:
-            count = prev_n / 4 + n / 4
-            shift = prev_n * 3 / 4 - n / 4
-            loop i in [0..count):
-                pp = prev_n / 2 + i
-                q = pp - shift
-                loop c in [0..ch):
-                    sample = f32(0)
-                    if pp < prev_n: sample = bufs[prev0 + c][pp]
-                    if q >= 0 and q < n: sample += bufs[cur0 + c][q]
-                    pcm.push(sample)
-        which = 1 - which
-        prev_n = n
+        d.floors.push(fill(f32(0), v.bs1 / 2))
+        d.vecs.push(fill(f32(0), v.bs1 / 2))
+    d.block = fill(f32(0), v.bs1)
+    d.windows = [[], [], [], [], []]
+    d.mode_bits = __vilog(v.modes.len() - 1)
+    d
+
+# back to the start (for music that loops; what is in d.out stays, the start comes after it)
+__vdec_rewind = (d: mut __VDec):
+    d.next = 3
+    d.prev_n = 0
+    d.made = 0
+
+# decode the next packet into d.out; false at the end of the stream
+__vdec_packet = (d: mut __VDec) -> bool:
+    if d.error != "" or d.next >= d.packets.len(): return false
+    v = d.v
+    ch = d.ch
+    before = d.out.len()
+    __vdec_one(d, v, ch)
+    d.next += 1
     # (the last page says how long it really is)
-    if pk.1 > 0 and pk.1 * ch < pcm.len(): pcm.truncate(pk.1 * ch)
-    out.samples = pcm
+    made = (d.out.len() - before) / max(ch, 1)
+    if d.granule > 0 and d.made + made > d.granule:
+        keep = max(d.granule - d.made, 0)
+        d.out.truncate(before + keep * ch)
+        made = keep
+    d.made += made
+    true
+
+__vdec_one = (d: mut __VDec, v: __VState, ch: int):
+    b = __vbits_of(d.packets[d.next])
+    if d.packets[d.next].len() == 0 or __vget(b, 1) != 0: return
+    mi = __vget(b, d.mode_bits)
+    if mi >= v.modes.len(): return
+    mode = v.modes[mi]
+    n = v.bs0
+    if mode.long: n = v.bs1
+    n2 = n / 2
+    pl = false
+    nl = false
+    if mode.long:
+        pl = __vget(b, 1) == 1
+        nl = __vget(b, 1) == 1
+    map = v.maps[mode.mapping]
+    # floors
+    silent = fill(false, ch)
+    loop c in [0..ch):
+        f = v.floors[map.sfloor[map.mux[c]]]
+        silent[c] = not __vfloor_curve(b, v, f, d.floors[c], n2)
+    # (a channel coupled with one that is not silent is decoded too)
+    loop s in [0..map.mags.len()):
+        if not silent[map.mags[s]] or not silent[map.angs[s]]:
+            silent[map.mags[s]] = false
+            silent[map.angs[s]] = false
+    loop c in [0..ch):
+        loop i in [0..n2): d.vecs[c][i] = 0.0
+    # residues, a submap at a time
+    loop s in [0..map.sresidue.len()):
+        r = v.residues[map.sresidue[s]]
+        idx: int[]
+        loop c in [0..ch):
+            if map.mux[c] == s: idx.push(c)
+        if r.kind == 2:
+            any = false
+            loop c in idx:
+                if not silent[c]: any = true
+            if not any: continue
+            k = idx.len()
+            inter: f32[][] = [fill(f32(0), n2 * k)]
+            __vresidue(b, v, r, inter, [false], n2 * k, 1)
+            loop j in 0.. and c in idx:
+                loop i in [0..n2): d.vecs[c][i] = inter[0][i * k + j]
+        else:
+            sub: f32[][]
+            skip: bool[]
+            loop c in idx:
+                sub.push(fill(f32(0), n2))
+                skip.push(silent[c])
+            __vresidue(b, v, r, sub, skip, n2, r.kind)
+            loop j in 0.. and c in idx:
+                loop i in [0..n2): d.vecs[c][i] = sub[j][i]
+    # inverse coupling
+    s = map.mags.len() - 1
+    loop s >= 0:
+        mc = map.mags[s]
+        ac = map.angs[s]
+        loop i in [0..n2):
+            m = d.vecs[mc][i]
+            a = d.vecs[ac][i]
+            if m > 0.0:
+                if a > 0.0:
+                    d.vecs[ac][i] = m - a
+                else:
+                    d.vecs[ac][i] = m
+                    d.vecs[mc][i] = m + a
+            else:
+                if a > 0.0:
+                    d.vecs[ac][i] = m + a
+                else:
+                    d.vecs[ac][i] = m
+                    d.vecs[mc][i] = m - a
+        s -= 1
+    # floor times residue, back to samples, windowed, overlapped with the last block
+    wi = 0
+    if mode.long: wi = 1 + (int(pl) * 2) + int(nl)
+    if d.windows[wi].len() == 0: d.windows[wi] = __vwindow(n, v.bs0, mode.long, pl, nl)
+    w = d.windows[wi]
+    cur0 = d.which * ch
+    prev0 = (1 - d.which) * ch
+    loop c in [0..ch):
+        if silent[c]:
+            loop i in [0..n2): d.spec[i] = 0.0
+        else:
+            loop i in [0..n2): d.spec[i] = d.vecs[c][i] * d.floors[c][i]
+        if mode.long: __vimdct(d.mdct1, d.spec, d.block)
+        else: __vimdct(d.mdct0, d.spec, d.block)
+        loop i in [0..n): d.bufs[cur0 + c][i] = d.block[i] * w[i]
+    if d.prev_n > 0:
+        count = d.prev_n / 4 + n / 4
+        shift = d.prev_n * 3 / 4 - n / 4
+        loop i in [0..count):
+            pp = d.prev_n / 2 + i
+            q = pp - shift
+            loop c in [0..ch):
+                sample = f32(0)
+                if pp < d.prev_n: sample = d.bufs[prev0 + c][pp]
+                if q >= 0 and q < n: sample += d.bufs[cur0 + c][q]
+                d.out.push(sample)
+    d.which = 1 - d.which
+    d.prev_n = n
+
+__ogg_decode = (file: u8[]) -> OggAudio:
+    d = __vdec_open(file)
+    out = OggAudio(d.v.channels, d.v.rate, [], d.error)
+    if d.error != "": return out
+    if d.granule > 0 and d.granule < (1 << 31): d.out.reserve(d.granule * d.ch + d.v.bs1 * d.ch)
+    loop __vdec_packet(d): pass
+    out.samples = d.out
     out

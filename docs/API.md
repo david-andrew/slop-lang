@@ -1150,6 +1150,9 @@ play(music, 0.6, looping = true)
 
 ```gdscript
 load_ogg = (file: u8[]) -> Sound    # a whole Ogg Vorbis file, at the mixer's rate, in stereo (mono is copied to both sides; files with more channels give their front left and right). A file it cannot read stops the program with a message saying why.
+struct Music    # A long piece of music played as it is decoded, a little ahead of where it is playing: no wait when it loads and little memory (a three-minute song decoded whole is about 70 MB). song = load_music(embed("song.ogg")) id = play_music(song, 0.6)          # looping; stop(id), set_volume(id, v) as for sounds
+load_music = (file: u8[]) -> Music
+play_music = (m: Music, volume: f64 = 1.0, looping: bool = true, pan: f64 = 0.0) -> int    # play music from its start; returns a voice id for stop(), set_volume() and is_playing()
 struct OggAudio    # the samples as the file has them (interleaved, d.channels of them, at d.rate)
 ```
 

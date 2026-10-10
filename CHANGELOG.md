@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Music that plays while it decodes**: `load_music` and `play_music` (Ogg Vorbis), for long
+  tracks: no wait when they load, and little memory (`load_ogg` still decodes a sound whole).
 - **Fonts**: `load_font` reads TrueType fonts (.ttf, .ttc) into sharp text at any size;
   `set_font` chooses the one `text` draws with. Text is UTF-8 now: accented letters, quotes,
   dashes and the euro sign in loaded fonts (characters a font lacks show as ?).
