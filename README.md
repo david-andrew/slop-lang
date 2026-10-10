@@ -86,7 +86,7 @@ change it there in [the playground](https://sloppy-lang.org/playground/#example=
   copy-on-write, so there is no garbage collector, no reference cycles and no hidden aliasing.
 - **Batteries for games.** Windows and input, 2D drawing with SDF text, a 3D renderer with
   sun/sky lighting, shadows, fog and bloom (and orbit and fly cameras), GPU programs written in Sloppy itself (translated to
-  GLSL), PNG, WAV, Ogg Vorbis and TrueType loading, sprite sheets and tilemaps (Aseprite,
+  GLSL), PNG, JPEG, WAV, Ogg Vorbis and TrueType loading, sprite sheets and tilemaps (Aseprite,
   Tiled), a software audio mixer and synthesizer.
 - **Programs keep working.** Native executables are static (they talk to the kernel directly);
   the GPU driver is loaded at run time when present, and without one games still run on a

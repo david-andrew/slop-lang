@@ -1,4 +1,5 @@
-# Images: RGBA8 pixel buffers, PNG decoding (with a built-in inflate), procedural helpers.
+# Images: RGBA8 pixel buffers, PNG decoding (with a built-in inflate; JPEG: jpeg.jo), procedural
+# helpers.
 
 struct Image:
     width: int
@@ -305,8 +306,11 @@ load_png = (file: u8[]) -> Image?:
 
 # load an image from an embedded file: load_image(embed("hero.png"))
 load_image = (file: u8[]) -> Image:
+    if file.len() >= 2 and file[0] == 0xFF and file[1] == 0xD8:
+        if let img = load_jpeg(file): return img
+        panic("damaged JPEG, or a kind not read (arithmetic coded, lossless or 12-bit)")
     if let img = load_png(file): return img
-    panic("unsupported or corrupt image (only PNG is supported)")
+    panic("not an image this can read, or a damaged one (PNG and JPEG are read)")
 
 # ---------------- deflate (RFC 1951) ----------------
 # LZ77 over a 32 KB window (hash chains), written as blocks with their own Huffman codes

@@ -873,7 +873,8 @@ max = (g: GpuArray[i32]) -> i32
 
 ### image.jo
 
-Images: RGBA8 pixel buffers, PNG decoding (with a built-in inflate), procedural helpers.  
+Images: RGBA8 pixel buffers, PNG decoding (with a built-in inflate; JPEG: jpeg.jo), procedural  
+helpers.  
 
 ```gdscript
 struct Image
@@ -889,6 +890,18 @@ deflate = (src: u8[]) -> u8[]    # compress bytes into a raw deflate stream (inf
 encode_png = (img: Image) -> u8[]
 save_png = (img: Image, path: str) -> bool
 screenshot = () -> Image    # read the current framebuffer into an image
+```
+
+### jpeg.jo
+
+JPEG images: load_jpeg (and load_image, which tells PNG and JPEG apart). Baseline and  
+progressive JPEGs (Huffman coded, 8-bit), any sampling (4:4:4, 4:2:2, 4:2:0...), grayscale,  
+RGB and Adobe's CMYK, restart markers. As libjpeg decodes them by default: its integer inverse  
+DCT, smooth upsampling of halved color, its color conversion. Not read: arithmetic coding,  
+lossless and 12-bit JPEGs (rare): none, as for a damaged file.  
+
+```gdscript
+load_jpeg = (file: u8[]) -> Image?    # decode a JPEG file into RGBA pixels; none if it is not one (or one of the kinds not read)
 ```
 
 ### screen.jo

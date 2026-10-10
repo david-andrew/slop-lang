@@ -1,0 +1,28 @@
+# requires: sloppy
+# JPEG: a progressive one with halved color and one gray with restart markers (each within 3 of
+# PIL's decoding, libjpeg-turbo's, when the files were made), load_image telling JPEG from PNG,
+# and damaged files: none or an image, never a crash
+sum = (img: Image) -> int:
+    s = 0
+    loop i in 0.. and p in img.pixels: s = (s * 31 + int(p) * (i % 7 + 1)) % 1000000007
+    s
+
+small = embed("data/small.jpg")
+gray = embed("data/gray.jpg")
+loop f in [small, gray]:
+    img = load_jpeg(f)!
+    print("{img.width}x{img.height}, {img.get(5, 7)}, checksum {sum(img)}")
+same = load_image(small)
+print(same.width, same.height)
+print(load_jpeg([u8(0xFF), 0xD8, 0xFF, 0xD9]) == none)
+f0 = small
+seed_random(3)
+decoded = 0
+loop round in [0..80):
+    f = f0
+    loop j in [0..random_int(1, 8)):
+        p = random_int(0, f.len())
+        f[p] = u8(random_int(0, 256))
+    if random() < 0.2: f.truncate(random_int(2, f.len()))
+    if load_jpeg(f) != none: decoded += 1
+print("damaged files survived")

@@ -5,7 +5,7 @@ bootstrap) that compiles a 50k-line program in 0.18 s, runs programs at ~1.24x t
 (release), and targets Linux x86-64, Windows x64 and the web (one .html file). It has a game
 library (window, input, gamepads, 2D/3D drawing with a 2D camera, sprite sheets, tilemaps, menus,
 collision and particle helpers, shadows, shaders written in Sloppy that run on the GPU or a
-software renderer, an audio mixer and synthesizer, PNG/WAV/Ogg Vorbis, JSON, saving), hot
+software renderer, an audio mixer and synthesizer, PNG/JPEG/WAV/Ogg Vorbis, JSON, saving), hot
 reloading (`sloppy watch`), a REPL (Linux), a language server and VS Code extension, a
 playground, backtraces, DWARF, modules, two tutorials and a showcase game (Rebound).
 
@@ -97,8 +97,9 @@ tiles (examples/tiles.jo), JSON (parse_json/to_json), base64. Missing:
   damaged files), and music decoded while it plays (load_music, play_music).
 - Done: TrueType fonts (load_font, set_font; text is UTF-8). Left: OpenType fonts with CFF
   outlines (.otf), kerning, characters beyond the ones made up front (made when first drawn).
-- Assets: JPEG, glTF 2.0 meshes (skinning later), Tiled's external tilesets (.tsj; embedded
-  ones work).
+- Assets: done: JPEG (baseline and progressive; within 3 of libjpeg-turbo's decoding, fuzzed
+  with damaged files). Left: glTF 2.0 meshes (skinning later), Tiled's external tilesets (.tsj;
+  embedded ones work).
 - 2D: slopes and one-way platforms in tilemaps, tweening, camera follow/shake helpers.
 - 3D: done: orbit and fly cameras (lib/game/camera3d.jo). Left: frustum culling, skyboxes.
 - Debug panels (ui.jo has menus).
