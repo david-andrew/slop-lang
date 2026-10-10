@@ -98,7 +98,7 @@ can_coerce = (n: int, from0: int, to0: int) -> bool:
     if fk == .int_ and tk == .int_: return int_widens(from, to)
     if fk == .int_ and tk == .float_: return true
     if fk == .float_ and tk == .float_: return true
-    if tk == .enum_ and fk != .enum_ and is_union(to): return union_target(n, from, to) >= 0
+    if tk == .enum_ and not is_union(from) and is_union(to): return union_target(n, from, to) >= 0
     if is_union(from) and is_union(to): return union_within(from, to)
     if fk == .array and is_soa(to): return can_coerce(0, int(types[from].elem), soa_elem(to))
     if fk == .fixed and tk == .array: return type_eq(int(types[from].elem), int(types[to].elem))
@@ -201,7 +201,7 @@ coerce = (n: int, target: int) -> int:
             fatal(nodes[n].pos, "type mismatch: expected {type_str(to)}, found {type_str(from)} (a fixed-size array is made from a literal with {els})")
         fixed_literal(n, to)
         return n
-    if tk == .enum_ and fk != .enum_ and is_union(to):
+    if tk == .enum_ and not is_union(from) and is_union(to):
         vi = union_target(n, from, to)
         if vi < 0: fatal(nodes[n].pos, "type mismatch: expected {type_str(to)}, found {type_str(from)}")
         coerce(n, union_members(to)[vi])
@@ -489,10 +489,26 @@ struct Cand:
     cost: int
     ok: bool
 
+# the enum `.name` means where a value of type t is expected: t itself, or (t a union) the one
+# member enum with that variant
+variant_enum = (t0: int, name: int) -> int:
+    t = prune(t0)
+    if not is_union(t): return t
+    found = 0
+    loop m in union_members(t):
+        pm = prune(m)
+        if types[pm].kind == .enum_ and not is_union(pm) and find_variant(int(types[pm].st), name) >= 0:
+            if found != 0: return t
+            found = pm
+    if found == 0: return t
+    found
+
 ctx_dependent = (a: int) -> bool:
     k = nodes[a].kind
     if k == .ident: return has_flag(a, NF_FNREF_ARG)
-    if k == .lambda or k == .dotname or k == .none_lit or k == .hole: return true
+    if k == .dotname: return nodes[a].type == 0        # (E.v is a dotname already typed)
+    if k == .call and nodes[a].type == 0 and nodes[int(nodes[a].a)].kind == .dotname: return true     # .v(args)
+    if k == .lambda or k == .none_lit or k == .hole: return true
     if k == .array: return nkids(a) == 0 and nodes[a].b == 0
     if k == .map_lit: return nkids(a) == 0
     false
@@ -678,11 +694,14 @@ arg_cost = (a: int, pat: int, binds: mut int[]) -> int:
                 return -1
             if pk != .fn_ or int(types[p].nargs) != nkids(a): return -1
             return 0
-        if k == .dotname:
+        if k == .dotname or k == .call:
+            name = int(nodes[a].name)
+            if k == .call: name = int(nodes[int(nodes[a].a)].name)
             e = p
             if pk == .opt: e = prune(int(types[p].elem))
+            e = variant_enum(e, name)
             if types[e].kind != .enum_: return -1
-            if find_variant(int(types[e].st), int(nodes[a].name)) >= 0: return 0
+            if find_variant(int(types[e].st), name) >= 0: return 0
             return -1
         if k == .none_lit:
             if pk == .opt: return 0
@@ -1251,6 +1270,7 @@ check_call = (n: int, expected: int) -> int:
         if ide_sentinel != 0 and int(nodes[callee].name) == ide_sentinel: ide_complete_variants(expected)
         et = prune(expected)
         if expected != 0 and types[et].kind == .opt: et = prune(int(types[et].elem))
+        if expected != 0: et = variant_enum(et, int(nodes[callee].name))
         if expected == 0 or types[et].kind != .enum_: fatal(nodes[callee].pos, "cannot infer the enum type for '.{name_of(int(nodes[callee].name))}'")
         vi = find_variant(int(types[et].st), int(nodes[callee].name))
         if vi < 0: fatal(nodes[callee].pos, "{type_str(et)} has no variant '{name_of(int(nodes[callee].name))}'")
@@ -2392,6 +2412,7 @@ check_expr = (n: int, expected: int) -> int:
         if ide_sentinel != 0 and int(nodes[n].name) == ide_sentinel: ide_complete_variants(ex)
         et = ex
         if et != 0 and exk == .opt: et = prune(int(types[et].elem))
+        if et != 0: et = variant_enum(et, int(nodes[n].name))
         if et == 0 or types[et].kind != .enum_: fatal(nodes[n].pos, "cannot infer the enum type for '.{name_of(int(nodes[n].name))}'")
         vi = find_variant(int(types[et].st), int(nodes[n].name))
         if vi < 0: fatal(nodes[n].pos, "{type_str(et)} has no variant '{name_of(int(nodes[n].name))}'")
