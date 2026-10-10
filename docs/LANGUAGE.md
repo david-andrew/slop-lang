@@ -343,7 +343,10 @@ show as the line of the call. In a web page the browser's console has the JavaSc
 
 **Debuggers and profilers.** Executables written by `sloppy build` carry DWARF line tables and
 function names, so gdb works with the `.jo` source (`break game.jo:31`, `bt`, `next`, `list`)
-and perf and other profilers report functions and lines.
+and perf and other profilers report functions and lines. On Windows, `sloppy build game.jo`
+also writes `game.pdb` beside `game.exe`, with the functions and lines, and the program has
+unwind tables: Visual Studio, WinDbg and RemedyBG stop at functions and lines, step through the
+source and show the call stack. (Neither has variables yet.)
 
 **Combined loops.** Bindings and conditions join with `and` / `or` in one loop header:
 

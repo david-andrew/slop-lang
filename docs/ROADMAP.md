@@ -81,9 +81,9 @@ Left:
 - c. Done: the interactive prompt on Windows. Without fork, a program's memory is copied before
   an input and put back if it fails (lib/std/snapshot.jo): in the compiler (errors) and, on
   Windows, in the session (panics, crashes, ctrl-c).
-- d. Debugging (M): done: unwind tables (.pdata/.xdata), so Windows itself (debuggers, crash
-  dumps, RtlCaptureStackBackTrace) walks the stack (tests/t/unwind.jo). Next: CodeView/PDB
-  names and lines for Visual Studio, WinDbg and RemedyBG.
+- d. Done: debugging. Unwind tables (.pdata/.xdata), so Windows itself (debuggers, crash dumps,
+  RtlCaptureStackBackTrace) walks the stack (tests/t/unwind.jo); a PDB with the functions and
+  lines (compiler/pdb.jo), which CI checks with Microsoft's cdb. Left (with DWARF): variables.
 - Code signing is out of reach for now; document what SmartScreen shows and how to get past it.
 
 ## 5. Game library gaps (L, in pieces, as the game needs them)

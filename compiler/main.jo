@@ -22,6 +22,7 @@ use 'x64.jo'
 use 'dwarf.jo'
 use 'elf.jo'
 use 'pe.jo'
+use 'pdb.jo'
 use 'wasm.jo'
 use 'zip.jo'
 use 'ide.jo'
@@ -332,7 +333,14 @@ compile = (path: str, out0: str) -> str:
         # (sloppy watch: after the first build, a patch for the program running)
         if watch_build and not watch_first: ok = watch_make_patch()
         else:
-            ok = write_pe(out, code, entry, rodata, data_size + 8 + bss_reserve, update_fn != 0 or draw_fn != 0, pe_backtrace_info(), program_icon)
+            # (debuggers get a PDB beside what `sloppy build` writes)
+            pdb = ""
+            guid: u8[]
+            if debug_info and not watch_build:
+                pdb = strip_ext(out) + ".pdb"
+                guid = pdb_guid(code)
+            ok = write_pe(out, code, entry, rodata, data_size + 8 + bss_reserve, update_fn != 0 or draw_fn != 0, pe_backtrace_info(), program_icon, pdb_name(pdb), guid)
+            if ok and len(pdb) > 0: ok = write_pdb(pdb, guid, code.len(), pe_section_headers, path, "sloppy {SLOPPY_VERSION}")
             if ok and watch_build: watch_record_image()
         size = code.len()
     else:

@@ -68,6 +68,7 @@ with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
     zadd(vsix, f"{top}/editors/sloppy.vsix")
     for n in ["README.md", "LICENSE", "NOTICE"]: zadd(os.path.join(root, n), f"{top}/{n}")
 os.remove(exe)
+if os.path.exists(exe[:-4] + ".pdb"): os.remove(exe[:-4] + ".pdb")      # (its debugging database)
 
 for p in [tgz, zpath]:
     digest = hashlib.sha256(open(p, "rb").read()).hexdigest()

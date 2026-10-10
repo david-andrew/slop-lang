@@ -62,8 +62,16 @@ jobs:
           python tools/lsptest.py
           python tools/watchtest.py
           python tools/rendertest.py --no-gpu
+      - name: A debugger (cdb) finds functions and lines through the PDB
+        shell: bash
+        run: |
+          mkdir -p dbg
+          SLOPPY_LIB="$PWD/lib" bin/sloppy.exe build tests/t/unwind.jo -o dbg/unwind.exe
+          "/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe" -lines -y dbg -c "bp unwind!f3; g; k; q" dbg/unwind.exe > dbg/out.txt
+          grep -q "unwind!f2+0x[0-9a-f]* \[.*unwind.jo @ 51\]" dbg/out.txt || { cat dbg/out.txt; exit 1; }
       - name: The compiler compiles itself on Windows to the same program
         shell: bash
         run: |
-          bin/sloppy.exe build compiler/main.jo -o sloppy2.exe
-          cmp bin/sloppy.exe sloppy2.exe
+          mkdir -p again
+          bin/sloppy.exe build compiler/main.jo -o again/sloppy.exe
+          cmp bin/sloppy.exe again/sloppy.exe

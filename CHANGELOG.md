@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- Windows programs have unwind tables (.pdata): debuggers and crash dumps can follow their
-  call stacks.
+- **Debugging on Windows**: `sloppy build` writes a PDB beside the program, and programs have
+  unwind tables, so Visual Studio, WinDbg and RemedyBG show Sloppy functions, lines and call
+  stacks (break at a function or a line, step through the source).
 - The build block's `icon` is the window's icon on Linux too (X11); `PROGRAM_ICON` has its bytes.
 - **The interactive prompt on Windows** (`sloppy` with no file), as on Linux: an input that has
   errors, panics, crashes or is stopped with ctrl-c leaves everything as it was before it.
