@@ -58,7 +58,14 @@ def write(d, name, text):
     tmp = os.path.join(d, "." + name + ".tmp")
     with open(tmp, "w", newline="") as f:          # (byte for byte: no \r\n on Windows)
         f.write(text)
-    os.replace(tmp, os.path.join(d, name))
+    # (Windows refuses the rename while another program has the file open: the game reading it)
+    for attempt in range(50):
+        try:
+            os.replace(tmp, os.path.join(d, name))
+            return
+        except PermissionError:
+            if attempt == 49: raise
+            time.sleep(0.05)
 
 
 GAME = """\
