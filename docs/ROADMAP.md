@@ -104,10 +104,10 @@ tiles (examples/tiles.jo), JSON (parse_json/to_json), base64. Missing:
 - 2D: slopes and one-way platforms in tilemaps, tweening, camera follow/shake helpers.
 - 3D: done: orbit and fly cameras (lib/game/camera3d.jo). Left: frustum culling, skyboxes.
 - Input:
-  - Players remapping controls: a game names its actions ("jump", "fire", "move" as an axis)
-    and asks for them (`action_pressed("jump")`, `action_axis("move")`), never raw keys. A
-    drop-in settings screen (ui.jo) rebinds an action by pressing the new key or button, and
-    the bindings are saved with save_data. The defaults are given by the game.
+  - Done: controls players can change (lib/game/controls.jo): the game names its actions with
+    their default keys, buttons and stick directions and asks for them (`action_pressed`,
+    `action_axis`, `action_vec`); `ui_controls()` is a drop-in rebinding screen for a ui.jo
+    menu, and the bindings are saved. Rebound uses it (Settings, Controls).
   - Done: several gamepads and joysticks (up to eight, each by its number: `gamepad_down(1, .a)`,
     `gamepads()`; a device's own buttons and axes: `joystick_button`, `joystick_axis`). Left:
     non-XInput devices on Windows (DirectInput/Raw Input), and actions bound per player.

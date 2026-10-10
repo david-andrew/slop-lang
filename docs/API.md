@@ -441,6 +441,49 @@ update = (c: mut FlyCamera, dt: f64)
 camera3d = (c: FlyCamera, fov_degrees: f64 = 60.0, near: f64 = 0.1, far: f64 = 500.0)
 ```
 
+### controls.jo
+
+Controls the player can change. The game names its actions and gives each its default inputs,  
+then asks for actions, never for keys; ui_controls() is a settings screen where the player  
+rebinds them (choose one, press the new key or button), and the bindings are saved.  
+
+```gdscript
+action("jump", [.key(.space), .button(.a)])
+action("left", [.key(.a), .key(.left), .stick(0, -1), .button(.left)])
+action("right", [.key(.d), .key(.right), .stick(0, 1), .button(.right)])
+...
+if action_pressed("jump"): jump()
+x = action_axis("left", "right")            # -1..1, analog on a stick
+
+# in the settings menu:
+ui_begin("settings", vec2(640, 140))
+ui_controls()
+if ui_button("Back") or ui_back(): ...
+ui_end()
+```
+
+Local multiplayer: a player number reads that gamepad (keys and the mouse count for player 0);  
+give players on one keyboard actions of their own ("p2 jump").  
+
+```gdscript
+enum Input: key(k: Key), button(b: PadButton), mouse(m: Mouse), stick(axis: int, dir: int)    # an input: a key, a gamepad button, a mouse button, or a stick or trigger pushed one way (axis: 0 left x, 1 left y, 2 right x, 3 right y, 4 left trigger, 5 right trigger; dir: 1 or -1)
+action = (name: str, defaults: Input[])    # declare an action and its default inputs (once, before reading it: again, nothing changes); a binding the player saved replaces the defaults
+input_value = (x: Input, player: int = -1) -> f64    # how far input x is pushed, 0 to 1, for player (-1: anyone)
+action_value = (name: str, player: int = -1) -> f64    # how far the action is pushed, 0 to 1 (the most of its inputs)
+action_down = (name: str, player: int = -1) -> bool
+action_pressed = (name: str, player: int = -1) -> bool    # true in the frame the action was pressed (a stick: when it goes past halfway)
+action_released = (name: str, player: int = -1) -> bool
+action_axis = (neg: str, pos: str, player: int = -1) -> f64    # from -1 (neg) to 1 (pos): action_axis("left", "right")
+action_vec = (left: str, right: str, up: str, down: str, player: int = -1) -> vec2    # a direction (y down), at most 1 long
+bindings = (name: str) -> Input[]
+set_bindings = (name: str, inputs: Input[])
+reset_controls = ()    # every action back to its defaults
+input_name = (x: Input) -> str    # what an input is called, for showing it ("Space", "Pad A", "Left stick right")
+input_pressed = () -> Input?    # the input the player pressed first this frame (a key, a button, a click, a stick pushed most of the way), if any
+rebinding = () -> bool    # whether ui_controls is waiting for a new input (the game's own keys should wait too), or took one this frame
+ui_controls = (names: str[] = [], labels: str[] = [])    # a row per action (its name, and its inputs), in a menu (between ui_begin and ui_end), and a row to put the defaults back. Choosing an action waits for its new input: a key replaces its first key (or the mouse), a gamepad's button or stick its first gamepad input; Escape cancels. names: the actions shown (and what they are called), in order: all of them if none given
+```
+
 ### dl.jo
 
 Loading system shared libraries (GPU drivers) from a fully static executable.  

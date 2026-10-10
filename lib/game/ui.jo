@@ -71,7 +71,8 @@ ui_begin = (name: str, top_center: vec2):
     __ui_stick_y = sy
     __ui_stick_x = sx
     __ui_ok = key_pressed(.enter) or key_pressed(.space) or gamepad_pressed(.a)
-    if not ui_ready():
+    # (nor while ui_controls waits for a new key: controls.jo)
+    if not ui_ready() or rebinding():
         __ui_nav = 0
         __ui_side = 0
         __ui_ok = false
@@ -83,7 +84,7 @@ ui_end = ():
     if __ui_focus >= __ui_count and __ui_count > 0: __ui_focus = __ui_count - 1
 
 # escape or the B button: go back (close the menu)
-ui_back = () -> bool: ui_ready() and (key_pressed(.escape) or gamepad_pressed(.b))
+ui_back = () -> bool: ui_ready() and not rebinding() and (key_pressed(.escape) or gamepad_pressed(.b))
 
 # false in the frame the menu opened in: input then belongs to whatever opened it
 ui_ready = () -> bool: frame_number() != __ui_open_frame

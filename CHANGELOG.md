@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Controls players can change**: `action("jump", [.key(.space), .button(.a)])`, then
+  `action_pressed("jump")`, `action_axis("left", "right")`...; `ui_controls()` in a menu lets the
+  player rebind each action (press the new key or button), and the bindings are saved. Rebound
+  has a Controls page. An array of shorthand values (`[.key(.space)]`) now takes its type from
+  the parameter it is passed to.
 - **Several gamepads**: up to eight, each by its number (`gamepad_down(1, .a)`, `left_stick(1)`,
   `gamepads()`); without a number, any of them. Flight sticks and wheels: `joystick_button` and
   `joystick_axis` give a device's own inputs.

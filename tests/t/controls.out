@@ -1,0 +1,5 @@
+["Space", "Pad A"]
+["Right stick up", "Right trigger", "Right click", "7", "Page Up", "Pad L3"]
+true true false false
+0.733 -0.733 vec2(-0.73333335, 0.0)
+["Space", "Pad Start", "Left click", "Right stick left"]

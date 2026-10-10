@@ -1,0 +1,14 @@
+# requires: sloppy
+# actions (lib/game/controls.jo): bindings, their names, how far an action is pushed (a pad set
+# by hand), and the saved form read back
+action("jump", [.key(.space), .button(.a)])
+action("left", [.key(.left), .stick(0, -1)])
+action("right", [.key(.right), .stick(0, 1)])
+action("jump", [.key(.j)])                       # (again: no change)
+print([loop x in bindings("jump"): input_name(x)])
+print([loop x in [Input.stick(3, -1), .stick(5, 1), .mouse(.right), .key(.n7), .key(.page_up), .button(.lstick)]: input_name(x)])
+__pad_test_set(1, .a, true, -0.8, 0.0)
+print(action_down("jump"), action_down("jump", 1), action_down("jump", 0), action_down("jump", 2))
+print("{action_value("left"):.3} {action_axis("left", "right"):.3} {action_vec("left", "right", "jump", "jump")}")
+xs = __ctl_parse("key:space button:start mouse:left stick:2:-1 stick:9:1 key:nosuch")
+print([loop x in xs: input_name(x)])

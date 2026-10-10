@@ -21,6 +21,7 @@ const __PAD_RAW_BUTTONS = 32
 
 __pad_on: bool[] = fill(false, 8)
 __pad_axes: f64[] = fill(0.0, 8 * 6)          # per pad: left x, left y, right x, right y, left trigger, right trigger
+__pad_prev_axes: f64[] = fill(0.0, 8 * 6)     # (as they were in the last frame)
 __pad_down: bool[] = fill(false, 8 * 15)
 __pad_prev: bool[] = fill(false, 8 * 15)
 __pad_raw_axes: f64[] = fill(0.0, 8 * 16)     # the device's own, as it numbers them
@@ -119,6 +120,7 @@ __pad_clear = (p: int):
 
 __pad_save_prev = ():
     loop i in [0..8 * 15): __pad_prev[i] = __pad_down[i]
+    loop i in [0..8 * 6): __pad_prev_axes[i] = __pad_axes[i]
     loop i in [0..8 * 32): __pad_raw_prev[i] = __pad_raw_down[i]
 
 # called once per frame by the game loop (on the web the page sends the state before the

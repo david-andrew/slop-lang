@@ -567,9 +567,7 @@ auto_aim = () -> f64:
     a + sin(run_time * 0.7) * shield_half() * 0.6
 
 control = (dt: f64):
-    turn = 0.0
-    if key_down(.left) or key_down(.a) or gamepad_down(.left) or gamepad_down(.lb): turn -= 1.0
-    if key_down(.right) or key_down(.d) or gamepad_down(.right) or gamepad_down(.rb): turn += 1.0
+    turn = action_axis("Turn left", "Turn right")
     m = mouse_pos()
     if f64(length(m - mouse_last)) > 2.0: mouse_aim = true
     mouse_last = m
@@ -863,7 +861,12 @@ draw_upgrade_icon = (u: int, p: vec2, s: f64):
         line(p + vec2(f32(s * 0.4), f32(-s * 0.65)), p + vec2(f32(s * 1.0), f32(-s * 0.65)), 4, rgb(1, 1, 1))
 
 # ---------------- the screens around the arena ----------------
-enum Screen: title, settings, play, paused, over
+enum Screen: title, settings, controls, play, paused, over
+
+# the controls (the player can change them: Settings, Controls)
+action("Turn left", [.key(.left), .key(.a), .button(.left), .button(.lb)])
+action("Turn right", [.key(.right), .key(.d), .button(.right), .button(.rb)])
+action("Pause", [.key(.escape), .key(.p), .button(.start)])
 
 struct Settings:
     music = 0.6
@@ -947,13 +950,13 @@ update = (dt: f64):
             choice_age += dt
             return
         choice_age = 0.0
-        if key_pressed(.escape) or key_pressed(.p) or gamepad_pressed(.start):
+        if action_pressed("Pause"):
             go(.paused)
             return
         step(dt)
         if over and over_time > 1.8: end_run()
     else if screen == .over: step(dt)
-    else if screen == .title or (screen == .settings and settings_back == .title):
+    else if screen == .title or (in_settings() and settings_back == .title):
         # the game plays itself behind the title
         step(dt)
         if over and over_time > 3.0: new_run(frame, true)
@@ -997,10 +1000,10 @@ draw = ():
     if screen == .title:
         draw_arena(false, 250.0)
         draw_title()
-    else if screen == .settings and settings_back == .title:
+    else if in_settings() and settings_back == .title:
         draw_arena(false, 250.0)
         draw_settings()
-    else if screen == .settings:
+    else if in_settings():
         draw_arena(false)
         draw_hud()
         draw_settings()
@@ -1050,7 +1053,12 @@ draw_title = ():
     text_centered("left / right or the mouse turn the shield", vec2(330, 650), 18, rgba(1, 1, 1, 0.5))
     text_centered("escape to pause", vec2(330, 676), 18, rgba(1, 1, 1, 0.5))
 
+in_settings = () -> bool: screen == .settings or screen == .controls
+
 draw_settings = ():
+    if screen == .controls:
+        draw_controls()
+        return
     if settings_back == .title: side_panel()
     else: dim(0.75)
     text_centered("Settings", vec2(330, 150), 64, rgb(1, 1, 1))
@@ -1061,6 +1069,7 @@ draw_settings = ():
     settings.shake = ui_switch("Screen shake", settings.shake)
     when TARGET != "wasm":
         settings.fullscreen = ui_switch("Fullscreen", settings.fullscreen)
+    if ui_button("Controls"): go(.controls)
     back = ui_button("Back") or ui_back()
     ui_end()
     apply_settings()
@@ -1071,11 +1080,22 @@ draw_settings = ():
         save_settings()
         go(settings_back)
 
+# the controls, and changing them (lib/game/controls.jo)
+draw_controls = ():
+    dim(0.85)
+    text_centered("Controls", vec2(640, 140), 64, rgb(1, 1, 1))
+    ui_begin("controls", vec2(640, 260))
+    ui_controls()
+    back = ui_button("Back") or ui_back()
+    ui_end()
+    text_centered("the mouse and the left stick also aim the shield", vec2(640, 640), 20, rgba(1, 1, 1, 0.5))
+    if back: go(.settings)
+
 draw_pause = ():
     dim()
     text_centered("Paused", vec2(640, 200), 64, rgb(1, 1, 1))
     ui_begin("pause", vec2(640, 320))
-    if ui_button("Resume") or ui_back() or ((gamepad_pressed(.start) or key_pressed(.p)) and ui_ready()): go(.play)
+    if ui_button("Resume") or ui_back() or (action_pressed("Pause") and ui_ready()): go(.play)
     if ui_button("Start again"): start_run()
     if ui_button("Settings"):
         settings_back = .paused

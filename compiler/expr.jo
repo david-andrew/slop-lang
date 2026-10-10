@@ -509,7 +509,12 @@ ctx_dependent = (a: int) -> bool:
     if k == .dotname: return nodes[a].type == 0        # (E.v is a dotname already typed)
     if k == .call and nodes[a].type == 0 and nodes[int(nodes[a].a)].kind == .dotname: return true     # .v(args)
     if k == .lambda or k == .none_lit or k == .hole: return true
-    if k == .array: return nkids(a) == 0 and nodes[a].b == 0
+    if k == .array:
+        if nkids(a) == 0: return nodes[a].b == 0
+        # ([.key(.space), .button(.a)]: its elements take their type from the parameter's)
+        loop e in kids(a):
+            if ctx_dependent(e): return true
+        return false
     if k == .map_lit: return nkids(a) == 0
     false
 
