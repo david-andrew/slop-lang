@@ -1,0 +1,967 @@
+# LOWLINE - fly a glider down an endless mountain valley, as low as you dare.
+#
+# Flying near the ground scores (LOW, and three times as much VERY LOW), faster scores more, and
+# staying low builds a multiplier. Every stretch of valley ends in a gate: fly through it, and
+# through its small low target for a bonus. Hitting the ground or missing a gate costs one of
+# three wings. Diving trades height for speed; climbing spends it.
+#
+# A/D or the left stick steer, W dives and S climbs (the stick: forward and back), Space brakes.
+
+build:
+    output = "lowline"
+    name = "Lowline"
+    icon = "icon.png"
+
+# ---------------- tuning ----------------
+const STEP = 1.0 / 120.0        # the simulation's fixed step (seconds)
+const MAX_HEADING = 0.5236      # 30 degrees either way
+const MAX_PITCH = 0.4887        # 28 degrees
+const TURN_RATE = 1.396         # 80 degrees a second
+const PITCH_RATE = 1.309        # 75 degrees a second
+const GRAVITY = 14.0            # (arcade: along the flight path, how diving gains speed)
+const BRAKE = 14.0
+const MIN_SPEED = 16.0
+const MAX_SPEED = 44.0
+const RADIUS = 0.7              # the glider's collision sphere
+const LOW = 6.0                 # clearance bands (m above the ground): LOW below 6, VERY LOW below 3
+const VERY_LOW = 3.0
+const INTRO = 300.0             # the gentle first stretch (m)
+const RAMP = 3300.0             # then difficulty rises over this distance
+const ROW = 5.0                 # the terrain mesh: rows every 5 m along the valley,
+const COL = 4.0                 # columns every 4 m across it,
+const HALF_WIDTH = 48.0         # out to 48 m either side of its middle
+const CHUNK_ROWS = 24           # a mesh of 24 rows (120 m)
+const SAFE_HEIGHT = 8.0         # the line that is always clear: 8 m above the valley floor
+
+# ---------------- the valley ----------------
+# Knots every 100-120 m along the valley: where its middle is (x), how high its floor is, and
+# the shape of the stretch after it. Each comes from the seed and its number alone.
+struct Knot:
+    z: f64
+    c: f64                      # the middle (x)
+    b: f64                      # the floor
+    width: f64                  # the corridor's half width (always clear of walls and hills)
+    kind: int                   # 0 gully, 1 saddle (a ridge across), 2 spur (a hill one side)
+    side: f64                   # (spur: -1 or 1)
+    h: f64                      # how strong
+    gate: bool
+
+seed = 1
+knots: Knot[]
+tree_cache: {int: Tree[]} = {}  # (trees: below)
+
+hash01 = (a: int, b: int, c: int) -> f64:
+    x = a * 0x9E3779B97F4A7C15 + b * 0xBF58476D1CE4E5B9 + c * 0x94D049BB133111EB
+    x = (x xor (x >> 31)) * 0xBF58476D1CE4E5B9
+    x = (x xor (x >> 27)) * 0x94D049BB133111EB
+    x = x xor (x >> 31)
+    f64(x & 0xFFFFFF) / 16777216.0
+
+# 0 in the first stretch, rising to 1 RAMP metres later
+difficulty = (z: f64) -> f64: clamp((z - INTRO) / RAMP, 0.0, 1.0)
+# (and then, slower, over 6 km more: faster, higher ridges and hills, more trees)
+late = (z: f64) -> f64: clamp((z - INTRO - RAMP) / 6000.0, 0.0, 1.0)
+
+new_valley = (s: int):
+    seed = s
+    tree_cache = {}
+    knots = [Knot(-200.0, 0.0, 10.0, 8.0, 0, 1.0, 0.0, false), Knot(0.0, 0.0, 10.0, 8.0, 0, 1.0, 0.0, false)]
+
+# knots up to z (and one more)
+grow = (z: f64):
+    loop knots[knots.len() - 1].z < z + 250.0:
+        k = knots.len()
+        p = knots[k - 1]
+        d = difficulty(p.z)
+        calm = 1.0
+        if p.z < INTRO: calm = 0.35
+        len = 120.0 - 20.0 * d
+        c = clamp(p.c + (hash01(seed, k, 1) * 2.0 - 1.0) * 16.0 * calm, -28.0, 28.0)
+        b = clamp(p.b + (hash01(seed, k, 2) * 2.0 - 1.0) * 6.0 * calm, 4.0, 20.0)
+        kind = int(hash01(seed, k, 3) * 3.0)
+        side = 1.0
+        if hash01(seed, k, 4) < 0.5: side = -1.0
+        # (a spur on the inside of the bend: cutting over it is the high shortcut)
+        if kind == 2 and abs(c - p.c) > 4.0:
+            side = 1.0
+            if c < p.c: side = -1.0
+        h = (0.5 + 0.5 * hash01(seed, k, 5)) * calm * (0.7 + 0.6 * d + 0.7 * late(p.z))
+        knots.push(Knot(p.z + len, c, b, 8.0 - 3.0 * d, kind, side, h, p.z + len > INTRO * 0.5))
+
+# the knot a stretch starts at (knots[i].z <= z < knots[i + 1].z)
+knot_at = (z: f64) -> int:
+    grow(z)
+    i = knots.len() - 2
+    loop i > 0 and knots[i].z > z: i -= 1
+    i
+
+smooth = (t: f64) -> f64: t * t * (3.0 - 2.0 * t)
+
+# the valley's middle and floor at z (the floor: with a saddle's ridge across it)
+middle = (z: f64) -> f64:
+    i = knot_at(z)
+    a = knots[i]
+    b = knots[i + 1]
+    a.c + (b.c - a.c) * smooth((z - a.z) / (b.z - a.z))
+
+floor_at = (z: f64) -> f64:
+    i = knot_at(z)
+    a = knots[i]
+    b = knots[i + 1]
+    t = (z - a.z) / (b.z - a.z)
+    f = a.b + (b.b - a.b) * smooth(t)
+    if b.kind == 1:
+        s = sin(PI * t)
+        f += 5.0 * b.h * s * s
+    f
+
+corridor = (z: f64) -> f64:
+    i = knot_at(z)
+    a = knots[i]
+    b = knots[i + 1]
+    a.width + (b.width - a.width) * (z - a.z) / (b.z - a.z)
+
+# the terrain's height at (x, z) as a formula (the mesh samples it: collision uses the mesh)
+height = (x: f64, z: f64) -> f64:
+    i = knot_at(z)
+    a = knots[i]
+    b = knots[i + 1]
+    t = (z - a.z) / (b.z - a.z)
+    u = x - middle(z)
+    d = abs(u)
+    w = corridor(z)
+    h = floor_at(z) + 0.25 * sin(x * 0.31 + z * 0.17) + 0.15 * sin(x * 0.13 - z * 0.29)
+    out = max(d - w, 0.0)
+    h += out * out * 0.03
+    m = smoothstep(w, w + 4.0, d)
+    if b.kind == 0:
+        # a gully: shoulders rising either side
+        h += m * 5.0 * b.h * smoothstep(w, w + 8.0, d)
+    else if b.kind == 2:
+        # a spur: a round hill on one side, at the stretch's middle
+        dx = u - b.side * (w + 7.0)
+        dz = (t - 0.5) * (b.z - a.z)
+        r2 = (dx * dx + dz * dz) / 120.0
+        if u * b.side > 0.0: h += m * 9.0 * b.h * exp(-r2)
+    h
+
+# The mesh's triangles: rows at multiples of ROW along z, columns at fixed offsets from the
+# middle; each cell split from its corner (+1 column, row) to (column, +1 row). Clearance and
+# collision use these triangles, so what is seen is what is hit.
+ground = (x: f64, z: f64) -> f64:
+    r = floor(z / ROW)
+    t = z / ROW - r
+    z0 = r * ROW
+    z1 = z0 + ROW
+    c0 = middle(z0)
+    c1 = middle(z1)
+    u = x - (c0 + (c1 - c0) * t)
+    cf = (u + HALF_WIDTH) / COL
+    c = floor(cf)
+    s = cf - c
+    u0 = c * COL - HALF_WIDTH
+    h00 = height(c0 + u0, z0)
+    h01 = height(c0 + u0 + COL, z0)
+    h10 = height(c1 + u0, z1)
+    h11 = height(c1 + u0 + COL, z1)
+    if s + t <= 1.0: return h00 + (h01 - h00) * s + (h10 - h00) * t
+    h11 + (h10 - h11) * (1.0 - s) + (h01 - h11) * (1.0 - t)
+
+# ---------------- trees ----------------
+# On the slopes beside the corridor (never in it): pines, a little apart, more further on. They
+# are hit like the ground. Each chunk of valley has its own, from the seed.
+struct Tree:
+    x: f64
+    y: f64
+    z: f64
+    s: f64                      # size (1: 5.5 m tall)
+
+trees_of = (j: int) -> Tree[]:
+    if let t = tree_cache.get(j): return t
+    out: Tree[]
+    z0 = f64(j * CHUNK_ROWS) * ROW
+    loop i in [0..90):
+        z = z0 + hash01(seed, j * 1000 + i, 7) * f64(CHUNK_ROWS) * ROW
+        side = 1.0
+        if hash01(seed, j * 1000 + i, 8) < 0.5: side = -1.0
+        w = corridor(z)
+        u = side * (w + 2.5 + hash01(seed, j * 1000 + i, 9) * 30.0)
+        x = middle(z) + u
+        y = ground(x, z)
+        up = y - floor_at(z)
+        # (thinner at first; none up where the snow is)
+        if up > 18.0 or hash01(seed, j * 1000 + i, 10) > 0.35 + 0.4 * difficulty(z) + 0.25 * late(z): continue
+        out.push(Tree(x, y - 0.3, z, 0.8 + 0.6 * hash01(seed, j * 1000 + i, 11)))
+    tree_cache[j] = out
+    # (forget the ones far behind)
+    if tree_cache.len() > 12:
+        keep: {int: Tree[]} = {}
+        loop k, v in tree_cache:
+            if k >= j - 3: keep[k] = v
+        tree_cache = keep
+    out
+
+chunk_of_z = (z: f64) -> int: int(floor(z / (f64(CHUNK_ROWS) * ROW)))
+
+# whether the glider touches a tree (a trunk, then a cone narrowing to its top)
+hits_tree = () -> bool:
+    j = chunk_of_z(g.z)
+    loop k in [j - 1..j + 2):
+        if k < 0: continue
+        loop t in trees_of(k):
+            dz = g.z - t.z
+            if abs(dz) > 3.0: continue
+            dx = g.x - t.x
+            hy = g.y - t.y
+            if hy < -RADIUS or hy > 5.5 * t.s + RADIUS: continue
+            r = 0.35 * t.s
+            if hy > 1.0 * t.s: r = 1.6 * t.s * (1.0 - (hy - 1.0 * t.s) / (4.5 * t.s))
+            if dx * dx + dz * dz < (r + RADIUS) * (r + RADIUS): return true
+    false
+
+# ---------------- the glider ----------------
+struct Glider:
+    x: f64
+    y: f64
+    z: f64
+    speed: f64
+    heading: f64                # (from straight down the valley; + is right)
+    pitch: f64                  # (+ is climbing)
+    bank: f64                   # (looks only)
+
+struct Controls:
+    steer: f64                  # -1..1
+    pitch: f64                  # -1 dive .. 1 climb
+    brake: f64                  # 0..1
+
+g = Glider(0, 18, 0, 24, 0, 0, 0)
+wings = 3
+immune = 0.0                    # (after a crash: a second untouchable)
+over = false
+over_time = 0.0
+score = 0.0
+streak = 0.0                    # seconds low, toward the multiplier
+out_time = 0.0                  # seconds since leaving the low bands
+band = 0                        # 0 high, 1 low, 2 very low
+best_mult = 1.0
+gates_passed = 0
+threads = 0                     # gates through the low target
+next_gate = 1                   # the knot whose gate is next
+run_time = 0.0
+events: (str, f64, int)[]       # (what, age, kind): what to show and play (draw, sound)
+lost_at: (str, f64, f64)[]      # (balance runs: what cost each wing, where)
+
+cruise = (z: f64) -> f64: 28.0 + 6.0 * difficulty(z) + 6.0 * late(z)
+
+mult = () -> f64: min(3.0, 1.0 + 0.25 * floor(streak / 2.0))
+
+clearance = () -> f64: g.y - ground(g.x, g.z) - RADIUS
+
+new_run = (s: int):
+    new_valley(s)
+    g = Glider(0, floor_at(0.0) + SAFE_HEIGHT, 0, 24, 0, 0, 0)
+    wings = 3
+    immune = 0.0
+    over = false
+    over_time = 0.0
+    score = 0.0
+    streak = 0.0
+    out_time = 0.0
+    band = 0
+    best_mult = 1.0
+    gates_passed = 0
+    threads = 0
+    next_gate = 1
+    run_time = 0.0
+    events = []
+    lost_at = []
+
+approach_angle = (a: f64, target: f64, rate: f64, dt: f64) -> f64:
+    if a < target: return min(a + rate * dt, target)
+    max(a - rate * dt, target)
+
+event = (what: str, kind: int): events.push((what, 0.0, kind))
+
+lose_wing = (why: str):
+    wings -= 1
+    streak = 0.0
+    event(why, 3)
+    lost_at.push((why, g.z, clearance()))
+    if env("LOWLINE_WHY") != none:
+        k = knots[knot_at(g.z)]
+        n = knots[knot_at(g.z) + 1]
+        eprint("{why} at z {int(g.z)}: x-mid {g.x - middle(g.z):.1}, clearance {clearance():.2}, tree {hits_tree()}, pitch {g.pitch:.2}, speed {g.speed:.1}, kind {n.kind}, into stretch {g.z - k.z:.0} of {n.z - k.z:.0}, gate gap {knots[next_gate].z - g.z:.0}")
+    if wings <= 0:
+        over = true
+        return
+
+crash = ():
+    lose_wing("crash")
+    if over: return
+    # back on the safe line, level, a second untouchable
+    g.x = middle(g.z)
+    g.y = floor_at(g.z) + SAFE_HEIGHT
+    g.heading = 0.0
+    g.pitch = 0.0
+    g.speed = min(g.speed, 28.0)
+    immune = 1.0
+
+# one fixed step of flight
+fly = (c: Controls, dt: f64):
+    g.heading = approach_angle(g.heading, clamp(c.steer, -1.0, 1.0) * MAX_HEADING, TURN_RATE, dt)
+    # (a cushion near the ground: a dive flattens out below 4 m, level by 1 m, and quicker, so
+    # diving to the deck skims it; what rises ahead still has to be climbed)
+    want = clamp(c.pitch, -1.0, 1.0) * MAX_PITCH
+    rate_p = PITCH_RATE
+    cl = clearance()
+    if want < 0.0 and cl < 4.0:
+        want *= clamp((cl - 1.0) / 3.0, 0.0, 1.0)
+        if g.pitch < want: rate_p = PITCH_RATE * 2.5
+    g.pitch = approach_angle(g.pitch, want, rate_p, dt)
+    g.bank = approach_angle(g.bank, -0.7 * clamp(c.steer, -1.0, 1.0), 2.6, dt)
+    a = -GRAVITY * sin(g.pitch) + (cruise(g.z) - g.speed) / 6.0 - BRAKE * clamp(c.brake, 0.0, 1.0)
+    g.speed = clamp(g.speed + a * dt, MIN_SPEED, MAX_SPEED)
+    px = g.x
+    py = g.y
+    pz = g.z
+    g.x += g.speed * cos(g.pitch) * sin(g.heading) * dt
+    g.y += g.speed * sin(g.pitch) * dt
+    g.z += g.speed * cos(g.pitch) * cos(g.heading) * dt
+    run_time += dt
+    # the gate at the next knot: where the glider crossed its plane
+    grow(g.z)
+    k = knots[next_gate]
+    if g.z >= k.z:
+        if k.gate: pass_gate(k, px + (g.x - px) * (k.z - pz) / (g.z - pz), py + (g.y - py) * (k.z - pz) / (g.z - pz))
+        next_gate += 1
+    immune = max(immune - dt, 0.0)
+    if immune <= 0.0 and (clearance() < 0.0 or hits_tree()):
+        crash()
+        return
+    score_step(dt)
+
+# a gate's window: (half width, bottom, top) above the floor at its middle
+gate_window = (k: Knot) -> (f64, f64, f64):
+    d = difficulty(k.z)
+    (10.0 - 3.0 * d, 1.5, 13.5 - 3.0 * d)
+
+pass_gate = (k: Knot, x: f64, y: f64):
+    w = gate_window(k)
+    fl = floor_at(k.z)
+    u = x - k.c
+    h = y - fl
+    if abs(u) > w.0 or h < w.1 or h > w.2:
+        if immune <= 0.0: lose_wing("missed gate")
+        return
+    gates_passed += 1
+    pts = 100.0 * mult()
+    # the low target: 4 m wide, 2 m high, its middle 3.5 m up
+    if abs(u) <= 2.0 and abs(h - 3.5) <= 1.0:
+        threads += 1
+        pts = 400.0 * mult()
+        event("THREAD +{int(pts)}", 2)
+    else: event("+{int(pts)}", 1)
+    score += pts
+
+score_step = (dt: f64):
+    c = clearance()
+    # (bands with 0.25 m of hysteresis: no flicker at their edges)
+    nb = 0
+    if c <= LOW: nb = 1
+    if c <= VERY_LOW: nb = 2
+    if band == 1 and nb == 0 and c <= LOW + 0.25: nb = 1
+    if band == 2 and nb == 1 and c <= VERY_LOW + 0.25: nb = 2
+    if immune > 0.0: nb = 0
+    band = nb
+    if band > 0:
+        was = mult()
+        streak += dt
+        out_time = 0.0
+        if mult() > was: event("x{mult()}", 4)
+        best_mult = max(best_mult, mult())
+        p = 1.0
+        if band == 2: p = 3.0
+        score += 10.0 * (g.speed / 28.0) * (g.speed / 28.0) * p * mult() * dt
+    else:
+        out_time += dt
+        if out_time > 1.0 and streak > 0.0:
+            if mult() > 1.0: event("streak lost", 5)
+            streak = 0.0
+
+# points a second now
+rate = () -> f64:
+    if band == 0: return 0.0
+    p = 1.0
+    if band == 2: p = 3.0
+    10.0 * (g.speed / 28.0) * (g.speed / 28.0) * p * mult()
+
+# ---------------- the autopilot ----------------
+# Flies toward the next gate (its low target when `daring`), keeping a clearance over the
+# terrain it will meet, climbing early for rises. It sees the glider as it was `auto_react`
+# seconds ago (a reaction time, for measuring how hard the valley is).
+daring = true
+auto_react = 0.0
+past: Glider[]
+
+autopilot = () -> Controls:
+    past.push(g)
+    lag = int(auto_react / STEP)
+    if past.len() > lag + 1: past.remove(0)
+    s = past[0]
+    # (the glider as seen, moved on by the reaction time as it was going: a player foresees that)
+    s.x += s.speed * cos(s.pitch) * sin(s.heading) * auto_react
+    s.y += s.speed * sin(s.pitch) * auto_react
+    s.z += s.speed * cos(s.pitch) * cos(s.heading) * auto_react
+    want_clear = 2.2
+    if not daring: want_clear = SAFE_HEIGHT - RADIUS
+    look = s.speed * 1.0
+    tz = s.z + look
+    tx = middle(tz)
+    ty = -1.0e9
+    k = knots[next_gate]
+    if k.gate and k.z > s.z and k.z - s.z < s.speed * 1.4:
+        tx = k.c
+        fl = floor_at(k.z)
+        if daring: ty = fl + 3.5
+        else: ty = fl + 7.5
+        tz = k.z
+    # height wanted now: over the ground along the way, climbing in time for rises
+    need = ground(s.x, s.z) + want_clear + RADIUS
+    loop i in [1..13):
+        t = f64(i) * 0.18
+        z = s.z + s.speed * t
+        x = s.x + (tx - s.x) * min(t * s.speed / max(tz - s.z, 1.0), 1.0)
+        h = ground(x, z) + want_clear + RADIUS
+        need = max(need, h - s.speed * t * 0.32)
+    if ty > -1.0e8:
+        frac = clamp((tz - s.z) / (s.speed * 1.4), 0.0, 1.0)
+        need = max(ty * (1.0 - frac) + need * frac, ground(s.x, s.z) + 1.5 + RADIUS)
+    # (and the ground's slope just ahead: climbing with it, not after it)
+    ahead = s.speed * 0.35
+    slope = (ground(s.x, s.z + ahead) - ground(s.x, s.z)) / ahead
+    vy = clamp((need - s.y) * 2.2 + max(slope, 0.0) * s.speed, -s.speed * 0.45, s.speed * 0.45)
+    want_pitch = asin(clamp(vy / s.speed, -0.9, 0.9))
+    want_heading = atan2(tx - s.x, max(tz - s.z, 5.0))
+    Controls(clamp(want_heading / MAX_HEADING, -1.0, 1.0), clamp(want_pitch / MAX_PITCH, -1.0, 1.0), 0.0)
+
+# ---------------- the world, drawn ----------------
+# the terrain: a few chunk meshes (CHUNK_ROWS rows each), refilled as the valley goes by
+chunk_slots: Mesh[]
+chunk_of: int[]                 # (the chunk each slot holds, -1: none)
+const CHUNK_SLOTS = 5
+const COLS = 25                 # (columns: -48 .. 48 every 4 m)
+
+chunk_vertices = (j: int) -> Vertex3D[]:
+    vs: Vertex3D[]
+    loop r in [0..CHUNK_ROWS + 1):
+        z = f64(j * CHUNK_ROWS + r) * ROW
+        c = middle(z)
+        fl = floor_at(z)
+        loop k in [0..COLS):
+            x = c + f64(k) * COL - HALF_WIDTH
+            y = height(x, z)
+            e = 1.5
+            n = normalize(vec3(f32(height(x - e, z) - height(x + e, z)), f32(2.0 * e), f32(height(x, z - e) - height(x, z + e))))
+            # grass on the valley floor, rock where it is steep, snow up high
+            up = y - fl
+            col = vec3(0.36, 0.52, 0.27) + vec3(0.04, 0.05, 0.02) * f32(sin(x * 1.7 + z * 0.9))
+            rock = vec3(0.46, 0.45, 0.39) + vec3(0.03, 0.03, 0.02) * f32(sin(x * 0.7 - z * 1.3))
+            col = lerp(col, rock, f32(smoothstep(0.82, 0.62, f64(n.y)) + smoothstep(9.0, 16.0, up) * 0.6))
+            col = lerp(col, vec3(0.93, 0.95, 0.98), f32(smoothstep(22.0, 30.0, up)))
+            vs.push(Vertex3D(vec3(f32(x), f32(y), f32(z)), n, vec2(f32(x / 7.0), f32(z / 7.0)), vec4(col * 1.18, 1)))
+    vs
+
+chunk_indices = () -> u32[]:
+    idx: u32[]
+    loop r in [0..CHUNK_ROWS):
+        loop k in [0..COLS - 1):
+            a = u32(r * COLS + k)
+            b = a + u32(COLS)
+            # (split as ground() reads it: from (k + 1, r) to (k, r + 1))
+            idx = idx + [a, b, a + 1, a + 1, b, b + 1]
+    idx
+
+# the chunks from just behind the glider to far enough ahead, each in a slot
+draw_terrain = ():
+    if chunk_slots.len() == 0:
+        idx = chunk_indices()
+        loop i in [0..CHUNK_SLOTS):
+            chunk_slots.push(custom_mesh(chunk_vertices(i), idx))
+            chunk_of.push(i)
+    here = int(floor(cam_pos.z / (f64(CHUNK_ROWS) * ROW)))
+    loop j in [max(here - 1, 0)..here + CHUNK_SLOTS - 1):
+        slot = -1
+        loop i in 0.. and c in chunk_of:
+            if c == j: slot = i
+        if slot < 0:
+            # (the slot holding the chunk furthest behind)
+            slot = 0
+            loop i in 0.. and c in chunk_of:
+                if c < chunk_of[slot]: slot = i
+            update_mesh(chunk_slots[slot], chunk_vertices(j))
+            chunk_of[slot] = j
+            zm = (f64(j) + 0.5) * f64(CHUNK_ROWS) * ROW
+            chunk_slots[slot].center = vec3(f32(middle(zm)), f32(floor_at(zm) + 15.0), f32(zm))
+            chunk_slots[slot].radius = 95.0
+        draw_mesh(chunk_slots[slot], texture = detail, specular = 0.05)
+        # its trees
+        tr = trees_of(j)
+        if tr.len() > 0:
+            trunks: Instance3D[]
+            crowns: Instance3D[]
+            loop t in tr:
+                p = vec3(f32(t.x), f32(t.y), f32(t.z))
+                trunks.push(instance(transform(p, 0.0, t.s), rgb(0.4, 0.28, 0.2)))
+                crowns.push(instance(transform(p + vec3(0, f32(1.0 * t.s), 0), t.x, t.s), rgb(0.16, f32(0.36 + 0.1 * sin(t.z)), 0.2)))
+            draw_mesh_instanced(trunk, trunks)
+            draw_mesh_instanced(crown, crowns)
+
+# the glider: a swept wing and a small tail, top and bottom
+make_glider = () -> Mesh:
+    vs: Vertex3D[]
+    tri = (a: vec3, b: vec3, c: vec3, col: vec4):
+        n = normalize(cross(b - a, c - a))
+        vs.push(Vertex3D(a, n, vec2(0, 0), col))
+        vs.push(Vertex3D(b, n, vec2(0, 0), col))
+        vs.push(Vertex3D(c, n, vec2(0, 0), col))
+        # (and its other side)
+        vs.push(Vertex3D(a, n * -1.0, vec2(0, 0), col))
+        vs.push(Vertex3D(c, n * -1.0, vec2(0, 0), col))
+        vs.push(Vertex3D(b, n * -1.0, vec2(0, 0), col))
+    white = vec4(0.95, 0.95, 0.92, 1)
+    orange = vec4(1.0, 0.45, 0.12, 1)
+    nose = vec3(0, 0.05, 1.5)
+    tail = vec3(0, 0.15, -0.9)
+    tri(nose, vec3(-2.4, 0.1, -0.7), vec3(0, 0.12, -0.3), white)
+    tri(nose, vec3(0, 0.12, -0.3), vec3(2.4, 0.1, -0.7), white)
+    tri(vec3(-2.4, 0.1, -0.7), vec3(-1.6, 0.1, -0.75), vec3(0, 0.12, -0.3), orange)
+    tri(vec3(0, 0.12, -0.3), vec3(1.6, 0.1, -0.75), vec3(2.4, 0.1, -0.7), orange)
+    tri(vec3(0, 0.12, -0.3), tail, vec3(0, 0.75, -1.15), orange)
+    tri(nose, vec3(-0.18, -0.12, 0.2), vec3(0.18, -0.12, 0.2), white)
+    custom_mesh(vs)
+
+glider_model: Mesh
+trunk: Mesh
+crown: Mesh
+detail = Texture(0, 0, 0)
+box: Mesh
+marker: Mesh
+meshes_made = false
+
+glider_transform = () -> mat4:
+    translation(vec3(f32(g.x), f32(g.y), f32(g.z))) * rotation_y(g.heading) * rotation_x(-g.pitch) * rotation_z(g.bank)
+
+# a bar between two points (the gates' frames)
+bar = (a: vec3, b: vec3, w: f64, col: vec4, glow: f64):
+    d = b - a
+    l = length(d)
+    m = translation((a + b) * 0.5)
+    if abs(d.y) > abs(d.x): m = m * scaling(vec3(f32(w), l, f32(w)))
+    else: m = m * scaling(vec3(l, f32(w), f32(w)))
+    draw_mesh(box, m, col, emissive = glow, cast_shadow = false)
+
+draw_gates = ():
+    loop i in [max(next_gate - 1, 1)..next_gate + 4):
+        grow(cam_pos.z + 400.0)
+        if i >= knots.len(): break
+        k = knots[i]
+        if not k.gate or k.z < cam_pos.z - 5.0: continue
+        win = gate_window(k)
+        fl = floor_at(k.z)
+        z = f32(k.z)
+        x0 = f32(k.c - win.0)
+        x1 = f32(k.c + win.0)
+        bottom = f32(fl + win.1)
+        top = f32(fl + win.2)
+        col = vec4(0.35, 0.9, 1.0, 1)
+        glow = 1.6
+        if i < next_gate:
+            col = vec4(0.5, 0.6, 0.65, 1)
+            glow = 0.2
+        g0 = f32(ground(k.c - win.0, k.z))
+        g1 = f32(ground(k.c + win.0, k.z))
+        bar(vec3(x0, g0, z), vec3(x0, top, z), 0.35, col, glow)
+        bar(vec3(x1, g1, z), vec3(x1, top, z), 0.35, col, glow)
+        bar(vec3(x0, top, z), vec3(x1, top, z), 0.35, col, glow)
+        bar(vec3(x0, bottom, z), vec3(x1, bottom, z), 0.12, col, glow * 0.6)
+        # the low target: 4 by 2 m, its middle 3.5 m up
+        gold = vec4(1.0, 0.78, 0.3, 1)
+        if i < next_gate: gold = col
+        c = f32(k.c)
+        lo = f32(fl + 2.5)
+        hi = f32(fl + 4.5)
+        bar(vec3(c - 2, lo, z), vec3(c + 2, lo, z), 0.16, gold, glow * 1.3)
+        bar(vec3(c - 2, hi, z), vec3(c + 2, hi, z), 0.16, gold, glow * 1.3)
+        bar(vec3(c - 2, lo, z), vec3(c - 2, hi, z), 0.16, gold, glow * 1.3)
+        bar(vec3(c + 2, lo, z), vec3(c + 2, hi, z), 0.16, gold, glow * 1.3)
+
+band_color = (b: int) -> vec4:
+    if b == 2: return vec4(1.0, 0.75, 0.25, 1)
+    if b == 1: return vec4(0.35, 0.9, 1.0, 1)
+    vec4(0.7, 0.75, 0.8, 1)
+
+# ---------------- camera ----------------
+cam_pos = vec3(0, 20, -12)
+cam_look = vec3(0, 18, 10)
+
+follow = (dt: f64, snap: bool):
+    fwd = vec3(f32(sin(g.heading)), 0, f32(cos(g.heading)))
+    p = vec3(f32(g.x), f32(g.y), f32(g.z))
+    want = p - fwd * 10.0 + vec3(0, 4, 0)
+    look = p + fwd * 16.0 + vec3(0, 1, 0)
+    if snap:
+        cam_pos = want
+        cam_look = look
+    else:
+        cam_pos = approach(cam_pos, want, 1.0 / 0.12, dt)
+        cam_look = approach(cam_look, look, 1.0 / 0.15, dt)
+    gy = f32(ground(f64(cam_pos.x), f64(cam_pos.z)) + 2.0)
+    if cam_pos.y < gy: cam_pos.y = gy
+
+draw_world = ():
+    if not meshes_made:
+        meshes_made = true
+        glider_model = make_glider()
+        box = cube_mesh(1.0)
+        marker = cylinder_mesh(1.0, 0.06, 20)
+        trunk = cylinder_mesh(0.35, 1.2, 6)
+        crown = cone_mesh(1.6, 4.5, 7)
+        # (a grain for the ground: speed shows in it going by)
+        img = image(128, 128)
+        loop y in [0..128):
+            loop x in [0..128):
+                v = 0.78 + 0.22 * (0.6 * fbm(f64(x) * 0.09, f64(y) * 0.09, 3) + 0.4 * noise(f64(x) * 0.6, f64(y) * 0.6))
+                img.set(x, y, vec4(f32(v), f32(v), f32(v), 1))
+        detail = texture(img)
+        set_repeat(detail, true)
+    clear(BLACK)
+    sun(vec3(-0.45, 0.75, 0.35), vec3(1.0, 0.93, 0.82))
+    sky(vec3(0.32, 0.52, 0.86), vec3(0.82, 0.86, 0.92), vec3(0.4, 0.42, 0.4))
+    fog(vec3(0.76, 0.82, 0.9), 0.0032, 0.012)
+    shadows(true, 0.65, 45.0)
+    post_effects(0.45, 0.8, 0.3, 1.05)
+    camera3d(cam_pos, cam_look, 70.0, 0.3, 700.0)
+    draw_terrain()
+    draw_gates()
+    if not over:
+        draw_mesh(glider_model, glider_transform(), specular = 0.5)
+        gy = ground(g.x, g.z)
+        if band > 0: draw_mesh(marker, translation(vec3(f32(g.x), f32(gy + 0.05), f32(g.z))) * scaling(vec3(0.45, 1, 0.45)), band_color(band), emissive = 1.2, cast_shadow = false)
+
+# ---------------- heads-up display ----------------
+draw_hud = ():
+    text("{int(score)}", vec2(32, 20), 46, WHITE)
+    m = mult()
+    text("x{m}", vec2(f32(44.0 + text_width("{int(score)}", 46.0)), 32), 28, with_alpha(band_color(2), f32(0.45 + 0.55 * (m - 1.0) / 2.0)))
+    # the streak toward the next multiplier
+    if m < 3.0:
+        f = (streak - (m - 1.0) * 8.0) / 2.0
+        rect(34, 78, 160, 4, rgba(1, 1, 1, 0.15))
+        rect(34, 78, 160.0 * clamp(f, 0.0, 1.0), 4, with_alpha(band_color(2), 0.8))
+    text("{int(g.z)} m", vec2(f32(1248.0 - text_width("{int(g.z)} m", 26.0)), 22), 26, rgba(1, 1, 1, 0.65))
+    loop i in [0..3):
+        c = rgba(1, 1, 1, 0.85)
+        if i >= wings: c = rgba(1, 1, 1, 0.15)
+        x = 1230.0 - f64(i) * 40.0
+        triangle(vec2(f32(x), 64), vec2(f32(x - 16.0), 80), vec2(f32(x + 16.0), 80), c)
+    # the clearance band, under the glider's place on screen
+    names = ["HIGH", "LOW", "VERY LOW"]
+    label = names[band]
+    if band > 0: label = "{label}   +{int(rate())}/s"
+    text_centered(label, vec2(640, 660), 30, band_color(band))
+    loop e in events:
+        a = f32(clamp(1.6 - e.1, 0.0, 1.0))
+        if e.2 == 1 or e.2 == 2:
+            sz = 34.0
+            if e.2 == 2: sz = 46.0
+            text_centered(e.0, vec2(640, f32(250.0 - e.1 * 40.0)), sz, with_alpha(band_color(e.2), a))
+        else if e.2 == 4: text_centered(e.0, vec2(640, f32(610.0 - e.1 * 20.0)), 30, with_alpha(band_color(2), a))
+        else if e.2 == 3 or e.2 == 5: text_centered(e.0, vec2(640, 360), 36, rgba(1, 0.4, 0.35, a))
+
+# ---------------- a balance run, without a window ----------------
+# LOWLINE_TEST="runs react daring": each run flown by the autopilot until it is over (or 6
+# minutes), then what happened
+when TARGET != "wasm":
+    if let spec = env("LOWLINE_TEST"):
+        w = split(spec, " ")
+        runs = to_int(w[0]) ?? 10
+        auto_react = to_float(w[1]) ?? 0.0
+        daring = w.len() < 3 or w[2] == "daring"
+        total = 0.0
+        loop r in [0..runs):
+            new_run(1000 + r)
+            past = []
+            loop not over and run_time < 900.0:
+                c = autopilot()
+                # ("dive": a beginner holding dive the whole way, steering down the valley)
+                if w.len() >= 3 and w[2] == "dive": c.pitch = -1.0
+                fly(c, STEP)
+            why = ""
+            loop e in lost_at: why = "{why} {e.0}@{int(e.1)}"
+            print("run {r}: {int(run_time)} s, {int(g.z)} m, score {int(score)}, gates {gates_passed}, threads {threads}, best x{best_mult}; {why}")
+            total += run_time
+        print("mean {total / f64(runs):.1} s")
+        exit(0)
+
+# ---------------- sound ----------------
+wind = tone(320.0, 2.0, .noise, 0.5, 0.0, 0.0)
+hum = mix([tone(110.0, 1.0, .triangle, 0.35, 0.0, 0.0), tone(165.0, 1.0, .sine, 0.25, 0.0, 0.0), tone(220.0, 1.0, .sine, 0.15, 0.0, 0.0)])
+snd_gate = tone(1046.5, 0.6, .sine, 0.35, 0.002, 0.55)
+snd_thread = mix([tone(1318.5, 0.9, .sine, 0.3, 0.002, 0.8), tone(1975.5, 0.9, .sine, 0.22, 0.002, 0.8), tone(2637.0, 0.6, .triangle, 0.1, 0.002, 0.5)])
+snd_up = tone(660.0, 0.25, .triangle, 0.25, 0.002, 0.2, 1.5)
+snd_lost = tone(520.0, 0.35, .triangle, 0.22, 0.002, 0.3, 0.5)
+snd_crash = mix([tone(90.0, 0.8, .noise, 0.7, 0.002, 0.7, 0.3), tone(70.0, 0.5, .square, 0.3, 0.002, 0.4, 0.5)])
+theme = mix([
+    melody_loop("D3 - - - A3 - - - B2 - - - F#3 - - - G2 - - - D3 - - - G2 - - - A2 - - -", 96.0, .triangle, 0.08, 1.0),
+    melody_loop("F#4 - A4 - D5 - - - C#5 - - - A4 - - - B4 - D5 - G4 - - - A4 - - - - - - - E4 - F#4 - G4 - - - F#4 - - - E4 - - - - - - -", 96.0, .sine, 0.06, 0.5),
+])
+wind_id = -1
+hum_id = -1
+music_id = -1
+
+# the wind with speed, the hum with the band, the events' sounds (sounds: 0 to 1)
+sound_frame = (playing: bool):
+    if wind_id < 0:
+        wind_id = play(wind, 0.0, looping = true)
+        hum_id = play(hum, 0.0, looping = true)
+    v = 0.0
+    h = 0.0
+    if playing and not over:
+        v = (0.15 + 0.5 * (g.speed - MIN_SPEED) / (MAX_SPEED - MIN_SPEED)) * settings.sound
+        if band == 1: h = 0.25 * settings.sound
+        if band == 2: h = 0.5 * settings.sound
+    set_volume(wind_id, v)
+    set_pitch(wind_id, 0.7 + 0.6 * g.speed / MAX_SPEED)
+    set_volume(hum_id, h)
+    set_pitch(hum_id, 1.0 + 0.25 * f64(band))
+    if not playing: return
+    loop e in events:
+        if e.1 > 0.0: continue
+        sv = settings.sound
+        if e.2 == 1: play(snd_gate, sv)
+        else if e.2 == 2: play(snd_thread, sv)
+        else if e.2 == 3: play(snd_crash, sv)
+        else if e.2 == 4: play(snd_up, sv * 0.8, pitch = 0.8 + 0.2 * mult())
+        else if e.2 == 5: play(snd_lost, sv * 0.8)
+
+music = ():
+    if music_id < 0: music_id = play(theme, settings.music, looping = true)
+    set_volume(music_id, settings.music)
+
+# ---------------- settings and records ----------------
+struct Settings:
+    music = 0.5
+    sound = 0.8
+    invert = false              # (pitch: forward climbs, back dives)
+    fullscreen = false
+
+settings = Settings()
+best = 0
+best_seed = 0
+best_dist = 0
+runs = 0
+
+save_records = (): save_data("best", "score {best}\nseed {best_seed}\ndistance {best_dist}\nruns {runs}")
+save_settings = (): save_data("settings", "music {settings.music}\nsound {settings.sound}\ninvert {settings.invert}\nfullscreen {settings.fullscreen}")
+
+load_saved = ():
+    if let t = load_data("settings"):
+        loop line in lines(t):
+            w = split(line, " ")
+            if w.len() < 2: continue
+            if w[0] == "music": settings.music = clamp(to_float(w[1]) ?? 0.5, 0.0, 1.0)
+            else if w[0] == "sound": settings.sound = clamp(to_float(w[1]) ?? 0.8, 0.0, 1.0)
+            else if w[0] == "invert": settings.invert = w[1] == "true"
+            else if w[0] == "fullscreen": settings.fullscreen = w[1] == "true"
+    if let t = load_data("best"):
+        loop line in lines(t):
+            w = split(line, " ")
+            if w.len() < 2: continue
+            if w[0] == "score": best = max(to_int(w[1]) ?? 0, 0)
+            else if w[0] == "seed": best_seed = to_int(w[1]) ?? 0
+            else if w[0] == "distance": best_dist = max(to_int(w[1]) ?? 0, 0)
+            else if w[0] == "runs": runs = max(to_int(w[1]) ?? 0, 0)
+
+# ---------------- playing ----------------
+action("Steer left", [.key(.a), .key(.left), .stick(0, -1), .button(.left)])
+action("Steer right", [.key(.d), .key(.right), .stick(0, 1), .button(.right)])
+action("Dive", [.key(.w), .key(.up), .stick(1, -1)])
+action("Climb", [.key(.s), .key(.down), .stick(1, 1)])
+action("Brake", [.key(.space), .stick(4, 1), .button(.lb)])
+action("Pause", [.key(.escape), .key(.p), .button(.start)])
+
+enum Screen: title, play, paused, over, settings, controls
+
+screen = Screen.title
+settings_back = Screen.title
+new_best = false
+acc = 0.0
+const SHOWCASE = 7              # (the valley flown behind the title)
+
+player = () -> Controls:
+    p = action_axis("Dive", "Climb")
+    if settings.invert: p = -p
+    Controls(action_axis("Steer left", "Steer right"), p, action_value("Brake"))
+
+start = (s: int):
+    new_run(s)
+    past = []
+    follow(0.0, true)
+    screen = .play
+
+new_seed = () -> int: int(time_ns() / 1000 % 90000) + 10000
+
+finish = ():
+    runs += 1
+    new_best = int(score) > best
+    if new_best:
+        best = int(score)
+        best_seed = seed
+    best_dist = max(best_dist, int(g.z))
+    save_records()
+    screen = .over
+
+title_flight = ():
+    new_run(SHOWCASE)
+    past = []
+    daring = true
+    follow(0.0, true)
+
+# advance the flight by dt in fixed steps; the autopilot flies behind the title
+simulate = (dt: f64, auto: bool):
+    loop i in 0.. and e in events: events[i].1 = e.1 + dt
+    events = [loop e in events if e.1 < 2.0: e]
+    if over:
+        over_time += dt
+        return
+    acc += min(dt, 0.1)
+    loop acc >= STEP:
+        acc -= STEP
+        c = Controls(0, 0, 0)
+        if auto: c = autopilot()
+        else: c = player()
+        fly(c, STEP)
+        if over: break
+    follow(dt, false)
+
+update = (dt: f64):
+    music()
+    if screen == .play:
+        if action_pressed("Pause"):
+            screen = .paused
+            return
+        simulate(dt, false)
+        sound_frame(true)
+        if over and over_time > 0.9: finish()
+    else if screen == .over:
+        simulate(dt, false)
+        sound_frame(false)
+    else if screen == .paused: sound_frame(false)
+    else:
+        # the title (and its settings): the valley flown by the autopilot
+        if screen == .title or settings_back == .title:
+            simulate(dt, true)
+            if over and over_time > 2.0: title_flight()
+        sound_frame(false)
+
+draw = ():
+    draw_world()
+    if screen == .play or screen == .paused or screen == .over or (screen != .title and settings_back != .title): draw_hud()
+    if screen == .title: draw_title()
+    else if screen == .paused: draw_pause()
+    else if screen == .over: draw_over()
+    else if screen == .settings: draw_settings()
+    else if screen == .controls: draw_controls()
+
+dim = (a: f32):
+    v = visible_rect()
+    rect(f64(v.x), f64(v.y), f64(v.z), f64(v.w), rgba(0.02, 0.04, 0.08, a))
+
+# a dark panel on the left, fading out to the right
+side_panel = ():
+    v = visible_rect()
+    c = rgba(0.02, 0.04, 0.08, 0.75)
+    rect(f64(v.x), f64(v.y), 520.0 - f64(v.x), f64(v.w), c)
+    quad_gradient(vec2(520, v.y), vec2(760, v.y), vec2(760, v.y + v.w), vec2(520, v.y + v.w), c, with_alpha(c, 0), with_alpha(c, 0), c)
+
+draw_title = ():
+    side_panel()
+    text_centered("L O W L I N E", vec2(300, 170), 70, WHITE)
+    text_centered("fly low.  fly fast.  thread the gates.", vec2(300, 235), 24, band_color(1))
+    ui_begin("title", vec2(300, 340))
+    if ui_button("Fly"): start(new_seed())
+    if best > 0 and ui_button("Best trail"): start(best_seed)
+    if ui_button("Settings"):
+        settings_back = .title
+        screen = .settings
+    when TARGET != "wasm":
+        if ui_button("Quit"): quit()
+    ui_end()
+    if best > 0: text_centered("best {best}   ({best_dist} m)", vec2(300, 600), 22, with_alpha(band_color(2), 0.9))
+    text_centered("steer: A / D     dive: W     climb: S     brake: Space", vec2(300, 650), 17, rgba(1, 1, 1, 0.55))
+    text_centered("low over the ground scores: lower, faster, longer, more", vec2(300, 676), 17, rgba(1, 1, 1, 0.55))
+
+draw_pause = ():
+    dim(0.55)
+    text_centered("Paused", vec2(640, 200), 60, WHITE)
+    ui_begin("pause", vec2(640, 310))
+    if ui_button("Resume") or ui_back() or (action_pressed("Pause") and ui_ready()): screen = .play
+    if ui_button("Fly this trail again"): start(seed)
+    if ui_button("Settings"):
+        settings_back = .paused
+        screen = .settings
+    if ui_button("Leave to the title"):
+        title_flight()
+        screen = .title
+    ui_end()
+
+draw_over = ():
+    dim(0.5)
+    text_centered("{int(score)}", vec2(640, 170), 90, WHITE)
+    if new_best: text_centered("a new best!", vec2(640, 240), 30, band_color(2))
+    else: text_centered("best {best}", vec2(640, 240), 26, rgba(1, 1, 1, 0.6))
+    text_centered("{int(g.z)} m     {gates_passed} gates     {threads} threaded     best x{best_mult}", vec2(640, 290), 24, rgba(1, 1, 1, 0.75))
+    text_centered("trail {seed}", vec2(640, 325), 20, rgba(1, 1, 1, 0.45))
+    ui_begin("over", vec2(640, 400))
+    if ui_button("Fly this trail again"): start(seed)
+    if ui_button("A new trail"): start(new_seed())
+    if best_seed != seed and ui_button("Best trail ({best})"): start(best_seed)
+    if ui_button("Title") or ui_back():
+        title_flight()
+        screen = .title
+    ui_end()
+
+draw_settings = ():
+    if settings_back == .title: side_panel()
+    else: dim(0.7)
+    x = 300.0
+    if settings_back != .title: x = 640.0
+    text_centered("Settings", vec2(f32(x), 150), 60, WHITE)
+    ui_begin("settings", vec2(f32(x), 270))
+    was = settings
+    settings.music = ui_slider("Music", settings.music)
+    settings.sound = ui_slider("Sounds", settings.sound)
+    settings.invert = ui_switch("Invert pitch", settings.invert)
+    when TARGET != "wasm":
+        settings.fullscreen = ui_switch("Fullscreen", settings.fullscreen)
+    if ui_button("Controls"): screen = .controls
+    back = ui_button("Back") or ui_back()
+    ui_end()
+    if settings.sound != was.sound: play(snd_gate, settings.sound)
+    if settings.fullscreen != was.fullscreen: set_fullscreen(settings.fullscreen)
+    if back:
+        save_settings()
+        screen = settings_back
+
+draw_controls = ():
+    dim(0.8)
+    text_centered("Controls", vec2(640, 130), 60, WHITE)
+    ui_begin("controls", vec2(640, 240))
+    ui_controls()
+    back = ui_button("Back") or ui_back()
+    ui_end()
+    if back: screen = .settings
+
+load_saved()
+if settings.fullscreen: set_fullscreen(true)
+title_flight()

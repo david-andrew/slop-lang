@@ -18,7 +18,7 @@ has_display = bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"
 gpu_too = ("--gpu" in sys.argv or has_display) and "--no-gpu" not in sys.argv and not update
 GPU_FRAME_LIMIT = 4.0   # a whole game frame on a GPU (different rasterization and precision)
 os.makedirs(out, exist_ok=True)
-games = {"cube": "examples/cube.jo", "rebound": "examples/rebound/rebound.jo", "dunes": "examples/dunes/dunes.jo"}
+games = {"cube": "examples/cube.jo", "rebound": "examples/rebound/rebound.jo", "dunes": "examples/dunes/dunes.jo", "lowline": "examples/lowline/lowline.jo"}
 scenes = sorted(f[:-3] for f in os.listdir(refdir) if f.endswith(".jo"))
 for sc in scenes:
     games[sc] = f"tests/render/{sc}.jo"
