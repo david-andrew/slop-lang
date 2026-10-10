@@ -1360,7 +1360,9 @@ bot_think = 0.0
 bot_lost = 0.0
 
 new_run = ():
-    you = Player(Body(v3(0, 2, 3), vec3(0, 0, 0), RADIUS))
+    # (on the platform, looking out over the deck)
+    you = Player(Body(v3(0, 2, 3.5), vec3(0, 0, 0), RADIUS))
+    you.yaw = PI
     guns = [Gun("RIFLE", RIFLE_MAG), Gun("CASTER")]
     held = 0
     grenades = 2
