@@ -1,12 +1,13 @@
 # Sloppy roadmap
 
-Where Sloppy is (v0.3.0, October 2026): a self-hosted compiler (~24k lines of Sloppy, plus a C
+Where Sloppy is (v0.4.0, October 2026): a self-hosted compiler (~24k lines of Sloppy, plus a C
 bootstrap) that compiles a 50k-line program in 0.18 s, runs programs at ~1.24x the time of C -O2
 (release), and targets Linux x86-64, Windows x64 and the web (one .html file). It has a game
-library (window, input, gamepads, 2D/3D drawing with a 2D camera, collision and particle helpers,
-shadows, shaders written in Sloppy that run on the GPU or a software renderer, an audio mixer,
-PNG/WAV), hot reloading (`sloppy watch`), a REPL (Linux), a language server and VS Code
-extension, a playground, backtraces, DWARF, modules.
+library (window, input, gamepads, 2D/3D drawing with a 2D camera, sprite sheets, tilemaps, menus,
+collision and particle helpers, shadows, shaders written in Sloppy that run on the GPU or a
+software renderer, an audio mixer and synthesizer, PNG/WAV/Ogg Vorbis, JSON, saving), hot
+reloading (`sloppy watch`), a REPL (Linux), a language server and VS Code extension, a
+playground, backtraces, DWARF, modules, two tutorials and a showcase game (Rebound).
 
 The aim stays the same: a small language that feels like Python and runs like C, for making
 games, with the shortest path from an idea to something running and shippable.

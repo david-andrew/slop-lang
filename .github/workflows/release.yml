@@ -50,9 +50,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          python3 tools/release_notes.py "$GITHUB_REF_NAME" > build/notes.md
           gh release create "$GITHUB_REF_NAME" --title "Sloppy ${GITHUB_REF_NAME#v}" --generate-notes \
-            --notes "Install or upgrade (or run \`sloppy update\`): on Linux \`curl -fsSL https://sloppy-lang.org/install | bash\`; on Windows, in PowerShell, \`irm https://sloppy-lang.org/install.ps1 | iex\`" \
-            build/release/*
+            --notes-file build/notes.md build/release/*
 
   # The editor extension, to the VS Code Marketplace and Open VSX, with no stored tokens: GitHub's
   # OIDC token is exchanged for short-lived ones (an Azure managed identity for the Marketplace,
