@@ -32,7 +32,7 @@ exdir = os.path.join(root, "tools", "playground", "examples")
 for n in sorted(os.listdir(exdir)):
     if n.endswith(".jo"):
         examples[re.sub(r"^\d+-", "", n[:-3])] = open(os.path.join(exdir, n)).read()
-for name, path in [("rebound (2D game)", "examples/rebound/rebound.jo"), ("shapes (2D)", "examples/shapes.jo"),
+for name, path in [("rebound (2D game)", "examples/rebound/rebound.jo"), ("shapes (2D)", "examples/shapes.jo"), ("tiles (2D)", "examples/tiles.jo"),
                    ("cube (3D)", "examples/cube.jo"), ("scene (3D)", "examples/scene3d.jo"), ("dunes (3D game)", "examples/dunes/dunes.jo")]:
     full = os.path.join(root, path)
     if os.path.exists(full): examples[name] = open(full).read()

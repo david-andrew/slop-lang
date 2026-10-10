@@ -6,7 +6,7 @@ import os, re, glob
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECTIONS = [
     ("core", "Core (always available)"),
-    ("std", "Parallelism and numeric arrays"),
+    ("std", "Data (JSON, base64, saving), parallelism and numeric arrays"),
     ("game", "Games: windows, input, 2D/3D drawing, GPU programs, audio"),
 ]
 def signature(line):
@@ -31,7 +31,7 @@ for sub, title in SECTIONS:
         lines = open(path).read().splitlines()
         header = []
         for l in lines:
-            if l.startswith("#"): header.append(l.lstrip("# ").rstrip())
+            if l.startswith("#"): header.append(l[1:].rstrip())
             else: break
         entries = []
         comment = []
@@ -67,8 +67,23 @@ for sub, title in SECTIONS:
         if not entries: continue
         out.append(f"### {os.path.basename(path)}")
         if header:
+            # (lines indented more than one space are an example: a code block)
             out.append("")
-            out.extend(h + "  " for h in header)
+            code = False
+            for h in header:
+                is_code = h.startswith("   ") and h.strip() != ""
+                if is_code and not code:
+                    out.extend(["", "```gdscript"])
+                    code = True
+                elif not is_code and code and h.strip() != "":
+                    while out[-1] == "": out.pop()
+                    out.extend(["```", ""])
+                    code = False
+                if code: out.append(h[3:] if h.startswith("   ") else h)
+                elif h.strip(): out.append(h.strip() + "  ")
+            if code:
+                while out[-1] == "": out.pop()
+                out.append("```")
         out.append("")
         out.append("```gdscript")     # (see tools/site.py: GitHub has no Sloppy grammar)
         for sig, doc in entries:

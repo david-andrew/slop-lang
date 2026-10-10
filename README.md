@@ -203,7 +203,7 @@ lib/std/       thread pool and parallel helpers, numeric arrays (nd.jo)
 lib/game/      windows (Wayland, X11), input, OpenGL ES / WebGL, 2D, 3D, images, audio
 lib/web/       JavaScript glue embedded into web builds
 editors/       the VS Code extension (tools/vsix.py packages it)
-examples/      rebound (a complete 2D game), dunes (3D), shapes, cube, scene3d
+examples/      rebound (a complete 2D game), dunes (3D), tiles (a tilemap and sprites), shapes, cube, scene3d
 tests/         test programs with expected output (tools/runtests.py), render references
 bench/         benchmarks (Sloppy and equivalent C)
 tools/         bootstrap, test runner, render test, differential fuzzer, language server test,

@@ -1,0 +1,101 @@
+# A tilemap and an animated sprite: walk a knight through a small dungeon and pick up the coins.
+# The pictures are drawn by the program (no image files): a tileset and a sprite sheet, made
+# pixel by pixel. With image files, they would come from load_texture(embed("tiles.png"), false).
+# Arrows / WASD / a gamepad to walk.
+
+const T = 16                            # tile size, in pixels
+const SPEED = 70.0                      # pixels a second (on the map, before the zoom)
+
+DUNGEON = "
+###############################
+#.............#...............#
+#..o.....o....#.....o.........#
+#.............#..........o....#
+#....######...#####..######...#
+#....#....#...............#...#
+#....#..o.#.......o.......#...#
+#....#....#####....########...#
+#..............#..............#
+#..o...........#.......o......#
+###############################
+"
+
+# ---------------- pictures, made pixel by pixel ----------------
+# the tileset: 1 floor, 2 wall, 3 coin
+make_tiles = () -> Texture:
+    img = image(3 * T, T)
+    loop y in [0..T):
+        loop x in [0..T):
+            # floor: dark stone with a few speckles
+            n = noise(f64(x) * 0.7, f64(y) * 0.7)
+            set(img, x, y, rgb(f32(0.16 + 0.04 * n), f32(0.15 + 0.04 * n), f32(0.2 + 0.05 * n)))
+            # wall: bricks
+            brick = (y % 8 == 0) or ((x + (y / 8) * 8) % 16 == 0)
+            c = rgb(0.45, 0.36, 0.33)
+            if brick: c = rgb(0.25, 0.2, 0.2)
+            set(img, T + x, y, c)
+            # coin: a gold disc on the floor
+            d = length(vec2(f32(x) - 7.5, f32(y) - 7.5))
+            c2 = rgb(f32(0.16 + 0.04 * n), f32(0.15 + 0.04 * n), f32(0.2 + 0.05 * n))
+            if d < 5.0: c2 = rgb(1, 0.8, 0.25)
+            if d < 3.0: c2 = rgb(1, 0.92, 0.55)
+            set(img, 2 * T + x, y, c2)
+    texture(img, false)
+
+# the knight: four frames of walking (legs apart, together, apart the other way, together)
+make_knight = () -> Texture:
+    img = image(4 * T, T)
+    loop f in [0..4):
+        step = 0
+        if f == 0: step = 1
+        if f == 2: step = -1
+        ox = f * T
+        loop y in [2..10):
+            loop x in [5..11): set(img, ox + x, y, rgb(0.75, 0.78, 0.85))    # helmet and body
+        loop x in [6..10): set(img, ox + x, 5, rgb(0.1, 0.1, 0.15))           # the visor
+        loop x in [4..12): set(img, ox + x, 10, rgb(0.6, 0.2, 0.25))          # a red belt
+        loop y in [11..15):
+            set(img, ox + 6 + step, y, rgb(0.4, 0.4, 0.5))                      # legs
+            set(img, ox + 9 - step, y, rgb(0.4, 0.4, 0.5))
+    texture(img, false)
+
+tiles = tileset(make_tiles(), T, T)
+COIN = 3
+# three layers: the floor everywhere, the walls, and the coins (in tile_layer, a character's place
+# in the string is its tile number: '_' never appears in the map, so "_#" makes '#' tile 2)
+floor_rows = replace(replace(DUNGEON, "#", "."), "o", ".")
+level = tilemap(tiles, [tile_layer("floor", floor_rows, "."), tile_layer("walls", DUNGEON, "_#"), tile_layer("coins", DUNGEON, "__o")])
+knight = sprite_sheet(make_knight(), T, T)
+walk = animation(0, 3, 8.0)
+
+box = Rect(2.5 * f32(T), 1.5 * f32(T), 10, 6)   # the knight's feet (what bumps into walls)
+facing_left = false
+walked = 0.0                            # seconds spent walking (for the animation)
+coins = 0
+
+update = (dt: f64):
+    d = input_axis() * f32(SPEED * dt)
+    m = tilemap_move(level, 1, box, d)
+    box = m.rect
+    if d.x != 0.0 or d.y != 0.0: walked += dt
+    if d.x < 0.0: facing_left = true
+    if d.x > 0.0: facing_left = false
+    # a coin under the knight's feet
+    feet = center(box)
+    if tile_at(level, 2, feet) == COIN:
+        set_tile(level, 2, int(feet.x) / T, int(feet.y) / T, 0)
+        coins += 1
+        play(sfx_coin(), 0.4)
+
+draw = ():
+    clear(rgb(0.05, 0.04, 0.07))
+    feet = center(box)
+    camera2d(feet, 4.0)                 # 4 x zoom, following the knight
+    draw_tilemap(level)
+    frame = 1                           # standing still: legs together
+    if walked > 0.0 and input_axis() != vec2(0, 0): frame = anim_frame(walk, walked)
+    draw_frame(knight, frame, feet - vec2(0, 5), 1.0, flip_x = facing_left)
+    reset_transform()
+    text("coins {coins}", vec2(20, 16), 28)
+
+window("Tiles", 1280, 720)

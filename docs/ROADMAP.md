@@ -84,12 +84,15 @@ Left:
 ## 5. Game library gaps (L, in pieces, as the game needs them)
 
 Already there: a 2D camera, AABB/circle collision helpers, particles, a sun with shadows,
-instancing, SDF text with a built-in font. Missing:
-- Assets: OGG Vorbis (music), TTF/OTF fonts (into the SDF atlas), sprite sheets/atlases, JPEG,
-  glTF 2.0 meshes (skinning later).
-- 2D: sprite animation, tilemaps (Tiled import), swept collision, tweening, camera follow/shake.
+instancing, SDF text with a built-in font, menus (ui.jo). Done: sprite sheets and animations
+(grids, or Aseprite's JSON with its tags), tilemaps (from text, or Tiled's JSON with groups,
+objects and compressed layers) with drawing of what is on screen and box movement that stops at
+tiles (examples/tiles.jo), JSON (parse_json/to_json), base64. Missing:
+- Assets: OGG Vorbis (music), TTF/OTF fonts (into the SDF atlas), JPEG, glTF 2.0 meshes
+  (skinning later), Tiled's external tilesets (.tsj; embedded ones work).
+- 2D: slopes and one-way platforms in tilemaps, tweening, camera follow/shake helpers.
 - 3D: free/orbit camera controllers, frustum culling, skyboxes.
-- Immediate-mode UI for menus and debug panels.
+- Debug panels (ui.jo has menus).
 - Networking (UDP; WebSocket/WebRTC on the web) — later.
 
 ## 6. Everyday tools (M)

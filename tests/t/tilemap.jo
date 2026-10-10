@@ -1,0 +1,50 @@
+# requires: sloppy
+# tile layers from text, tile lookups, moving boxes through a map, sprite sheets and animations,
+# Aseprite and Tiled JSON, base64 (no window: a texture here is only its size)
+tex = Texture(0, 64, 32)
+ts = tileset(tex, 16, 16)
+print(ts.columns, ts.count)
+WALLS = "
+#......#
+#..==..#
+#......#
+########
+"
+level = tilemap(ts, [tile_layer("walls", WALLS, "#=")])
+print(level.width, level.height, tile_at(level, 0, 0, 0), tile_at(level, 0, 3, 1), tile_at(level, 0, 1, 1), tile_at(level, 0, vec2(40, 20)))
+box = Rect(20, 30, 10, 10)
+# fall onto the floor (top of row 3 is at y=48) and hit the platform from below? first: fall
+m = tilemap_move(level, 0, box, vec2(0, 100))
+print(m.rect.y, m.hit_y)
+m = tilemap_move(level, 0, m.rect, vec2(-100, 0))
+print(m.rect.x, m.hit_x)
+m = tilemap_move(level, 0, m.rect, vec2(200, 0))
+print(m.rect.x, m.hit_x)
+up = tilemap_move(level, 0, Rect(36, 40, 10, 6), vec2(0, -30))
+print(up.rect.y, up.hit_y)
+print(tilemap_hits(level, 0, Rect(16, 0, 16, 16)), tilemap_hits(level, 0, Rect(17, 17, 10, 10)))
+sheet = sprite_sheet(tex, 16, 16)
+print(sheet.frames.len(), sheet.frames[5])
+walk = animation(4, 7, 10.0)
+print(anim_frame(walk, 0.0), anim_frame(walk, 0.25), anim_frame(walk, 0.45), anim_length(walk))
+once = animation([1, 2], 2.0, false)
+print(anim_frame(once, 5.0), anim_done(once, 0.9), anim_done(once, 1.0))
+ase = "\{\"frames\": \{\"a 0\": \{\"frame\": \{\"x\":0,\"y\":0,\"w\":16,\"h\":16}, \"duration\": 100}, \"a 1\": \{\"frame\": \{\"x\":16,\"y\":0,\"w\":16,\"h\":16}, \"duration\": 200}, \"a 2\": \{\"frame\": \{\"x\":32,\"y\":0,\"w\":16,\"h\":16}, \"duration\": 300} },
+ \"meta\": \{\"frameTags\": [\{\"name\": \"run\", \"from\": 0, \"to\": 2, \"direction\": \"pingpong\"}, \{\"name\": \"back\", \"from\": 1, \"to\": 2, \"direction\": \"reverse\"}]} }"
+s = load_aseprite(tex, ase)
+if s is JsonError: print(s.message)
+else:
+    print(s.frames.len(), s.anims["run"].frames, s.anims["run"].durations, s.anims["back"].frames)
+TILED = "\{\"width\":3,\"height\":2,\"tilewidth\":16,\"tileheight\":16,\"orientation\":\"orthogonal\",\"infinite\":false,
+\"tilesets\":[\{\"firstgid\":1,\"columns\":4,\"tilewidth\":16,\"tileheight\":16,\"tilecount\":8,\"image\":\"t.png\"}],
+\"layers\":[\{\"type\":\"tilelayer\",\"name\":\"ground\",\"width\":3,\"height\":2,\"data\":[1,0,2,3,3,2147483651]},
+ \{\"type\":\"group\",\"name\":\"g\",\"layers\":[\{\"type\":\"tilelayer\",\"name\":\"b64\",\"width\":3,\"height\":2,\"encoding\":\"base64\",\"data\":\"AQAAAAAAAAACAAAAAwAAAAMAAAADAAAA\"}]},
+ \{\"type\":\"objectgroup\",\"name\":\"things\",\"objects\":[\{\"name\":\"start\",\"type\":\"spawn\",\"x\":8,\"y\":20,\"width\":0,\"height\":0,\"point\":true,\"properties\":[\{\"name\":\"hp\",\"type\":\"int\",\"value\":3},\{\"name\":\"boss\",\"type\":\"bool\",\"value\":true}]}]}]}"
+t = load_tiled(TILED, [tex])
+if t is JsonError: print(t.message)
+else:
+    print(t.width, t.height, t.layers.len(), t.layers[0].tiles, tile_at(t, 0, 2, 1), t.layers[1].name, t.layers[1].tiles)
+    print(t.objects[0].name, t.objects[0].kind, t.objects[0].layer, t.objects[0].rect.x, t.objects[0].props)
+bad = load_tiled("\{\"tilesets\":[\{\"firstgid\":1,\"source\":\"x.tsj\"}]}", [tex])
+if bad is JsonError: print(bad.message)
+print(base64_encode([u8(1), 2, 3, 250]), base64_decode("AQID+g==")!, base64_decode("@@") == none)

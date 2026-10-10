@@ -210,12 +210,50 @@ chars = (s: str) -> int[]    # unicode code points of s
 hash = (s: str) -> u64
 ```
 
-## Parallelism and numeric arrays
+## Data (JSON, base64, saving), parallelism and numeric arrays
+
+### base64.jo
+
+Base64: bytes as text (A-Z a-z 0-9 + /, padded with =), and back.  
+
+```gdscript
+base64_encode = (b: u8[]) -> str
+base64_decode = (s: str) -> u8[]?    # the bytes, or none if s is not base64 (spaces and line breaks in it are skipped)
+```
+
+### json.jo
+
+JSON: parse_json reads text into a Json value (or a JsonError saying where it is wrong), and  
+to_json writes one. Reading: get (a field), at (an element) and the as_* functions all take a  
+Json? and give an optional, so they chain, and a missing piece anywhere gives none:  
+
+```gdscript
+j = parse_json(text)
+if j is JsonError: return j
+width = j.get("width").as_int() ?? 0
+name = j.get("layers").at(0).get("name").as_str() ?? "?"
+loop l in j.get("layers").as_list(): print(l.get("name").as_str() ?? "")
+```
+
+```gdscript
+enum Json: null_, boolean(b: bool), number(n: f64), text(s: str), list(items: Json[]), object(keys: str[], values: Json[])
+struct JsonError
+parse_json = (s: str) -> Json | JsonError
+get = (j: Json?, key: str) -> Json?    # an object's field
+at = (j: Json?, i: int) -> Json?    # a list's element
+as_num = (j: Json?) -> f64?
+as_int = (j: Json?) -> int?
+as_str = (j: Json?) -> str?
+as_bool = (j: Json?) -> bool?
+as_list = (j: Json?) -> Json[]    # a list's elements (none: an empty array)
+keys = (j: Json?) -> str[]    # an object's field names, in order
+is_null = (j: Json?) -> bool
+to_json = (j: Json, indent: int = 0) -> str    # JSON text for a value (indent > 0: on several lines, indented by that many spaces)
+```
 
 ### nd.jo
 
 Arrays for numeric work, in the spirit of numpy and MATLAB.  
-  
 T[,] is an n-dimensional array (NDArray[T]): its elements in row-major order, and its shape.  
 How many dimensions it has is part of the value, as in numpy (T[,,] is the same type; the  
 commas are only for the reader). Write a 2-D one as [1 2; 3 4] (rows separated by ';' or line  
@@ -224,7 +262,6 @@ m[i, j] (with as many indexes as dimensions) reads and writes an element; m.shap
 Ranges select parts: m[i, ..] is row i, m[.., j] column j, m[1..2, 0..] a block (ranges include  
 both ends; missing indexes at the end mean whole axes). A part is an array of its own; assigning  
 to one (m[.., 0] = xs, m[0, ..] = 0.0) writes into m.  
-  
 The dotted operators work element by element on arrays of any shape, and broadcast like numpy  
 (a dimension of length 1, or a missing leading one, stretches to fit): a .* b, m .+ 1.0, v .^ 2,  
 xs .< 0.5, and f.(xs) applies f to each element. A whole dotted expression runs as one loop.  
@@ -297,10 +334,12 @@ norm = (a: f64[]) -> f64
 ### save.jo
 
 Data a program keeps between runs: saved games, settings, high scores.  
-  
-save_data("progress", "{level}\n{coins}")  
-if let s = load_data("progress"): ...  
-  
+
+```gdscript
+save_data("progress", "{level}\n{coins}")
+if let s = load_data("progress"): ...
+```
+
 Each program has its own place, named after it (PROGRAM_NAME: the build block's `name`, else  
 the main file's name): on Linux ~/.local/share/<name>/ (or $XDG_DATA_HOME), on Windows  
 %APPDATA%\<name>\, in a web page the browser's storage for the page (it survives reloads and  
@@ -315,11 +354,13 @@ load_data = (name: str) -> str?    # what was kept under name; none if nothing w
 ### thread.jo
 
 Data parallelism on a pool of worker threads (fork-join).  
-  
-squares = parallel_map(nums, (x): x * x)  
-parallel_update(particles, (p): step(p, dt))      # xs[i] = f(xs[i]), in place  
-rows = parallel_range(height, (y): render_row(y))  
-  
+
+```gdscript
+squares = parallel_map(nums, (x): x * x)
+parallel_update(particles, (p): step(p, dt))      # xs[i] = f(xs[i]), in place
+rows = parallel_range(height, (y): render_row(y))
+```
+
 The function runs on several threads at once: it may read anything, but it must not change  
 globals or the variables it captured (that would be a data race); return results instead.  
 On the web target everything runs on the calling thread.  
@@ -375,7 +416,6 @@ load_wav = (file: u8[]) -> Sound    # a WAV file's sound: integer samples of 8, 
 ### dl.jo
 
 Loading system shared libraries (GPU drivers) from a fully static executable.  
-  
 The program has no dynamic loader of its own. To call into libEGL/libGL we start the  
 system's ld.so inside our process: we map it, hand it a tiny in-memory "main program"  
 that depends on libc and imports dlopen/dlsym, let it initialize libc, and when it jumps  
@@ -497,10 +537,12 @@ custom_mesh = (vertices: Vertex3D[], indices: u32[] = []) -> Mesh    # custom me
 ### gamepad.jo
 
 Gamepads: the first connected controller, with a standard layout (Xbox-style names).  
-  
-if gamepad_pressed(.a): jump()  
-move = left_stick()                # vec2 in -1..1, y down, with a dead zone  
-  
+
+```gdscript
+if gamepad_pressed(.a): jump()
+move = left_stick()                # vec2 in -1..1, y down, with a dead zone
+```
+
 input_axis() also follows the left stick and the d-pad, so keyboard games work with a pad.  
 Linux builds read the joystick device (/dev/input/js0), Windows builds XInput, web builds the  
 browser's Gamepad API.  
@@ -688,16 +730,18 @@ glCheckFramebufferStatus = (target: u32) -> u32
 ### gpu.jo
 
 GPU programs written in Sloppy: meshes, shaders and uniform binding.  
-  
-struct Vertex: pos: vec3; color: vec4          -> vertex attributes  
-struct Params: mvp: mat4                        -> uniforms  
-struct Out:    pos: vec4; color: vec4           -> first field is the clip position  
-vs = (v: Vertex, u: Params) -> Out: Out(u.mvp * vec4(v.pos, 1), v.color)  
-fs = (i: Out, u: Params) -> vec4: i.color  
-prog = make_shader(shader(vs, fs))  
-m = mesh(vertices)  
-draw(prog, m, Params(mvp))  
-  
+
+```gdscript
+struct Vertex: pos: vec3; color: vec4          -> vertex attributes
+struct Params: mvp: mat4                        -> uniforms
+struct Out:    pos: vec4; color: vec4           -> first field is the clip position
+vs = (v: Vertex, u: Params) -> Out: Out(u.mvp * vec4(v.pos, 1), v.color)
+fs = (i: Out, u: Params) -> vec4: i.color
+prog = make_shader(shader(vs, fs))
+m = mesh(vertices)
+draw(prog, m, Params(mvp))
+```
+
 Uniform fields are numbers, vectors, mat4 and Texture, or fixed-size arrays of them  
 (`bones: mat4[64]`, `lights: vec4[8]`). Shader code can use fixed-size arrays, `loop` over  
 them, and sample(), sample_lod(), texel(), texture_size(), discard() (fragment) and  
@@ -732,12 +776,14 @@ step = (edge: f32, x: f32) -> f32
 ### gpuarray.jo
 
 GPU arrays: numbers kept in GPU memory and computed on by GPU programs.  
-  
-g = gpu(xs)                       # upload (up to 4 dimensions)  
-h = g .* 2.0 .+ sin.(g)           # one GPU program, made from the expression at compile time  
-ys = cpu(h)                       # download: an array of the same shape  
-total = sum(h)                    # reductions run on the GPU too  
-  
+
+```gdscript
+g = gpu(xs)                       # upload (up to 4 dimensions)
+h = g .* 2.0 .+ sin.(g)           # one GPU program, made from the expression at compile time
+ys = cpu(h)                       # download: an array of the same shape
+total = sum(h)                    # reductions run on the GPU too
+```
+
 Values are f32, or i32 for arrays made from integers (gpu(int_array)): integer arithmetic  
 keeps integer semantics (7 / 2 is 3), and mixing with floats gives floats. A dotted expression  
 whose arrays are GPU arrays runs on the GPU as one fragment program (the functions applied with  
@@ -746,7 +792,6 @@ uniforms). Shapes broadcast as on the CPU. Native programs use OpenGL ES (withou
 through a windowless EGL context), web builds WebGL 2. Where neither can render to float  
 textures (no driver, SLOPPY_SOFTWARE=1, an old browser, node) the same expressions run on the CPU,  
 so programs work everywhere; gpu_available() tells which.  
-  
 Textures hold four values per texel (RGBA), as wide as the GPU allows: up to about a billion  
 values on a typical desktop GPU (64 million where textures are at most 4096 wide).  
 
@@ -797,28 +842,29 @@ screenshot = () -> Image    # read the current framebuffer into an image
 ### screen.jo
 
 How a game's picture fits windows of any size and shape.  
-  
 A game is drawn in 2D units: the size given to window() (its design size), so the same  
 coordinates work in any window. Two settings decide how that maps to the window's pixels:  
-  
-screen_fit(mode): what a window of another shape shows  
-.expand     the design area, scaled to fit, and more around it (the default: no bars,  
-nothing cut; visible_rect() says what is shown)  
-.letterbox  just the design area, scaled to fit, with bars (letterbox_color) around it  
-.crop       the design area scaled to fill the window: what does not fit is cut off  
-.stretch    the design area stretched to the window (shapes distort)  
-.native     no scaling: one 2D unit is one pixel of the window (screen_size() is its size)  
-  
-render_resolution(w, h): draw at a fixed resolution, scaled up to the window, by default  
-with sharp pixels (nearest) and in whole steps (2x, 3x...); 2D units stay the design size  
-(give both the same shape). The picture letterboxes (or crops/stretches with those  
-fits). render_resolution(0, 0) goes back to the window's resolution.  
-pixel_art(): render_resolution at the design size: for a game designed at 320 x 180, one  
-2D unit is one sharp pixel. (A window for a design that small opens a whole number of  
-times larger.)  
-render_scale(s): draw at a fraction of the window's pixels (0.5: a quarter of them), scaled  
-up smoothly: faster where pixels cost (3D, the software renderer).  
-  
+
+```gdscript
+screen_fit(mode): what a window of another shape shows
+    .expand     the design area, scaled to fit, and more around it (the default: no bars,
+                nothing cut; visible_rect() says what is shown)
+    .letterbox  just the design area, scaled to fit, with bars (letterbox_color) around it
+    .crop       the design area scaled to fill the window: what does not fit is cut off
+    .stretch    the design area stretched to the window (shapes distort)
+    .native     no scaling: one 2D unit is one pixel of the window (screen_size() is its size)
+
+render_resolution(w, h): draw at a fixed resolution, scaled up to the window, by default
+    with sharp pixels (nearest) and in whole steps (2x, 3x...); 2D units stay the design size
+    (give both the same shape). The picture letterboxes (or crops/stretches with those
+    fits). render_resolution(0, 0) goes back to the window's resolution.
+pixel_art(): render_resolution at the design size: for a game designed at 320 x 180, one
+    2D unit is one sharp pixel. (A window for a design that small opens a whole number of
+    times larger.)
+render_scale(s): draw at a fraction of the window's pixels (0.5: a quarter of them), scaled
+    up smoothly: faster where pixels cost (3D, the software renderer).
+```
+
 Drawing that needs it goes to an offscreen canvas, put on the window when the frame ends; the  
 mouse is mapped back the same way (mouse_pos() is in 2D units).  
 
@@ -871,6 +917,34 @@ sgl_create_program = () -> int
 sgl_read_pixels = (x: int, y: int, w: int, h: int, out: *u8)    # read the window (or bound target) as RGBA bytes, bottom row first, scaled to w x h
 ```
 
+### sprites.jo
+
+Sprite sheets and animations. A sheet is a texture cut into frames: a grid of equal frames  
+(sprite_sheet), or the frames and animations Aseprite exports (load_aseprite: File > Export  
+Sprite Sheet with "JSON Data" on; each tag becomes an animation). Pixel art wants its texture  
+loaded unsmoothed: load_texture(file, false).  
+
+```gdscript
+hero = sprite_sheet(load_texture(embed("hero.png"), false), 32, 32)
+walk = animation(4, 7, 10.0)                    # frames 4 to 7, ten a second
+draw = ():
+    draw_anim(hero, walk, elapsed(), pos, 3.0)  # three times as big
+```
+
+```gdscript
+struct Animation
+struct SpriteSheet
+sprite_sheet = (t: Texture, frame_w: int, frame_h: int, count: int = 0, spacing: int = 0, margin: int = 0) -> SpriteSheet    # a sheet of equal frames in a grid, numbered from 0 left to right, then down (count: how many there are, if the last row is not full; spacing: pixels between frames; margin: around them)
+animation = (frames: int[], fps: f64 = 10.0, looping: bool = true) -> Animation    # an animation through these frames, `fps` a second
+animation = (first: int, last: int, fps: f64 = 10.0, looping: bool = true) -> Animation    # frames first..last (inclusive)
+anim_length = (a: Animation) -> f64    # how long it takes to go through once (seconds)
+anim_frame = (a: Animation, t: f64) -> int    # the frame showing t seconds after it started (a non-looping one stays on its last frame)
+anim_done = (a: Animation, t: f64) -> bool    # has a non-looping animation finished, t seconds after it started?
+draw_frame = (s: SpriteSheet, frame: int, center: vec2, scale: f64 = 1.0, tint: vec4 = vec4(1, 1, 1, 1), angle: f64 = 0.0, flip_x: bool = false, flip_y: bool = false)    # frame i of the sheet, centered at `center` (scale: its size times this; flip_x: mirrored, to face the other way)
+draw_anim = (s: SpriteSheet, a: Animation, t: f64, center: vec2, scale: f64 = 1.0, tint: vec4 = vec4(1, 1, 1, 1), angle: f64 = 0.0, flip_x: bool = false, flip_y: bool = false)    # the frame an animation shows t seconds after it started
+load_aseprite = (t: Texture, json: str) -> SpriteSheet | JsonError    # a sheet from Aseprite's export: its texture, and the JSON it wrote beside it (as an array or a hash of frames). Tags become animations (forward, reverse or ping-pong), with each frame's own duration.
+```
+
 ### stats.jo
 
 A frame statistics overlay: frame times as a graph, CPU time, time handing frames to the  
@@ -882,21 +956,59 @@ numbers every two seconds instead, and each long frame as it happens.
 show_stats = (on: bool = true)
 ```
 
+### tilemap.jo
+
+Tilemaps: layers of tiles drawn from a tileset image. Make one from text (tile_layer: each  
+character is a tile), or load a map made in Tiled (load_tiled: a .tmj/.json map). Draw it with  
+draw_tilemap, and move boxes through it with tilemap_move, which stops them at solid tiles.  
+
+```gdscript
+tiles = tileset(load_texture(embed("tiles.png"), false), 16, 16)
+level = tilemap(tiles, [tile_layer("walls", WALLS, "#=")])     # '#': tile 1, '=': tile 2
+update = (dt: f64):
+    m = tilemap_move(level, 0, box, vel * f32(dt))
+    box = m.rect
+    if m.hit_y: vel.y = 0.0
+draw = (): draw_tilemap(level)
+```
+
+```gdscript
+struct Tileset
+struct TileLayer
+struct MapObject    # an object placed in Tiled (an object layer's): a spawn point, a door, a coin...
+struct Tilemap
+struct TileMove
+tileset = (t: Texture, tile_w: int, tile_h: int, spacing: int = 0, margin: int = 0) -> Tileset    # a tileset: an image of equal tiles in a grid, numbered from `first` (1) left to right, then down
+tile_layer = (name: str, rows: str, chars: str) -> TileLayer    # a layer from rows of text: the character at position i of `chars` is tile i + 1, and any other character (a space, a dot) is no tile; a character the rows never use skips a number ("_#": '#' is tile 2). Blank lines at the start and the end are left out.
+tilemap = (ts: Tileset, layers: TileLayer[]) -> Tilemap    # a map of these layers, drawn with one tileset
+layer_index = (m: Tilemap, name: str) -> int    # the index of the layer with this name (-1: none)
+tile_at = (m: Tilemap, layer: int, x: int, y: int) -> int    # the tile at column x, row y of a layer (0 outside the map)
+tile_at = (m: Tilemap, layer: int, p: vec2) -> int    # the tile under a point (in pixels)
+set_tile = (m: mut Tilemap, layer: int, x: int, y: int, id: int)
+tilemap_size = (m: Tilemap) -> vec2    # the map's size in pixels
+draw_tilemap = (m: Tilemap, layer: int = -1, at: vec2 = vec2(0, 0), tint: vec4 = vec4(1, 1, 1, 1))    # draw a layer (-1: every visible layer, bottom first), with the map's top left corner at `at`. Only the tiles on the screen are drawn, wherever the camera is.
+tilemap_hits = (m: Tilemap, layer: int, r: Rect) -> bool    # does a box (in pixels) touch a tile of the layer?
+tilemap_move = (m: Tilemap, layer: int, r: Rect, d: vec2) -> TileMove    # move a box by d, stopping it against the layer's tiles (every tile in the layer is solid): sideways first, then up or down, so it slides along walls and floors. However far it moves in one step, it does not pass through a tile.
+load_tiled = (json: str, textures: Texture[]) -> Tilemap | JsonError    # a map saved by Tiled as JSON (.tmj), with its tilesets embedded in it (Tiled: in the Tilesets view, "Embed Tileset"), and a texture for each tileset, in the map's order. Tile layers (also inside groups) become layers, object layers become `objects`. Layer data can be plain, or base64 (uncompressed, zlib or gzip).
+```
+
 ### ui.jo
 
 Menus: a column of buttons, sliders and switches, worked with the keyboard, a gamepad or the  
 mouse. Immediate mode: describe the menu every frame (in draw), and each item says what was  
 done to it then.  
-  
-draw = ():  
-...  
-ui_begin("title", vec2(640, 320))  
-if ui_button("Play"): start()  
-music = ui_slider("Music", music)  
-fullscreen = ui_switch("Fullscreen", fullscreen)  
-if ui_button("Quit"): quit()  
-ui_end()  
-  
+
+```gdscript
+draw = ():
+    ...
+    ui_begin("title", vec2(640, 320))
+    if ui_button("Play"): start()
+    music = ui_slider("Music", music)
+    fullscreen = ui_switch("Fullscreen", fullscreen)
+    if ui_button("Quit"): quit()
+    ui_end()
+```
+
 Up/down (arrows, W/S, d-pad, left stick) move between items, enter/space/A or a click choose,  
 left/right change sliders and switches; ui_back() is true when escape or B was pressed.  
 A menu ignores input in the frame it opens (the key that opened it is still pressed then);  
