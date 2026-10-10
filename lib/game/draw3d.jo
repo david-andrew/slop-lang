@@ -238,6 +238,7 @@ __scene_rt = RenderTarget(Texture(0, 0, 0), 0, 0)
 __bloom_a = RenderTarget(Texture(0, 0, 0), 0, 0)
 __bloom_b = RenderTarget(Texture(0, 0, 0), 0, 0)
 __post_active = false
+__drawn3d = 0                   # (draws made in the last frame's lit pass: a test sees culling)
 
 __3d_init = ():
     if __3d_ready: return
@@ -365,8 +366,10 @@ __render3d = ():
         glDepthFunc(GL_LEQUAL)
         glDisable(GL_BLEND)
         glColorMask(0, 0, 0, 0)
+        sv = __frustum(__shadow_vp)
         loop mut d in __draws:
             if not d.shadow or d.has_custom: continue
+            if not __in_view(d, sv): continue
             p = __params(d, vp)
             p.shadow_map = Texture(0, 1, 1)          # never sample the target being rendered
             if d.instanced: draw_instanced(__shadow_sh_inst, d.mesh, d.instances, p)
@@ -380,6 +383,8 @@ __render3d = ():
     glEnable(GL_CULL_FACE)
     glCullFace(GL_BACK)
     glDisable(GL_BLEND)
+    view = __frustum(vp)
+    __drawn3d = 0
     loop mut d in __draws:
         if d.has_custom:
             if d.color.w < 1.0: continue
@@ -388,7 +393,8 @@ __render3d = ():
             glEnable(GL_CULL_FACE)
             glDisable(GL_BLEND)
             continue
-        if d.color.w < 1.0: continue
+        if d.color.w < 1.0 or not __in_view(d, view): continue
+        __drawn3d += 1
         p = __params(d, vp)
         if d.instanced: draw_instanced(__lit_inst, d.mesh, d.instances, p)
         else: draw(__lit, d.mesh, p)
@@ -411,6 +417,7 @@ __render3d = ():
             glDepthMask(0)
             glDisable(GL_CULL_FACE)
             continue
+        if not __in_view(d, view): continue
         p = __params(d, vp)
         if d.instanced: draw_instanced(__lit_inst, d.mesh, d.instances, p)
         else: draw(__lit, d.mesh, p)
@@ -420,6 +427,31 @@ __render3d = ():
     __draws.clear()
 
 __rebind_target = (): __bind_current()
+
+# the six planes of what m (a view-projection) shows: (normal, distance) as vec4, inside >= 0
+__frustum = (m: mat4) -> vec4[]:
+    row = (i: int) -> vec4: vec4(m[0][i], m[1][i], m[2][i], m[3][i])
+    r0 = row(0)
+    r1 = row(1)
+    r2 = row(2)
+    r3 = row(3)
+    out: vec4[]
+    loop p in [r3 + r0, r3 - r0, r3 + r1, r3 - r1, r3 + r2, r3 - r2]:
+        l = length(p.xyz)
+        if l > 0.0: out.push(p * (1.0 / l))
+        else: out.push(p)
+    out
+
+# whether a draw may be seen: its mesh's sphere, placed by its transform, not wholly outside
+# (instanced draws and meshes without a sphere: always)
+__in_view = (d: Draw3D, planes: vec4[]) -> bool:
+    if d.instanced or d.mesh.radius < 0.0: return true
+    c = (d.model * vec4(d.mesh.center, 1)).xyz
+    s = max(length(d.model[0].xyz), max(length(d.model[1].xyz), length(d.model[2].xyz)))
+    r = d.mesh.radius * s
+    loop p in planes:
+        if dot(p.xyz, c) + p.w < -r: return false
+    true
 
 __depth_target = (size: int) -> RenderTarget:
     id = gl_create_texture()
@@ -487,6 +519,21 @@ __post_end = ():
     __post_active = false
 
 # ---------------- mesh generators ----------------
+# a mesh of 3D vertices, with the sphere around them (draws outside the view are left out)
+__mesh3d = (vs: Vertex3D[], idx: u32[] = []) -> Mesh:
+    m = mesh(vs, idx)
+    if vs.len() == 0: return m
+    lo = vs[0].pos
+    hi = vs[0].pos
+    loop v in vs:
+        lo = min(lo, v.pos)
+        hi = max(hi, v.pos)
+    m.center = (lo + hi) * 0.5
+    r = 0.0
+    loop v in vs: r = max(r, f64(length(v.pos - m.center)))
+    m.radius = f32(r)
+    m
+
 __v3 = (p: vec3, n: vec3, uv: vec2) -> Vertex3D: Vertex3D(p, n, uv, vec4(1, 1, 1, 1))
 
 cube_mesh = (size: f64 = 1.0) -> Mesh:
@@ -501,7 +548,7 @@ cube_mesh = (size: f64 = 1.0) -> Mesh:
         c = [n + up - side, n - up - side, n - up + side, n + up + side]
         uvs = [vec2(0, 0), vec2(0, 1), vec2(1, 1), vec2(1, 0)]
         loop k in [0, 1, 2, 0, 2, 3]: vs.push(__v3(c[k] * s, n, uvs[k]))
-    mesh(vs)
+    __mesh3d(vs)
 
 sphere_mesh = (radius: f64 = 0.5, segments: int = 32, rings: int = 16) -> Mesh:
     vs: Vertex3D[]
@@ -522,7 +569,7 @@ sphere_mesh = (radius: f64 = 0.5, segments: int = 32, rings: int = 16) -> Mesh:
             idx.push(a + 1)
             idx.push(b + 1)
             idx.push(b)
-    mesh(vs, idx)
+    __mesh3d(vs, idx)
 
 # a flat grid in the XZ plane; `height` gives the terrain elevation at (x, z)
 terrain_mesh = (size: f64, divisions: int, height: (f64, f64) -> f64, color: (f64, f64, f64) -> vec4) -> Mesh:
@@ -551,7 +598,7 @@ terrain_mesh = (size: f64, divisions: int, height: (f64, f64) -> f64, color: (f6
             idx.push(a + 1)
             idx.push(b)
             idx.push(b + 1)
-    mesh(vs, idx)
+    __mesh3d(vs, idx)
 
 plane_mesh = (size: f64 = 10.0) -> Mesh:
     terrain_mesh(size, 1, (x: f64, z: f64): 0.0, (x: f64, y: f64, z: f64): vec4(1, 1, 1, 1))
@@ -587,9 +634,9 @@ cylinder_mesh = (radius: f64 = 0.5, height: f64 = 1.0, segments: int = 24, top_r
         vs.push(__v3(vec3(0, 0, 0), dn, vec2(0.5, 0.5)))
         vs.push(__v3(b0, dn, vec2(0.5, 0.5)))
         vs.push(__v3(b1, dn, vec2(0.5, 0.5)))
-    mesh(vs)
+    __mesh3d(vs)
 
 cone_mesh = (radius: f64 = 0.5, height: f64 = 1.0, segments: int = 24) -> Mesh: cylinder_mesh(radius, height, segments, 0.0)
 
 # custom mesh from vertex/index arrays
-custom_mesh = (vertices: Vertex3D[], indices: u32[] = []) -> Mesh: mesh(vertices, indices)
+custom_mesh = (vertices: Vertex3D[], indices: u32[] = []) -> Mesh: __mesh3d(vertices, indices)

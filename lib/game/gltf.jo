@@ -54,7 +54,7 @@ model = (d: ModelData) -> Model:
     loop md in d.meshes:
         tex = Texture(0, 0, 0)
         if md.image >= 0: tex = texs[md.image]
-        m.parts.push(ModelPart(mesh(md.vertices, md.indices), md.transform, md.color, tex, md.emissive))
+        m.parts.push(ModelPart(__mesh3d(md.vertices, md.indices), md.transform, md.color, tex, md.emissive))
     m
 
 # draw each part (see draw_mesh), the model placed by transform and its colors times tint

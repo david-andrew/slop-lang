@@ -102,7 +102,9 @@ tiles (examples/tiles.jo), JSON (parse_json/to_json), base64. Missing:
   colors; checked on Khronos' sample models). Left: glTF skins and animations, PBR materials
   (metal, roughness, normal maps), Tiled's external tilesets (.tsj; embedded ones work).
 - 2D: slopes and one-way platforms in tilemaps, tweening, camera follow/shake helpers.
-- 3D: done: orbit and fly cameras (lib/game/camera3d.jo). Left: frustum culling, skyboxes.
+- 3D: done: orbit and fly cameras (lib/game/camera3d.jo), frustum culling (a mesh's bounding
+  sphere: draws the camera or the sun's shadow cannot see are left out). Left: skyboxes, culling
+  instances one by one.
 - Input:
   - Done: controls players can change (lib/game/controls.jo): the game names its actions with
     their default keys, buttons and stick directions and asks for them (`action_pressed`,

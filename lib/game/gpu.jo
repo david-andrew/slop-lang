@@ -55,6 +55,8 @@ struct Mesh:
     mode: int
     instance_vbo: int
     instances: int
+    center: vec3                # a sphere around the vertices (radius < 0: not known), for
+    radius: f32 = -1.0          # leaving out what the camera cannot see (draw3d.jo)
 
 make_shader = (src: ShaderSource) -> Shader:
     __gfx_init_gl_only()
