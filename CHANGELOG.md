@@ -16,6 +16,9 @@
 - **JPEG**: `load_jpeg`, and `load_image`/`load_texture` read JPEG as well as PNG (baseline and
   progressive, any color sampling, grayscale, CMYK).
 - 3D draws the camera cannot see are left out (meshes know their bounding sphere).
+- **Paths over a grid** (lib/game/paths.jo): mark cells open or blocked, then `path_step(grid,
+  from, to)` gives the next point to walk to round the walls (and `path_distance`): for enemies
+  in 2D (tiles) or 3D (the ground's x and z).
 - **Point lights** in 3D: `point_light(pos, color, radius)` for a frame (muzzle flashes, glowing
   shots, lamps); up to 8 light a frame, the ones nearest the camera.
 - One mesh from many shapes: `add_box`, `add_cylinder` and `add_sphere` add a shape's vertices

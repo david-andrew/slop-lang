@@ -237,15 +237,13 @@ ray_sphere = (o: vec3, d: vec3, c: vec3, r: f32) -> f32:
     -1
 
 # ---------------- paths ----------------
-# The deck as 1 m cells: a cell is walkable if the ground half a meter round it is about as
-# high as at its middle (so walls keep their distance and drops are left alone). Raiders walk
-# down the distances to their goal.
+# The deck as a grid of 1 m cells (paths.jo): a cell is open if the ground half a meter round
+# it is about as high as at its middle (so walls keep their distance and drops are left alone).
 const GW = 56
 const GH = 44
-cell_y: f32[]
-walkable: bool[]
-cover_cells: int[]              # walkable cells beside something tall enough to hide behind
-fields: {int: int[]} = {}       # distances to a goal cell, by the cell
+grid = path_grid(GW, GH, 1.0, vec2(f32(-HALF_X), f32(-HALF_Z)))
+cell_y: f32[]                   # the ground's height in each cell (by x + z * GW)
+cover_cells: int[]              # open cells beside something tall enough to hide behind
 
 height_at = (x: f32, z: f32) -> f32:
     y: f32 = 0.0
@@ -262,23 +260,24 @@ cell_pos = (c: int) -> vec3: v3(f64(c % GW) + 0.5 - HALF_X, f64(cell_y[c]), f64(
 
 build_paths = ():
     cell_y = fill(f32(0), GW * GH)
-    walkable = fill(false, GW * GH)
     loop c in [0..GW * GH):
         cell_y[c] = height_at(f32(f64(c % GW) + 0.5 - HALF_X), f32(f64(c / GW) + 0.5 - HALF_Z))
     loop c in [0..GW * GH):
         x = c % GW
         z = c / GW
-        if x == 0 or z == 0 or x == GW - 1 or z == GH - 1 or cell_y[c] > 2.5: continue
+        if x == 0 or z == 0 or x == GW - 1 or z == GH - 1 or cell_y[c] > 2.5:
+            set_open(grid, x, z, false)
+            continue
         mid = cell_pos(c)
         ok = true
         loop k in [0..12):
             a = TAU * f64(k) / 12.0
             y = height_at(mid.x + f32(cos(a) * 0.6), mid.z + f32(sin(a) * 0.6))
             if abs(y - cell_y[c]) > 0.6: ok = false
-        walkable[c] = ok
-    # cover: a walkable cell two steps from something tall
+        set_open(grid, x, z, ok)
+    # cover: an open cell two steps from something tall
     loop c in [0..GW * GH):
-        if not walkable[c]: continue
+        if not grid.open[c]: continue
         x = c % GW
         z = c / GW
         loop d in [(2, 0), (-2, 0), (0, 2), (0, -2)]:
@@ -289,76 +288,10 @@ build_paths = ():
                 cover_cells.push(c)
                 break
 
-# the distances (in steps) from every cell to goal, over walkable cells
-field_to = (goal: int) -> int[]:
-    if let f = fields.get(goal): return f
-    if fields.len() > 300: fields.clear()
-    dist = fill(1000000, GW * GH)
-    queue: int[] = [goal]
-    dist[goal] = 0
-    k = 0
-    loop k < queue.len():
-        c = queue[k]
-        k += 1
-        x = c % GW
-        z = c / GW
-        loop d in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]:
-            nx = x + d.0
-            nz = z + d.1
-            if nx < 0 or nz < 0 or nx >= GW or nz >= GH: continue
-            n = nz * GW + nx
-            if not walkable[n] or dist[n] <= dist[c] + 1: continue
-            # (diagonals only where both sides are open)
-            if d.0 != 0 and d.1 != 0 and (not walkable[z * GW + nx] or not walkable[nz * GW + x]): continue
-            dist[n] = dist[c] + 1
-            queue.push(n)
-    fields[goal] = dist
-    dist
-
-# the walkable cell nearest c (c itself if it is), looking up to 4 cells away
-walkable_near = (c: int) -> int:
-    if walkable[c]: return c
-    x = c % GW
-    z = c / GW
-    loop r in [1..5):
-        found = -1
-        fd = 1000
-        loop dz in [-r..r + 1):
-            loop dx in [-r..r + 1):
-                nx = x + dx
-                nz = z + dz
-                if nx < 0 or nz < 0 or nx >= GW or nz >= GH: continue
-                n = nz * GW + nx
-                if walkable[n] and dx * dx + dz * dz < fd:
-                    found = n
-                    fd = dx * dx + dz * dz
-        if found >= 0: return found
-    c
-
-# where to head next on the way from p to goal: the neighbor cell nearest the goal (or the
-# goal itself when it is close). Off the walkable cells (pushed into a corner, or a goal on a
-# crate), the nearest walkable cell stands in.
+# where to head from p on the way to goal
 toward = (p: vec3, goal: vec3) -> vec3:
-    if length(flat(goal - p)) < 2.0: return goal
-    g = walkable_near(cell_of(goal))
-    if not walkable[g]: return goal
-    f = field_to(g)
-    c = cell_of(p)
-    if not walkable[c]:
-        w = walkable_near(c)
-        if w != c: return cell_pos(w)
-    bestc = c
-    x = c % GW
-    z = c / GW
-    loop d in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]:
-        nx = x + d.0
-        nz = z + d.1
-        if nx < 0 or nz < 0 or nx >= GW or nz >= GH: continue
-        n = nz * GW + nx
-        if d.0 != 0 and d.1 != 0 and (not walkable[z * GW + nx] or not walkable[nz * GW + x]): continue
-        if f[n] < f[bestc]: bestc = n
-    if bestc == c: return goal
-    cell_pos(bestc)
+    w = path_step(grid, vec2(p.x, p.z), vec2(goal.x, goal.z))
+    vec3(w.x, p.y, w.y)
 
 # ---------------- sounds ----------------
 quiet = false                   # (no sound: the balance test)
@@ -1074,7 +1007,7 @@ pick_goal = (f: Foe, lo: f64, hi: f64, sight: int, cover: bool, target: vec3 = c
         else:
             p = f.body.pos + v3(random(-12.0, 12.0), 0, random(-12.0, 12.0))
             c = cell_of(p)
-        if not walkable[c]: continue
+        if not grid.open[c]: continue
         cp = cell_pos(c)
         d = f64(length(flat(cp - target)))
         s = -f64(length(flat(cp - f.body.pos))) * 0.3
@@ -2119,7 +2052,7 @@ when TARGET != "wasm":
                 step(autopilot(STEP), STEP)
             if not over:
                 loop f in foes:
-                    if alive(f): print("  left: {f.kind} at {f.body.pos} ({f.mood}, cell walkable {walkable[cell_of(f.body.pos)]}); player at {you.body.pos}")
+                    if alive(f): print("  left: {f.kind} at {f.body.pos} ({f.mood}, cell walkable {grid.open[cell_of(f.body.pos)]}); player at {you.body.pos}")
             pct = 0.0
             if shots > 0: pct = f64(hits) / f64(shots) * 100.0
             print("run {r}: wave {wave}, {int(run_time)} s, score {score}, kills {kills}, accuracy {int(pct)}%, killed by {cause}; damage from skitters {int(damage_by[0])}, wardens {int(damage_by[1])}, lobbers {int(damage_by[2])}")

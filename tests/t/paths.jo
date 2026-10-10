@@ -1,0 +1,26 @@
+# grid paths: path_step walks round walls, path_distance counts the steps
+# requires: sloppy
+g = path_grid(7, 5)
+# a wall down the middle, open only at the bottom row
+loop y in [0..4): set_open(g, 3, y, false)
+print(is_open(g, 3, 2), is_open(g, 3, 4), is_open(g, -1, 0))
+print(path_cell(g, vec2(2.5, 1.2)), cell_center(g, ivec2(2, 1)))
+from = vec2(1.5, 1.5)
+to = vec2(5.5, 1.5)
+print(path_distance(g, from, to))
+# follow the steps
+p = from
+n = 0
+loop length(p - to) > 0.01 and n < 20:
+    p = path_step(g, p, to)
+    print(p)
+    n += 1
+# no way through: a closed wall
+set_open(g, 3, 4, false)
+print(path_distance(g, from, to), path_step(g, from, to))
+# a start inside the wall takes the nearest open cell
+set_open(g, 3, 4, true)
+print(path_step(g, vec2(3.5, 2.5), to), nearest_open(g, ivec2(3, 2)))
+# a grid placed elsewhere, with bigger cells
+h = path_grid(4, 4, 2.0, vec2(-4, -4))
+print(path_cell(h, vec2(-3, 3.9)), cell_center(h, ivec2(0, 3)), path_step(h, vec2(-3, -3), vec2(3, 3)))

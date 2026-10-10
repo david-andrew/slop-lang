@@ -1,0 +1,119 @@
+# Paths over a grid, for enemies finding their way round walls: the grid's cells are open or
+# blocked, and path_step() gives, from anywhere, the next point to walk to on the way to a goal.
+# The steps to each goal are worked out once (a flood over the open cells, eight ways round:
+# diagonally only where both sides are open) and kept until the grid changes.
+#
+#   grid = path_grid(40, 30, 16.0)                  # 40 by 30 cells, 16 units across
+#   set_open(grid, 3, 4, false)                     # a wall there
+#   way = path_step(grid, enemy, player)            # walk toward this
+#
+# Positions are vec2: x and y in a 2D game; on the ground of a 3D one, x and z. origin is
+# where the grid's first cell starts (its corner with the least x and y).
+
+struct PathGrid:
+    width: int
+    height: int
+    cell: f64
+    origin: vec2
+    open: bool[]                # by cell: x + y * width
+    fields: {int: int[]} = {}   # (steps to a goal from every cell, by the goal's cell)
+
+# a grid with every cell open
+path_grid = (width: int, height: int, cell: f64 = 1.0, origin: vec2 = vec2(0, 0)) -> PathGrid:
+    PathGrid(width, height, cell, origin, fill(true, width * height))
+
+set_open = (g: mut PathGrid, x: int, y: int, open: bool):
+    if x < 0 or y < 0 or x >= g.width or y >= g.height: return
+    if g.open[x + y * g.width] == open: return
+    g.open[x + y * g.width] = open
+    g.fields.clear()
+
+# whether a cell is open (outside the grid: no)
+is_open = (g: PathGrid, x: int, y: int) -> bool:
+    if x < 0 or y < 0 or x >= g.width or y >= g.height: return false
+    g.open[x + y * g.width]
+
+# the cell a point is in (kept within the grid), and the middle of a cell
+path_cell = (g: PathGrid, p: vec2) -> ivec2:
+    x = clamp(int(floor(f64(p.x - g.origin.x) / g.cell)), 0, g.width - 1)
+    y = clamp(int(floor(f64(p.y - g.origin.y) / g.cell)), 0, g.height - 1)
+    ivec2(i32(x), i32(y))
+
+cell_center = (g: PathGrid, c: ivec2) -> vec2:
+    g.origin + vec2(f32((f64(c.x) + 0.5) * g.cell), f32((f64(c.y) + 0.5) * g.cell))
+
+# the open cell nearest c, looking up to `reach` cells away (c itself when nothing is open)
+nearest_open = (g: PathGrid, c: ivec2, reach: int = 4) -> ivec2:
+    if is_open(g, int(c.x), int(c.y)): return c
+    loop r in [1..reach + 1):
+        found = c
+        best = 1000000
+        loop dy in [-r..r + 1):
+            loop dx in [-r..r + 1):
+                x = int(c.x) + dx
+                y = int(c.y) + dy
+                if is_open(g, x, y) and dx * dx + dy * dy < best:
+                    found = ivec2(i32(x), i32(y))
+                    best = dx * dx + dy * dy
+        if best < 1000000: return found
+    c
+
+__path_dirs = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+
+# whether a step of (dx, dy) from (x, y) may be taken: to an open cell, and diagonally only
+# past two open sides
+__path_can = (g: PathGrid, x: int, y: int, dx: int, dy: int) -> bool:
+    if not is_open(g, x + dx, y + dy): return false
+    dx == 0 or dy == 0 or (is_open(g, x + dx, y) and is_open(g, x, y + dy))
+
+# steps to the goal cell from every cell (unreachable: a million)
+__path_field = (g: mut PathGrid, goal: int) -> int[]:
+    if let f = g.fields.get(goal): return f
+    if g.fields.len() > 256: g.fields.clear()
+    dist = fill(1000000, g.width * g.height)
+    dist[goal] = 0
+    queue: int[] = [goal]
+    k = 0
+    loop k < queue.len():
+        c = queue[k]
+        k += 1
+        x = c % g.width
+        y = c / g.width
+        loop d in __path_dirs:
+            n = (y + d.1) * g.width + x + d.0
+            if not __path_can(g, x, y, d.0, d.1) or dist[n] <= dist[c] + 1: continue
+            dist[n] = dist[c] + 1
+            queue.push(n)
+    g.fields[goal] = dist
+    dist
+
+# how many steps from one point to another over open cells (-1: there is no way)
+path_distance = (g: mut PathGrid, from: vec2, to: vec2) -> int:
+    goal = nearest_open(g, path_cell(g, to))
+    start = nearest_open(g, path_cell(g, from))
+    f = __path_field(g, int(goal.x) + int(goal.y) * g.width)
+    d = f[int(start.x) + int(start.y) * g.width]
+    if d >= 1000000: return -1
+    d
+
+# Where to head from `from` on the way to `to`: the middle of the next cell, or `to` itself
+# when it is in the same or the next cell (or cannot be reached). Off the open cells (pushed
+# into a corner, or a goal on a crate), the nearest open cell stands in.
+path_step = (g: mut PathGrid, from: vec2, to: vec2) -> vec2:
+    if f64(length(to - from)) < g.cell * 1.5: return to
+    goal = nearest_open(g, path_cell(g, to))
+    if not is_open(g, int(goal.x), int(goal.y)): return to
+    f = __path_field(g, int(goal.x) + int(goal.y) * g.width)
+    c = path_cell(g, from)
+    if not is_open(g, int(c.x), int(c.y)):
+        o = nearest_open(g, c)
+        if o != c: return cell_center(g, o)
+    x = int(c.x)
+    y = int(c.y)
+    best = x + y * g.width
+    loop d in __path_dirs:
+        if not __path_can(g, x, y, d.0, d.1): continue
+        n = (y + d.1) * g.width + x + d.0
+        if f[n] < f[best]: best = n
+    if best == x + y * g.width: return to
+    cell_center(g, ivec2(i32(best % g.width), i32(best / g.width)))

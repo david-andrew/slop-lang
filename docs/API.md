@@ -1003,6 +1003,34 @@ lossless and 12-bit JPEGs (rare): none, as for a damaged file.
 load_jpeg = (file: u8[]) -> Image?    # decode a JPEG file into RGBA pixels; none if it is not one (or one of the kinds not read)
 ```
 
+### paths.jo
+
+Paths over a grid, for enemies finding their way round walls: the grid's cells are open or  
+blocked, and path_step() gives, from anywhere, the next point to walk to on the way to a goal.  
+The steps to each goal are worked out once (a flood over the open cells, eight ways round:  
+diagonally only where both sides are open) and kept until the grid changes.  
+
+```gdscript
+grid = path_grid(40, 30, 16.0)                  # 40 by 30 cells, 16 units across
+set_open(grid, 3, 4, false)                     # a wall there
+way = path_step(grid, enemy, player)            # walk toward this
+```
+
+Positions are vec2: x and y in a 2D game; on the ground of a 3D one, x and z. origin is  
+where the grid's first cell starts (its corner with the least x and y).  
+
+```gdscript
+struct PathGrid
+path_grid = (width: int, height: int, cell: f64 = 1.0, origin: vec2 = vec2(0, 0)) -> PathGrid    # a grid with every cell open
+set_open = (g: mut PathGrid, x: int, y: int, open: bool)
+is_open = (g: PathGrid, x: int, y: int) -> bool    # whether a cell is open (outside the grid: no)
+path_cell = (g: PathGrid, p: vec2) -> ivec2    # the cell a point is in (kept within the grid), and the middle of a cell
+cell_center = (g: PathGrid, c: ivec2) -> vec2
+nearest_open = (g: PathGrid, c: ivec2, reach: int = 4) -> ivec2    # the open cell nearest c, looking up to `reach` cells away (c itself when nothing is open)
+path_distance = (g: mut PathGrid, from: vec2, to: vec2) -> int    # how many steps from one point to another over open cells (-1: there is no way)
+path_step = (g: mut PathGrid, from: vec2, to: vec2) -> vec2    # Where to head from `from` on the way to `to`: the middle of the next cell, or `to` itself when it is in the same or the next cell (or cannot be reached). Off the open cells (pushed into a corner, or a goal on a crate), the nearest open cell stands in.
+```
+
 ### screen.jo
 
 How a game's picture fits windows of any size and shape.  
