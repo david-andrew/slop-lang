@@ -1,0 +1,35 @@
+# requires: sloppy
+# TrueType reading (tests/t/data/tiny.ttf, made by make_tiny_ttf.py): the character map, advances,
+# outlines (curves with two off-curve points in a row, a scaled composite), and a glyph's distance
+# field (no window: the atlas is only an image here)
+t = __ttf_open(embed("data/tiny.ttf"))
+print("error '{t.error}', {t.nglyphs} glyphs, {t.upem} units per em")
+loop c in ["I", "O", "L", " ", "Z"]:
+    g = __ttf_glyph_index(t, chars(c)[0])
+    print("'{c}': glyph {g}, advance {__ttf_advance(t, g)}")
+bounds = (g: int) -> str:
+    segs: f64[]
+    __ttf_outline(t, g, segs, (1.0, 0.0, 0.0, 1.0, 0.0, 0.0), 0)
+    lo = vec2(1e9, 1e9)
+    hi = vec2(-1e9, -1e9)
+    j = 0
+    loop j + 1 < segs.len():
+        lo = vec2(min(lo.x, f32(segs[j])), min(lo.y, f32(segs[j + 1])))
+        hi = vec2(max(hi.x, f32(segs[j])), max(hi.y, f32(segs[j + 1])))
+        j += 2
+    "{segs.len() / 4} segments, x {lo.x}..{hi.x}, y {lo.y}..{hi.y}"
+print("I: {bounds(1)}")
+print("O: {bounds(2)}")
+print("L: {bounds(3)}")
+# the field of 'I' at 34 px: inside it high, outside low, on the edge about half
+segs: f64[]
+__ttf_outline(t, 1, segs, (1.0, 0.0, 0.0, 1.0, 0.0, 0.0), 0)
+k = 0
+loop k + 1 < segs.len():
+    segs[k] = 6.0 + segs[k] * 0.034
+    segs[k + 1] = 36.0 - segs[k + 1] * 0.034
+    k += 2
+img = image(48, 48)
+__sdf_cell(segs, img, 0, 0)
+print("inside {get(img, 12, 25).x > 0.6}, outside {get(img, 30, 25).x < 0.3}, edge {abs(get(img, 9, 25).x - 0.5) < 0.1}")
+print("text: {__next_char("é", 0)} {__next_char("€", 0)} {__next_char("a", 0)}")

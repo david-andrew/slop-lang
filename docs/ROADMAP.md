@@ -92,8 +92,10 @@ tiles (examples/tiles.jo), JSON (parse_json/to_json), base64. Missing:
 - Done: Ogg Vorbis (load_ogg; checked sample for sample against ffmpeg's decoder, and fuzzed with
   damaged files). Next for it: streaming (a long track decodes in about 1 s in release builds,
   3 s in debug; playing while decoding would remove the wait).
-- Assets: TTF/OTF fonts (into the SDF atlas), JPEG, glTF 2.0 meshes (skinning later), Tiled's
-  external tilesets (.tsj; embedded ones work).
+- Done: TrueType fonts (load_font, set_font; text is UTF-8). Left: OpenType fonts with CFF
+  outlines (.otf), kerning, characters beyond the ones made up front (made when first drawn).
+- Assets: JPEG, glTF 2.0 meshes (skinning later), Tiled's external tilesets (.tsj; embedded
+  ones work).
 - 2D: slopes and one-way platforms in tilemaps, tweening, camera follow/shake helpers.
 - 3D: free/orbit camera controllers, frustum culling, skyboxes.
 - Debug panels (ui.jo has menus).

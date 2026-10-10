@@ -1,0 +1,11 @@
+error '', 5 glyphs, 1000 units per em
+'I': glyph 1, advance 400
+'O': glyph 2, advance 1000
+'L': glyph 3, advance 700
+' ': glyph 4, advance 300
+'Z': glyph 0, advance 500
+I: 4 segments, x 100.0..300.0, y 0.0..700.0
+O: 24 segments, x 100.0..900.0, y 0.0..700.0
+L: 8 segments, x 100.0..350.0, y 0.0..700.0
+inside true, outside true, edge true
+text: (233, 2) (8364, 3) (97, 1)

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Fonts**: `load_font` reads TrueType fonts (.ttf, .ttc) into sharp text at any size;
+  `set_font` chooses the one `text` draws with. Text is UTF-8 now: accented letters, quotes,
+  dashes and the euro sign in loaded fonts (characters a font lacks show as ?).
+- A function that assigns a global declared further down its file gets a warning (it changes
+  that global; `let x = ...` makes the function's own). A top-level `x = 0` now runs where it
+  is, like other initializers.
+
 ## 0.4.0
 
 Games:

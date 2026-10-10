@@ -26,12 +26,8 @@ __b_prog = 0
 __b_loc_proj = 0
 __b_loc_tex = 0
 __white = Texture(0, 1, 1)
-__font_tex = Texture(0, 1, 1)
-__font_adv: f64[]
-__font_cell = 48.0
-__font_px = 34.0
-__font_base = 36.0
-__font_spread = 6.0
+__default_font = Font(Texture(0, 1, 1), {}, fill(-1, 128), [], 16, 48.0, 34.0, 36.0, 6.0)
+__font = __default_font          # the one text() draws with (set_font)
 __proj = mat4()
 __xform = mat4()
 __xform_stack: mat4[]
@@ -108,14 +104,16 @@ __gfx_init = ():
     __white = texture(white)
     # default font (signed distance field atlas)
     font_img = load_image(embed("assets/font.png"))
-    __font_tex = texture(font_img, true)
     meta = lines(str_from_bytes(embed("assets/font.txt")))
     head = words(meta[0])
-    __font_cell = to_float(head[0]) ?? 48.0
-    __font_base = to_float(head[3]) ?? 36.0
-    __font_spread = to_float(head[4]) ?? 6.0
-    __font_px = to_float(head[5]) ?? 34.0
-    loop a in words(meta[1]): __font_adv.push(to_float(a) ?? 10.0)
+    f = Font(texture(font_img, true), {}, fill(-1, 128), [], to_int(head[1]) ?? 16, to_float(head[0]) ?? 48.0, to_float(head[5]) ?? 34.0, to_float(head[3]) ?? 36.0, to_float(head[4]) ?? 6.0)
+    loop i in 0.. and a in words(meta[1]):
+        f.adv.push(to_float(a) ?? 10.0)
+        f.slots[32 + i] = i
+        f.ascii[32 + i] = i
+    same = __font.texture.id == __default_font.texture.id
+    __default_font = f
+    if same: __font = f
 
 __gfx_begin_frame = ():
     __gfx_init()
@@ -506,37 +504,80 @@ draw_target = (rt: RenderTarget, pos: vec2 = vec2(0, 0), size: vec2 = vec2(0, 0)
     __quad(pos, pos + vec2(sz.x, 0), pos + sz, pos + vec2(0, sz.y), vec2(0, 1), vec2(1, 1), vec2(1, 0), vec2(0, 0), tint, 0)
 
 # ---------------- text ----------------
+# the font text() and text_width() use (load_font makes one); set_font() goes back to the built-in
+set_font = (f: Font): __font = f
+set_font = ():
+    __gfx_init()
+    __font = __default_font
+
+# (the code point at s[i], and where the next one starts: UTF-8)
+__next_char = (s: str, i: int) -> (int, int):
+    c = int(s[i])
+    if c < 0x80: return (c, i + 1)
+    n = 0
+    if c >= 0xF0:
+        c = c & 7
+        n = 3
+    else if c >= 0xE0:
+        c = c & 15
+        n = 2
+    else if c >= 0xC0:
+        c = c & 31
+        n = 1
+    else: return (0xFFFD, i + 1)
+    j = i + 1
+    loop n > 0 and j < len(s):
+        c = (c << 6) | (int(s[j]) & 63)
+        j += 1
+        n -= 1
+    (c, j)
+
+# a character's cell in the font (-1: it has none)
+__glyph = (f: Font, c: int) -> int:
+    if c < 128: return f.ascii[c]
+    f.slots.get(c, -1)
+
 text_width = (s: str, size: f64 = 20.0) -> f64:
     __gfx_init()
-    k = size / __font_px
+    k = size / __font.px
     w = 0.0
-    loop ch in s:
-        c = int(ch)
-        if c >= 32 and c < 127: w += __font_adv[c - 32] * k
+    i = 0
+    loop i < len(s):
+        r = __next_char(s, i)
+        i = r.1
+        g = __glyph(__font, r.0)
+        if g < 0 and r.0 >= 32: g = __glyph(__font, '?')
+        if g >= 0: w += __font.adv[g] * k
     w
 
-# draw text with its top-left corner at `pos`
+# draw text with its top-left corner at `pos` (characters the font does not have show as ?)
 text = (s: str, pos: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1)):
     __gfx_init()
-    __use_tex(__font_tex.id, len(s) * 6)
-    k = f32(size / __font_px)
-    cell = f32(__font_cell)
-    pad = f32(__font_spread)
-    atlas_w = f32(__font_tex.width)
-    atlas_h = f32(__font_tex.height)
+    f = __font
+    __use_tex(f.texture.id, len(s) * 6)
+    k = f32(size / f.px)
+    cell = f32(f.cell)
+    pad = f32(f.spread)
+    atlas_w = f32(f.texture.width)
+    atlas_h = f32(f.texture.height)
     x = pos.x
-    y = pos.y + f32(size * 0.82) - f32(__font_base) * k
-    loop ch in s:
-        c = int(ch)
+    y = pos.y + f32(size * 0.82) - f32(f.base) * k
+    i = 0
+    loop i < len(s):
+        r = __next_char(s, i)
+        i = r.1
+        c = r.0
         if c == '\n':
             x = pos.x
             y += f32(size * 1.25)
             continue
-        if c < 32 or c >= 127: continue
-        gi = c - 32
+        if c < 32: continue
+        g = __glyph(f, c)
+        if g < 0: g = __glyph(f, '?')
+        if g < 0: continue
         if c != ' ':
-            col = f32(gi % 16)
-            row = f32(gi / 16)
+            col = f32(g % f.cols)
+            row = f32(g / f.cols)
             u0 = col * cell / atlas_w
             v0 = row * cell / atlas_h
             u1 = (col + 1.0) * cell / atlas_w
@@ -545,7 +586,7 @@ text = (s: str, pos: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1)):
             y0 = y
             s_ = cell * k
             __quad(vec2(x0, y0), vec2(x0 + s_, y0), vec2(x0 + s_, y0 + s_), vec2(x0, y0 + s_), vec2(u0, v0), vec2(u1, v0), vec2(u1, v1), vec2(u0, v1), color, 1)
-        x += f32(__font_adv[gi]) * k
+        x += f32(f.adv[g]) * k
 
 # text centered on `center` (horizontally and vertically)
 text_centered = (s: str, center: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1)):

@@ -477,8 +477,10 @@ polygon = (points: vec2[], c: vec4)    # convex polygon (triangle fan)
 sprite = (t: Texture, pos: vec2, size: vec2 = vec2(0, 0), tint: vec4 = vec4(1, 1, 1, 1), angle: f64 = 0.0)    # draw a texture at `pos` (top-left), optionally scaled, rotated around its center and tinted
 sprite_region = (t: Texture, src: vec4, center: vec2, size: vec2, tint: vec4 = vec4(1, 1, 1, 1), angle: f64 = 0.0)    # draw part of a texture (src = x, y, w, h in pixels) centered at `center`
 draw_target = (rt: RenderTarget, pos: vec2 = vec2(0, 0), size: vec2 = vec2(0, 0), tint: vec4 = vec4(1, 1, 1, 1))    # draw a render target's texture (flipped: render targets are stored bottom-up)
+set_font = (f: Font)    # the font text() and text_width() use (load_font makes one); set_font() goes back to the built-in
+set_font = ()
 text_width = (s: str, size: f64 = 20.0) -> f64
-text = (s: str, pos: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1))    # draw text with its top-left corner at `pos`
+text = (s: str, pos: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1))    # draw text with its top-left corner at `pos` (characters the font does not have show as ?)
 text_centered = (s: str, center: vec2, size: f64 = 20.0, color: vec4 = vec4(1, 1, 1, 1))    # text centered on `center` (horizontally and vertically)
 ```
 
@@ -532,6 +534,28 @@ plane_mesh = (size: f64 = 10.0) -> Mesh
 cylinder_mesh = (radius: f64 = 0.5, height: f64 = 1.0, segments: int = 24, top_radius: f64 = -1.0) -> Mesh
 cone_mesh = (radius: f64 = 0.5, height: f64 = 1.0, segments: int = 24) -> Mesh
 custom_mesh = (vertices: Vertex3D[], indices: u32[] = []) -> Mesh    # custom mesh from vertex/index arrays
+```
+
+### font.jo
+
+Fonts: load_font reads a TrueType font (.ttf, or the first font of a .ttc) and makes the  
+characters text() draws with, sharp at any size (signed distance fields). set_font chooses the  
+font text() and text_width() use; set_font() goes back to the built-in one.  
+
+```gdscript
+title_font = load_font(embed("PressStart2P.ttf"))
+draw = ():
+    set_font(title_font)
+    text_centered("GAME OVER", vec2(640, 300), 64)
+    set_font()
+```
+
+It has the printable ASCII characters, Latin-1 and Latin Extended-A (accented letters), common  
+punctuation (quotes, dashes, the euro sign), and any others listed in `extra`.  
+
+```gdscript
+struct Font
+load_font = (file: u8[], extra: str = "") -> Font    # a font from a TrueType file (it stops the program with a message if it cannot read it)
 ```
 
 ### gamepad.jo
