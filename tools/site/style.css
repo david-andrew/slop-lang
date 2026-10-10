@@ -60,6 +60,12 @@ blockquote { margin: 1em 0; padding: 0.2em 1em; border-left: 3px solid var(--acc
 .feature { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; }
 .feature h3 { margin: 0 0 8px; font-size: 17px; }
 .feature p { margin: 0; color: var(--dim); font-size: 15px; }
+.showcase { max-width: 1120px; margin: 0 auto; padding: 0 24px 80px; display: grid; grid-template-columns: 3fr 2fr; gap: 36px; align-items: center; }
+.showcase img { width: 100%; display: block; border-radius: 14px; border: 1px solid var(--line); }
+.showcase h2 { border: 0; margin-top: 0; }
+.showcase p { color: var(--dim); }
+.showcase .buttons { display: flex; gap: 12px; flex-wrap: wrap; }
+@media (max-width: 900px) { .showcase { grid-template-columns: 1fr; } }
 .strip { max-width: 1120px; margin: 0 auto; padding: 0 24px 80px; }
 .strip h2 { border: 0; margin-top: 0; }
 footer { border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; padding: 24px; text-align: center; }

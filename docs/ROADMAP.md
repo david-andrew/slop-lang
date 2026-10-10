@@ -35,17 +35,25 @@ Left:
 
 ## 2. Finish one small game, with its tutorial (ongoing)
 
-Done (0.3.1): Lumen (examples/lumen) is a finished small game: four valleys, title menu, valley
-select, settings, pause, best times and progress saved, an ending; it runs on Linux, Windows and
-the web from one source. The website has a tutorial (docs/TUTORIAL.md: Firefly, eight steps that
-each run, with links into the playground; the tests build every step).
+Done: Rebound (examples/rebound) is the flagship game: a one-file arcade game (turn a shield
+around a core to catch turrets' bolts and send them back; chain blasts, bank shots, upgrades
+every few turrets, a saved best score), chosen over a platformer (Lumen, retired) for being
+quick to pick up and worth replaying. It plays itself behind its title; with a reaction delay
+the same autopilot measured the difficulty curve (0.45 s: about 80 s survived, 0.3 s: 3 to 5
+minutes). It runs on Linux, Windows and the web, on the website (sloppy-lang.org/rebound/) and in
+the playground (#example=rebound, with its icon: the playground carries examples' other files).
+The website has a tutorial (docs/TUTORIAL.md: Firefly, eight steps that each run, with links
+into the playground; the tests build every step).
 
-Left: upload Lumen to itch.io (needs an account: the zip is `sloppy build --target wasm -o
-lumen.zip`), play it through on real machines, and write down what was awkward. What it showed so
-far: menus were missing (now lib/game/ui.jo), saving was missing (save_data), and a game loop
-that draws its menus in draw() needs the key that opened a menu ignored for a frame (Lumen's
-`menu` helper; worth folding into ui.jo if it comes up again). The larger jotw/botw-clone
-projects come after, as the 3D test.
+Left: upload Rebound to itch.io (needs an account: the zip is `sloppy build --target wasm -o
+rebound.zip`), play it on real machines (people, not the autopilot, for the difficulty), and
+write down what was awkward. What the games showed so far: menus were missing (now
+lib/game/ui.jo), saving was missing (save_data), a game loop that draws its menus in draw()
+needs the key that opened a menu ignored for a frame (the games' `menu` helper; worth folding
+into ui.jo), and a top-level assignment to a used module's variable made a new one (fixed). A
+local variable in a function with a global's name and type changes the global (as designed,
+but easy to trip over in a big file: a lint that flags it may be worth having). The larger
+jotw/botw-clone projects come after, as the 3D test.
 
 ## 3. Shipping essentials (alongside 2)
 

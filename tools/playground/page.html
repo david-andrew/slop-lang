@@ -293,6 +293,12 @@ $("stop").addEventListener("click", () => { out.srcdoc = "<body style='backgroun
   let text = null;
   const m = location.hash.match(/#code=([A-Za-z0-9_-]+)/);
   if (m) { try { text = await inflate(m[1]); } catch (e) { text = null; } }
+  // (#example=rebound: that example)
+  const ex = location.hash.match(/#example=([A-Za-z0-9_-]+)/);
+  if (ex && text === null) {
+    const name = Object.keys(SLOPPY_EXAMPLES).find((k) => k.split(" ")[0] === ex[1]);
+    if (name) { text = SLOPPY_EXAMPLES[name]; exSel.value = name; }
+  }
   if (text === null) text = localStorage.getItem("sloppy-playground-source");
   if (text === null) text = SLOPPY_EXAMPLES[Object.keys(SLOPPY_EXAMPLES)[0]];
   src.value = text;

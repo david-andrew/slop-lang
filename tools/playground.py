@@ -32,10 +32,15 @@ exdir = os.path.join(root, "tools", "playground", "examples")
 for n in sorted(os.listdir(exdir)):
     if n.endswith(".jo"):
         examples[re.sub(r"^\d+-", "", n[:-3])] = open(os.path.join(exdir, n)).read()
-for name, path in [("shapes (2D)", "examples/shapes.jo"), ("lumen (2D game)", "examples/lumen/lumen.jo"),
+for name, path in [("rebound (2D game)", "examples/rebound/rebound.jo"), ("shapes (2D)", "examples/shapes.jo"),
                    ("cube (3D)", "examples/cube.jo"), ("scene (3D)", "examples/scene3d.jo"), ("dunes (3D game)", "examples/dunes/dunes.jo")]:
     full = os.path.join(root, path)
     if os.path.exists(full): examples[name] = open(full).read()
+    # (a game's other files, like its icon, beside the program the playground compiles)
+    d = os.path.dirname(full)
+    if d != os.path.join(root, "examples"):
+        for n in sorted(os.listdir(d)):
+            if not n.endswith(".jo"): lib["/play/" + n] = base64.b64encode(open(os.path.join(d, n), "rb").read()).decode()
 
 html = open(os.path.join(root, "tools", "playground", "page.html")).read()
 host = open(os.path.join(root, "tools", "playground", "host.js")).read()

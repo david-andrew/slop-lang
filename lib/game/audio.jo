@@ -202,6 +202,29 @@ melody = (notes: str, bpm: f64 = 120.0, wave: Wave = .triangle, volume: f64 = 0.
         i += held
     out
 
+# a melody made to be played with looping = true: exactly as long as its notes, with the end of
+# the last ones (and their release) carried round to the start, so the loop has no seam
+melody_loop = (notes: str, bpm: f64 = 120.0, wave: Wave = .triangle, volume: f64 = 0.3, step: f64 = 0.5) -> Sound:
+    beat = 60.0 / bpm * step
+    toks = words(notes)
+    total = int(f64(toks.len()) * beat * f64(MIX_RATE))
+    out = Sound(fill(f32(0), total * 2))
+    if total == 0: return out
+    i = 0
+    loop i < toks.len():
+        if toks[i] == "." or toks[i] == "-":
+            i += 1
+            continue
+        held = 1
+        loop i + held < toks.len() and toks[i + held] == "-": held += 1
+        f = note_freq(toks[i])
+        if f > 0.0:
+            nt = tone(f, beat * f64(held) * 0.95, wave, volume, 0.01, beat * 0.5)
+            start = int(f64(i) * beat * f64(MIX_RATE)) * 2
+            loop k in 0.. and x in nt.samples: out.samples[(start + k) % (total * 2)] += x
+        i += held
+    out
+
 # ---------------- WAV files ----------------
 # a WAV file's sound: integer samples of 8, 16, 24 or 32 bits or floats of 32 or 64, any number of
 # channels (the first two are used; mono plays on both), any rate (resampled to MIX_RATE). Other

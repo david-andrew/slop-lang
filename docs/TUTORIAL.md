@@ -3,9 +3,9 @@
 This tutorial builds **Firefly**, a small platformer: a firefly hops across a dusky world,
 gathering lights and dodging thorns on the way to a lantern. Each step is a whole program that
 runs; on the website, "Run it in the playground" opens it in your browser, and with Sloppy
-installed `sloppy firefly.jo` runs it in a window. (The finished, larger version of this kind of
-game is [Lumen](https://github.com/david-andrew/sloppy-lang/tree/master/examples/lumen): four
-valleys, menus, settings and saved progress, in about 700 lines.)
+installed `sloppy firefly.jo` runs it in a window. (For a complete game of another kind, see
+[Rebound](https://github.com/david-andrew/sloppy-lang/blob/master/examples/rebound/rebound.jo):
+an arcade game with menus, upgrades, settings and a saved best score, in one file.)
 
 ## 1. A window
 

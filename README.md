@@ -55,6 +55,14 @@ draw = ():
     text("arrow keys", vec2(20, 20), 24, rgb(1, 1, 1))
 ```
 
+A complete one: [Rebound](examples/rebound/rebound.jo), an arcade game in one file. Turn a
+shield around the core to catch the turrets' bolts and send them back: blasts set off the
+turrets beside them, catches near the shield's edge bank off to other turrets, and every few
+turrets you choose an upgrade. [Play it in the browser](https://sloppy-lang.org/rebound/), or
+change it there in [the playground](https://sloppy-lang.org/playground/#example=rebound).
+
+<p align="center"><a href="https://sloppy-lang.org/rebound/"><img src="assets/rebound.png" alt="Rebound: a shield arcs around a glowing core; a chain of blasts runs through a line of turrets" width="720"></a></p>
+
 ## Highlights
 
 - **Fast compiles.** About 250,000 lines per second on one core (debug builds), roughly 20x
@@ -112,9 +120,9 @@ Requirements: Linux x86-64; a C compiler is needed once, to build the bootstrap 
 tools/bootstrap.sh            # stage0 (C) -> sloppy1 -> sloppy2 -> sloppy3, checks sloppy2 == sloppy3, installs bin/sloppy
 bin/sloppy                       # an interactive prompt
 bin/sloppy examples/shapes.jo   # compile and run
-bin/sloppy examples/lumen/lumen.jo          # a small complete 2D game (four valleys, menus, saves)
+bin/sloppy examples/rebound/rebound.jo      # a complete 2D arcade game (menus, upgrades, a saved best)
 bin/sloppy examples/dunes/dunes.jo          # the 3D demo game
-bin/sloppy watch examples/lumen/lumen.jo    # ... reloaded as you edit it, without restarting
+bin/sloppy watch examples/rebound/rebound.jo    # ... reloaded as you edit it (try its tuning constants)
 bin/sloppy --web examples/dunes/dunes.jo    # the same game in the browser
 bin/sloppy build examples/dunes/dunes.jo --target wasm -o dunes.html   # a page to keep or share
 bin/sloppy test tests/unit/sample_test.jo  # run `test` blocks
@@ -194,7 +202,7 @@ lib/std/       thread pool and parallel helpers, numeric arrays (nd.jo)
 lib/game/      windows (Wayland, X11), input, OpenGL ES / WebGL, 2D, 3D, images, audio
 lib/web/       JavaScript glue embedded into web builds
 editors/       the VS Code extension (tools/vsix.py packages it)
-examples/      lumen (a complete 2D game), dunes (3D), shapes, cube, scene3d
+examples/      rebound (a complete 2D game), dunes (3D), shapes, cube, scene3d
 tests/         test programs with expected output (tools/runtests.py), render references
 bench/         benchmarks (Sloppy and equivalent C)
 tools/         bootstrap, test runner, render test, differential fuzzer, language server test,

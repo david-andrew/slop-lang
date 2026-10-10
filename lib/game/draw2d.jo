@@ -431,6 +431,21 @@ ring = (center: vec2, radius: f64, thickness: f64, c: vec4, segments: int = 48):
         d1 = vec2(f32(cos(a1)), f32(sin(a1)))
         __quad(center + d0 * f32(r0), center + d0 * f32(r1), center + d1 * f32(r1), center + d1 * f32(r0), z, z, z, z, c, 0)
 
+# part of a ring: from angle `start` to `stop` (radians, clockwise on screen)
+arc = (center: vec2, radius: f64, thickness: f64, start: f64, stop: f64, c: vec4, segments: int = 0):
+    n = segments
+    if n <= 0: n = clamp(int(abs(stop - start) * radius / 6.0) + 2, 2, 128)
+    __use_tex(__white.id, n * 6)
+    z = vec2(0, 0)
+    r0 = radius - thickness / 2.0
+    r1 = radius + thickness / 2.0
+    loop i in [0..n):
+        a0 = start + (stop - start) * f64(i) / f64(n)
+        a1 = start + (stop - start) * f64(i + 1) / f64(n)
+        d0 = vec2(f32(cos(a0)), f32(sin(a0)))
+        d1 = vec2(f32(cos(a1)), f32(sin(a1)))
+        __quad(center + d0 * f32(r0), center + d0 * f32(r1), center + d1 * f32(r1), center + d1 * f32(r0), z, z, z, z, c, 0)
+
 line = (a: vec2, b: vec2, thickness: f64, c: vec4):
     d = b - a
     l = length(d)

@@ -1,0 +1,1160 @@
+# REBOUND - a small arcade game written in Sloppy.
+# Turrets ring the core and fire at it. Turn the shield to catch their bolts: each one caught
+# flies back out at a turret, and a turret's blast sets off the turrets beside it. Catch a bolt
+# near the shield's edge to send it to another turret (a bank shot: double points). Catches in
+# a row raise the multiplier; every few turrets, choose an upgrade.
+# Left/right (A/D, or a gamepad's d-pad, bumpers or stick) or the mouse turn the shield;
+# Escape/Start pauses. The best score and the settings are saved.
+
+build:
+    output = "rebound"
+    name = "Rebound"
+    icon = "icon.png"
+
+# ---------------- tuning: try changing these while `sloppy watch` runs the game ----------------
+const CORE_R = 30.0
+const ORBIT_R = 100.0           # the shield's distance from the core's center
+const SHIELD_HALF = 0.4         # half the shield's width, as an angle (radians)
+const TURN = 7.5                # how fast the shield turns (radians a second)
+const DEFLECT = 0.75            # how far a catch at the shield's very edge turns the return
+const AIM_CONE = 0.45           # how far off its line a return still finds a turret
+const BOLT_SPEED = 165.0        # the turrets' bolts at first ...
+const BOLT_SPEED_MAX = 290.0    # ... and at their fastest
+const RETURN_SPEED = 760.0
+const TELEGRAPH = 0.75          # a turret glows this long before it fires
+const BLAST_R = 100.0           # a destroyed turret's blast reaches the turrets this close
+const CHAIN_DELAY = 0.09        # from one blast in a chain to the next
+const STREAK_STEP = 4           # catches in a row for each step of the multiplier
+const MAX_MULT = 8
+const HITSTOP = 0.05
+const TURRET_NEAR = 200.0       # turrets stand this far from the core ...
+const TURRET_FAR = 300.0        # ... up to this far
+
+CENTER = vec2(640, 360)
+
+enum Kind: pulser, burst, orbiter, splitter, armored
+
+struct Turret:
+    id: int
+    a: f64                      # where it stands: the angle around the core ...
+    r: f64                      # ... and the distance from it
+    kind: Kind
+    hp = 1
+    age = 0.0                   # it warps in over its first second (from 0: before that, it is not there yet)
+    cool = 1.0                  # until it starts to glow
+    charge = -1.0               # glowing: until it fires (below zero: not glowing)
+    shots = 0                   # bolts still to come in a burst
+    spin = 0.0                  # an orbiter's speed around the ring
+    volatile = false            # a much bigger blast
+    flash = 0.0                 # just hit
+    dead = false
+
+struct Bolt:
+    pos: vec2
+    vel: vec2
+    mine = false                # a return (the player's); else a turret's, headed for the core
+    src = -1                    # a turret's bolt: the turret that fired it
+    target = -1                 # a return: the turret it is after
+    bank = false                # a return to a turret other than the one that fired it
+    pierce = 0                  # turrets it still goes on through
+    big = false                 # a splitter's bolt: it splits in two on the way
+    size = 6.0
+    age = 0.0
+    trail: vec2[]
+    dead = false
+
+struct Blast:
+    pos: vec2
+    r: f64
+    depth: int                  # its place in a chain (0: the first); -1: a nova
+    age = 0.0
+
+struct Pending:                 # a blast reaching a turret, a moment later
+    id: int
+    wait: f64
+    depth: int
+
+struct Popup:
+    pos: vec2
+    s: str
+    color: vec4
+    size = 24.0
+    age = 0.0
+
+struct Upgrade:
+    name: str
+    about: str
+    most: int                   # how many times a run can take it
+
+enum Up: wide, twin, fork, blast, pierce, nova, repair
+
+upgrades = [
+    Upgrade("Wide", "a wider shield", 3),
+    Upgrade("Twin", "a second shield, across the core from the first", 1),
+    Upgrade("Fork", "each return sends two more after other turrets", 2),
+    Upgrade("Blast", "bigger blasts, for longer chains", 3),
+    Upgrade("Pierce", "returns go on through a turret to the next one", 2),
+    Upgrade("Nova", "each step up the multiplier clears every bolt in the air", 1),
+    Upgrade("Repair", "mend a ring of the core", 99),
+]
+
+# ---------------- the state of a run ----------------
+turrets: Turret[]
+bolts: Bolt[]
+blasts: Blast[]
+pending: Pending[]
+popups: Popup[]
+sparks = Particles(gravity = vec2(0, 0), drag = 3.0)
+taken: int[] = fill(0, upgrades.len())     # how many times each upgrade was taken
+choices: int[]                  # upgrades on offer: while there are some, the arena waits
+
+shield = -PI / 2.0              # the shield's angle (straight up)
+shield_glow = 0.0               # it flashes on a catch
+core_hp = 3
+score = 0
+streak = 0                      # catches in a row
+kills = 0
+catches = 0
+banks = 0
+chain_best = 0
+xp = 0
+xp_need = 6
+run_time = 0.0
+next_id = 1
+spawn_wait = 0.3
+shake = 0.0
+hitstop = 0.0
+slowmo = 0.0
+flash = 0.0                     # the screen, when the core is hit
+over = false
+over_time = 0.0
+autopilot = false               # the game plays itself (behind the title)
+auto_react = 0.0                # (how long the autopilot takes to see a new bolt)
+mouse_aim = false
+mouse_last = vec2(0, 0)
+sound_volume = 0.8
+
+new_run = (seed: int, auto: bool):
+    seed_random(seed)
+    turrets.clear()
+    bolts.clear()
+    blasts.clear()
+    pending.clear()
+    popups.clear()
+    sparks.items.clear()
+    choices.clear()
+    taken = fill(0, upgrades.len())
+    shield = -PI / 2.0
+    core_hp = 3
+    score = 0
+    streak = 0
+    kills = 0
+    catches = 0
+    banks = 0
+    chain_best = 0
+    xp = 0
+    xp_need = 6
+    run_time = 0.0
+    spawn_wait = 0.3
+    shake = 0.0
+    hitstop = 0.0
+    slowmo = 0.0
+    flash = 0.0
+    over = false
+    over_time = 0.0
+    autopilot = auto
+    mouse_aim = false
+    mouse_last = mouse_pos()
+
+# ---------------- helpers ----------------
+polar = (a: f64, r: f64) -> vec2: CENTER + vec2(f32(cos(a) * r), f32(sin(a) * r))
+wrap = (a: f64) -> f64: mod(a + PI, TAU) - PI       # an angle, as -pi..pi
+dist_c = (p: vec2) -> f64: f64(length(p - CENTER))
+angle_c = (p: vec2) -> f64: angle(p - CENTER)
+has = (u: Up) -> int: taken[int(u)]
+mult = () -> int: min(1 + streak / STREAK_STEP, MAX_MULT)
+shield_half = () -> f64: SHIELD_HALF * (1.0 + 0.25 * f64(has(.wide)))
+blast_r = (volatile: bool) -> f64:
+    r = BLAST_R * (1.0 + 0.3 * f64(has(.blast)))
+    if volatile: r *= 1.8
+    r
+
+turret_index = (id: int) -> int:
+    loop i in [0..turrets.len()):
+        if turrets[i].id == id: return i
+    -1
+
+turret_pos = (id: int) -> vec2?:
+    i = turret_index(id)
+    if i < 0 or turrets[i].dead: return none
+    polar(turrets[i].a, turrets[i].r)
+
+popup = (p: vec2, s: str, c: vec4, size: f64 = 24.0): popups.push(Popup(pos = p, s = s, color = c, size = size))
+
+# ---------------- difficulty: all from how long the run has gone on ----------------
+bolt_speed = () -> f64: min(BOLT_SPEED + run_time * 0.9, BOLT_SPEED_MAX)
+max_turrets = () -> int: min(5 + int(run_time / 8.0), 16)
+min_turrets = () -> int: min(3 + int(run_time / 12.0), 10)    # fewer: the next group comes at once
+spawn_gap = () -> f64: max(4.5 - run_time * 0.015, 2.5)
+cool_time = () -> f64: random(2.4, 3.6) * max(1.0 - run_time / 300.0, 0.55)
+react = () -> f64: max(0.34 - run_time * 0.0012, 0.14)     # the moment the player gets to react
+bolt_cap = () -> int: min(5 + int(run_time / 15.0), 16)
+
+pick_kind = () -> Kind:
+    r = random()
+    if run_time > 90.0 and r < 0.14: return .armored
+    if run_time > 60.0 and r < 0.3: return .splitter
+    if run_time > 40.0 and r < 0.46: return .orbiter
+    if run_time > 18.0 and r < 0.66: return .burst
+    .pulser
+
+# ---------------- sound ----------------
+snd_catch = mix([tone(523.0, 0.16, .triangle, 0.45, 0.001, 0.14), tone(1046.0, 0.08, .sine, 0.15, 0.001, 0.07)])
+snd_fire = tone(330.0, 0.07, .square, 0.1, 0.001, 0.05, 0.7)
+snd_boom = mix([tone(80.0, 0.7, .noise, 0.5, 0.001, 0.65, 0.3), tone(130.0, 0.45, .sine, 0.6, 0.001, 0.4, 0.35)])
+snd_clank = tone(1400.0, 0.08, .square, 0.16, 0.001, 0.06, 0.8)
+snd_core = mix([tone(60.0, 1.0, .noise, 0.6, 0.001, 0.9, 0.3), tone(90.0, 0.8, .saw, 0.35, 0.001, 0.7, 0.4)])
+snd_warp = tone(240.0, 0.45, .sine, 0.12, 0.25, 0.15, 2.5)
+snd_split = tone(500.0, 0.12, .triangle, 0.2, 0.001, 0.1, 1.6)
+snd_nova = mix([tone(200.0, 0.9, .saw, 0.2, 0.01, 0.8, 4.0), tone(60.0, 0.9, .noise, 0.3, 0.001, 0.8, 0.5)])
+snd_level = sfx_powerup()
+PENTATONIC = [1.0, 1.125, 1.25, 1.5, 1.6667]
+
+# a step up the pentatonic scale for each step (an octave every five)
+scale_step = (n: int) -> f64: PENTATONIC[n % 5] * pow(2.0, f64(n / 5))
+pan_of = (p: vec2) -> f64: clamp((f64(p.x) - 640.0) / 640.0, -1.0, 1.0) * 0.7
+
+sfx = (s: Sound, volume: f64, pitch: f64 = 1.0, pan: f64 = 0.0):
+    v = volume * sound_volume
+    if autopilot: v *= 0.3
+    play(s, v, pan, pitch)
+
+# ---------------- turrets ----------------
+# a group of turrets, side by side on an arc (close enough that one blast may set off the next)
+spawn_group = ():
+    n = min(2 + int(run_time / 25.0) + random_int(0, 2), 6)
+    n = min(n, max_turrets() - turrets.len())
+    if n <= 0: return
+    loop tries in [0..30):
+        a0 = random(0.0, TAU)
+        r = random(TURRET_NEAR + 15.0, TURRET_FAR - 15.0)
+        gap = random(0.2, 0.36)
+        place: f64[]
+        loop i in [0..n):
+            a = a0 + (f64(i) - f64(n - 1) / 2.0) * gap
+            p = polar(a, r)
+            ok = abs(f64(p.y) - 360.0) < 320.0
+            loop t in turrets:
+                if f64(length(polar(t.a, t.r) - p)) < 56.0: ok = false
+            if ok: place.push(a)
+        if place.len() * 2 < n + 1: continue
+        k = pick_kind()
+        loop i in 0.. and a in place:
+            t = Turret(id = next_id, a = a, r = r, kind = k, cool = random(0.4, 1.4), age = -0.12 * f64(i))
+            next_id += 1
+            if k == .armored: t.hp = 2
+            if k == .orbiter: t.spin = 0.32 * sign(sin(a0 * 7.0))     # (a group goes round together)
+            t.volatile = run_time > 20.0 and random() < 0.12
+            turrets.push(t)
+        sfx(snd_warp, 0.4, random(0.9, 1.1), pan_of(polar(a0, r)))
+        return
+
+enemy_bolts = () -> int:
+    n = 0
+    loop b in bolts:
+        if not b.mine and not b.dead: n += 1
+    n
+
+# (time until it reaches the shield's ring, and the angle where it does) for each turret bolt
+# on its way, and each bolt a turret is about to fire
+arrivals = () -> (f64, f64)[]:
+    xs: (f64, f64)[]
+    loop b in bolts:
+        if b.mine or b.dead: continue
+        d = dist_c(b.pos) - ORBIT_R
+        if d > 0.0: xs.push((d / f64(length(b.vel)), angle_c(b.pos)))
+    sp = bolt_speed()
+    loop t in turrets:
+        if t.charge >= 0.0: xs.push((t.charge + (t.r - ORBIT_R) / sp, t.a + t.spin * t.charge))
+        if t.shots > 0: xs.push((t.cool + (t.r - ORBIT_R) / sp, t.a))
+    xs
+
+# can a bolt reaching the shield's ring `at` seconds from now at angle `a` be caught, as well as all
+# the others? (there must be time to turn from each of them to it, and a moment to react)
+fair = (at: f64, a: f64) -> bool:
+    loop x in arrivals():
+        da = abs(wrap(x.1 - a))
+        if da < SHIELD_HALF: continue                   # (caught in the same place, nearly)
+        if abs(x.0 - at) < da / (TURN * 0.7) + react(): return false
+    true
+
+fire = (t: Turret):
+    p = polar(t.a, t.r - 16.0)
+    b = Bolt(pos = p, vel = normalize(CENTER - p) * f32(bolt_speed()), src = t.id)
+    if t.kind == .splitter:
+        b.big = true
+        b.size = 10.0
+        b.vel = b.vel * 0.75
+    bolts.push(b)
+    sfx(snd_fire, 0.3, random(0.95, 1.05), pan_of(p))
+
+update_turrets = (dt: f64):
+    loop i in [0..turrets.len()):
+        t = turrets[i]
+        t.age += dt
+        t.flash = max(t.flash - dt * 5.0, 0.0)
+        t.a = wrap(t.a + t.spin * dt)
+        if t.age >= 1.0 and not over and not t.dead:
+            if t.charge >= 0.0:
+                t.charge -= dt
+                if t.charge < 0.0:
+                    fire(t)
+                    if t.kind == .burst:
+                        t.shots = 2
+                        t.cool = 0.16
+                    else: t.cool = cool_time()
+            else:
+                t.cool -= dt
+                if t.cool <= 0.0:
+                    if t.shots > 0:
+                        fire(t)
+                        t.shots -= 1
+                        t.cool = 0.16
+                        if t.shots == 0: t.cool = cool_time()
+                    else if enemy_bolts() < bolt_cap() and fair(TELEGRAPH + (t.r - ORBIT_R) / bolt_speed(), t.a + t.spin * TELEGRAPH):
+                        t.charge = TELEGRAPH
+                    else: t.cool = 0.2
+        turrets[i] = t
+
+# a hit on a turret: from a return (depth 0) or the blast of one in a chain
+damage = (id: int, depth: int, bank: bool):
+    i = turret_index(id)
+    if i < 0 or turrets[i].dead: return
+    t = turrets[i]
+    p = polar(t.a, t.r)
+    turrets[i].hp -= 1
+    turrets[i].flash = 1.0
+    if turrets[i].hp > 0:
+        sfx(snd_clank, 0.5, 1.0, pan_of(p))
+        emit(sparks, p, 12, 240.0, rgba(1, 1, 1, 1), 0.3, 4.0)
+        return
+    turrets[i].dead = true
+    if not over:
+        kills += 1
+        xp += 1
+        pts = 100 * mult() * (depth + 1)
+        if bank: pts *= 2
+        if bank and depth == 0: banks += 1
+        score += pts
+        chain_best = max(chain_best, depth + 1)
+        label = "+{pts}"
+        if depth > 0: label = "chain {depth + 1}  +{pts}"
+        else if bank: label = "bank  +{pts}"
+        popup(p + vec2(0, -24), label, rgba(1, 0.85, 0.5, 1), 22.0 + 4.0 * f64(min(depth, 4)))
+    r = blast_r(t.volatile)
+    blasts.push(Blast(pos = p, r = r, depth = depth))
+    loop o in turrets:
+        if o.dead or o.id == id or o.age < 0.3: continue
+        if f64(length(polar(o.a, o.r) - p)) < r + 14.0: pending.push(Pending(id = o.id, wait = CHAIN_DELAY, depth = depth + 1))
+    emit(sparks, p, 36 + 8 * min(depth, 6), 460.0, rgba(1, 0.4, 0.45, 1), 0.7, 6.0)
+    emit(sparks, p, 18, 220.0, rgba(1, 0.8, 0.4, 1), 0.9, 5.0)
+    shake = max(shake, 7.0 + 2.0 * f64(min(depth, 6)))
+    hitstop = max(hitstop, HITSTOP)
+    sfx(snd_boom, 0.55, scale_step(depth) * random(0.97, 1.03), pan_of(p))
+    if xp >= xp_need and choices.len() == 0 and not over: level_up()
+
+update_pending = (dt: f64):
+    k = 0
+    loop k < pending.len():
+        pending[k].wait -= dt
+        if pending[k].wait <= 0.0:
+            p = pending[k]
+            pending[k] = pending[pending.len() - 1]
+            pending.pop()
+            damage(p.id, p.depth, false)
+        else: k += 1
+
+# ---------------- the shield and the bolts ----------------
+# where a bolt at angle `a` meets a shield: from -1 (one edge) through 0 (the middle) to 1 (the
+# other edge); -9 if it misses them
+catch_offset = (a: f64) -> f64:
+    h = shield_half()
+    d = wrap(a - shield)
+    if abs(d) <= h: return d / h
+    if has(.twin) > 0:
+        d2 = wrap(a - shield - PI)
+        if abs(d2) <= h: return d2 / h
+    -9.0
+
+# the turret a return from p heading at angle `dir` goes for: its id, or -1 if none is near
+# that line
+aim_at = (p: vec2, dir: f64, skip: int) -> int:
+    found = -1
+    closest = AIM_CONE
+    loop t in turrets:
+        if t.dead or t.age < 0.5 or t.id == skip: continue
+        d = abs(wrap(angle(polar(t.a, t.r) - p) - dir))
+        if d < closest:
+            closest = d
+            found = t.id
+    found
+
+launch = (p: vec2, dir: f64, target: int, pierce: int) -> Bolt:
+    d = dir
+    if let tp = turret_pos(target): d = angle(tp - p)
+    Bolt(pos = p, vel = from_angle(d) * f32(RETURN_SPEED), mine = true, target = target, pierce = pierce)
+
+catch = (b: Bolt, a: f64, off: f64):
+    streak += 1
+    catches += 1
+    p = polar(a, ORBIT_R)
+    out = a + off * DEFLECT
+    target = aim_at(p, out, -1)
+    r = launch(p, out, target, has(.pierce))
+    r.bank = target >= 0 and target != b.src
+    bolts.push(r)
+    loop k in [0..has(.fork)):
+        loop s in [-1.0, 1.0]:
+            o = out + s * 0.55 * f64(k + 1)
+            ft = aim_at(p, o, target)
+            f = launch(p, o, ft, 0)
+            f.size = 4.0
+            f.bank = ft >= 0 and ft != b.src
+            bolts.push(f)
+    shield_glow = 1.0
+    shake = max(shake, 3.0)
+    emit(sparks, p, 14, 280.0, rgba(0.5, 1, 1, 1), 0.35, 4.0, 1.6, a)
+    sfx(snd_catch, 0.5, scale_step(min(streak - 1, 12)), pan_of(p))
+    # a step up the multiplier
+    if streak % STREAK_STEP == 0 and streak / STREAK_STEP < MAX_MULT:
+        popup(polar(a, ORBIT_R + 46.0), "x{mult()}", rgba(0.5, 1, 1, 1), 34.0)
+        if has(.nova) > 0: nova()
+
+nova = ():
+    loop mut b in bolts:
+        if not b.mine and not b.dead:
+            b.dead = true
+            emit(sparks, b.pos, 10, 200.0, rgba(0.5, 1, 1, 1), 0.4, 4.0)
+    blasts.push(Blast(pos = CENTER, r = 420.0, depth = -1))
+    sfx(snd_nova, 0.5)
+
+core_hit = (p: vec2):
+    core_hp -= 1
+    streak = 0
+    shake = 26.0
+    flash = 1.0
+    slowmo = 0.6
+    sfx(snd_core, 0.8)
+    emit(sparks, p, 60, 420.0, rgba(1, 0.35, 0.4, 1), 0.9, 7.0)
+    # the other bolts in the air burst: a moment to recover
+    loop mut b in bolts:
+        if not b.mine and not b.dead:
+            b.dead = true
+            emit(sparks, b.pos, 8, 160.0, rgba(1, 0.75, 0.3, 1), 0.4, 4.0)
+    if core_hp <= 0:
+        over = true
+        emit(sparks, CENTER, 160, 700.0, rgba(0.6, 1, 1, 1), 1.6, 9.0)
+        # and the turrets go up one after another
+        loop i in 0.. and t in turrets:
+            pending.push(Pending(id = t.id, wait = 0.4 + 0.12 * f64(i), depth = 0))
+
+move_enemy = (b: mut Bolt, dt: f64):
+    before = dist_c(b.pos)
+    b.pos += b.vel * f32(dt)
+    d = dist_c(b.pos)
+    if b.big and before > 200.0 and d <= 200.0:
+        # a splitter's bolt: in two, each headed for the core from a little to the side
+        b.dead = true
+        side = perp(normalize(b.vel)) * 34.0
+        loop s in [-1.0, 1.0]:
+            q = b.pos + side * f32(s)
+            bolts.push(Bolt(pos = q, vel = normalize(CENTER - q) * f32(bolt_speed()), src = b.src))
+        sfx(snd_split, 0.4, 1.0, pan_of(b.pos))
+        return
+    if before > ORBIT_R and d <= ORBIT_R:
+        a = angle_c(b.pos)
+        off = catch_offset(a)
+        if off > -2.0:
+            b.dead = true
+            catch(b, a, off)
+            return
+    if d <= CORE_R + 4.0:
+        b.dead = true
+        core_hit(b.pos)
+
+move_return = (b: mut Bolt, dt: f64):
+    found = false
+    tp = vec2(0, 0)
+    if b.target >= 0:
+        if let q = turret_pos(b.target):
+            tp = q
+            found = true
+        else: b.target = aim_at(b.pos, angle(b.vel), -1)      # (it was gone: another, if near)
+    if found:
+        want = normalize(tp - b.pos)
+        b.vel = normalize(lerp(normalize(b.vel), want, f32(min(dt * 14.0, 1.0)))) * f32(RETURN_SPEED)
+    b.pos += b.vel * f32(dt)
+    if found and f64(length(tp - b.pos)) < 20.0:
+        hit = b.target
+        damage(hit, 0, b.bank)
+        if b.pierce > 0:
+            b.pierce -= 1
+            b.target = aim_at(b.pos, angle(b.vel), hit)
+        else: b.dead = true
+    if dist_c(b.pos) > 900.0: b.dead = true
+
+update_bolts = (dt: f64):
+    n = bolts.len()
+    loop i in [0..n):
+        b = bolts[i]
+        if b.dead: continue
+        b.age += dt
+        b.trail.insert(0, b.pos)
+        if b.trail.len() > 10: b.trail.pop()
+        if b.mine: move_return(b, dt)
+        else: move_enemy(b, dt)
+        bolts[i] = b
+
+# ---------------- upgrades ----------------
+level_up = ():
+    xp -= xp_need
+    xp_need += 4
+    open: int[]
+    loop i in [0..upgrades.len()):
+        if taken[i] < upgrades[i].most and (i != int(Up.repair) or core_hp < 3): open.push(i)
+    loop choices.len() < 3 and open.len() > 0:
+        j = random_int(0, open.len())
+        choices.push(open[j])
+        open[j] = open[open.len() - 1]
+        open.pop()
+    sfx(snd_level, 0.6)
+    if autopilot and choices.len() > 0: choose(0)
+
+choose = (k: int):
+    u = choices[k]
+    taken[u] += 1
+    if u == int(Up.repair): core_hp = min(core_hp + 1, 3)
+    choices.clear()
+    popup(CENTER + vec2(0, -150), upgrades[u].name, rgba(0.5, 1, 1, 1), 40.0)
+
+# ---------------- control ----------------
+# the autopilot: meet whatever comes first, a bolt or a glowing turret's coming one (between
+# them, if more arrive at once; a little off center now and then, for bank shots). It notices
+# each auto_react seconds after it appears.
+auto_aim = () -> f64:
+    seen: (f64, f64)[]
+    loop b in bolts:
+        if b.mine or b.dead or b.age < auto_react: continue
+        d = dist_c(b.pos) - ORBIT_R
+        if d > 0.0: seen.push((d / f64(length(b.vel)), angle_c(b.pos)))
+    loop t in turrets:
+        if t.charge >= 0.0 and TELEGRAPH - t.charge >= auto_react: seen.push((t.charge + (t.r - 16.0 - ORBIT_R) / bolt_speed(), t.a + t.spin * t.charge))
+    if seen.len() == 0: return shield
+    soonest = 1e9
+    a = shield
+    loop x in seen:
+        if x.0 < soonest:
+            soonest = x.0
+            a = x.1
+    lo = 0.0
+    hi = 0.0
+    loop x in seen:
+        d = wrap(x.1 - a)
+        if x.0 < soonest + 0.3 and abs(d) < shield_half() * 1.8:
+            lo = min(lo, d)
+            hi = max(hi, d)
+    if hi - lo > 0.01: return a + (lo + hi) / 2.0
+    a + sin(run_time * 0.7) * shield_half() * 0.6
+
+control = (dt: f64):
+    turn = 0.0
+    if key_down(.left) or key_down(.a) or gamepad_down(.left) or gamepad_down(.lb): turn -= 1.0
+    if key_down(.right) or key_down(.d) or gamepad_down(.right) or gamepad_down(.rb): turn += 1.0
+    m = mouse_pos()
+    if f64(length(m - mouse_last)) > 2.0: mouse_aim = true
+    mouse_last = m
+    if turn != 0.0: mouse_aim = false
+    aim = false
+    want = 0.0
+    st = left_stick()
+    if f64(length(st)) > 0.5:
+        aim = true
+        want = angle(st)
+        mouse_aim = false
+    else if mouse_aim and dist_c(m) > 12.0:
+        aim = true
+        want = angle_c(m)
+    if autopilot:
+        aim = true
+        want = auto_aim()
+    if aim:
+        # (the nearer way round; with two shields, the nearer shield)
+        d = wrap(want - shield)
+        if has(.twin) > 0:
+            d2 = wrap(want - shield - PI)
+            if abs(d2) < abs(d): d = d2
+        stride = TURN * dt
+        shield = wrap(shield + clamp(d, -stride, stride))
+    else: shield = wrap(shield + turn * TURN * dt)
+
+# ---------------- a frame ----------------
+step = (frame_dt: f64):
+    if choices.len() > 0: return
+    control(frame_dt)
+    update(sparks, frame_dt)
+    shield_glow = max(shield_glow - frame_dt * 4.0, 0.0)
+    shake = approach(shake, 0.0, 9.0, frame_dt)
+    flash = max(flash - frame_dt * 2.0, 0.0)
+    k = 0
+    loop k < popups.len():
+        popups[k].age += frame_dt
+        if popups[k].age > 1.2:
+            popups[k] = popups[popups.len() - 1]
+            popups.pop()
+        else: k += 1
+    if hitstop > 0.0:
+        hitstop -= frame_dt
+        return
+    dt = frame_dt
+    if slowmo > 0.0:
+        slowmo -= frame_dt
+        dt = frame_dt * 0.3
+    if over: over_time += frame_dt
+    else: run_time += dt
+    update_turrets(dt)
+    update_bolts(dt)
+    update_pending(dt)
+    k = 0
+    loop k < blasts.len():
+        blasts[k].age += dt
+        if blasts[k].age > 0.6:
+            blasts[k] = blasts[blasts.len() - 1]
+            blasts.pop()
+        else: k += 1
+    k = 0
+    loop k < bolts.len():
+        if bolts[k].dead:
+            bolts[k] = bolts[bolts.len() - 1]
+            bolts.pop()
+        else: k += 1
+    k = 0
+    loop k < turrets.len():
+        if turrets[k].dead:
+            turrets[k] = turrets[turrets.len() - 1]
+            turrets.pop()
+        else: k += 1
+    if over: return
+    spawn_wait -= dt
+    if turrets.len() < min_turrets(): spawn_wait = min(spawn_wait, 0.6)
+    if spawn_wait <= 0.0:
+        spawn_group()
+        spawn_wait = spawn_gap()
+
+# ---------------- how it looks ----------------
+COL_PLAYER = rgb(0.35, 0.95, 1.0)
+COL_ENEMY = rgb(1.0, 0.33, 0.42)
+COL_BOLT = rgb(1.0, 0.72, 0.28)
+COL_RETURN = rgb(0.85, 1.0, 1.0)
+
+shake_scale = 1.0               # (a setting: 0 turns screen shake off)
+
+# a few hundred faint stars, placed once
+stars: vec3[] = __make_stars()
+__make_stars = () -> vec3[]:
+    r = rng(7)
+    xs: vec3[]
+    loop i in [0..260): xs.push(vec3(f32(next_float(r) * 1500.0 - 110.0), f32(next_float(r) * 900.0 - 90.0), f32(next_float(r))))
+    xs
+
+draw_floor = ():
+    circle_gradient(CENTER, 760, rgba(0.05, 0.08, 0.14, 1), rgba(0.0, 0.0, 0.02, 1), 64)
+    blend(.add)
+    loop s in stars:
+        tw = 0.5 + 0.5 * sin(elapsed() * (0.6 + f64(s.z) * 1.5) + f64(s.z) * 40.0)
+        circle(vec2(s.x, s.y), f64(0.6 + s.z * 1.2), rgba(0.7, 0.85, 1, f32(0.08 + 0.25 * tw * f64(s.z))), 6)
+    blend(.alpha)
+    # the rings and spokes of the arena
+    loop i in [0..24):
+        a = TAU * f64(i) / 24.0
+        line(polar(a, ORBIT_R + 26.0), polar(a, TURRET_FAR + 26.0), 1, rgba(0.6, 0.8, 1, 0.035))
+    ring(CENTER, TURRET_NEAR - 26.0, 1, rgba(0.6, 0.8, 1, 0.05), 96)
+    ring(CENTER, TURRET_FAR + 26.0, 1.5, rgba(0.6, 0.8, 1, 0.07), 128)
+    ring(CENTER, ORBIT_R, 2, rgba(0.35, 0.95, 1, 0.1), 96)
+    # how far to the next upgrade: around the outer ring
+    if xp > 0: arc(CENTER, TURRET_FAR + 26.0, 3, -PI / 2.0, -PI / 2.0 + TAU * f64(xp) / f64(xp_need), rgba(0.35, 0.95, 1, 0.3))
+
+dashed = (a: vec2, b: vec2, thickness: f64, c: vec4):
+    l = f64(length(b - a))
+    d = normalize(b - a)
+    t = 0.0
+    loop t < l:
+        line(a + d * f32(t), a + d * f32(min(t + 10.0, l)), thickness, c)
+        t += 18.0
+
+# where the bolts on their way will meet the shield's ring, and (for the next one to arrive)
+# where the shield would send it from where it is now
+draw_marks = (aim_help: bool):
+    next_t = 1.2
+    next_a = 0.0
+    loop b in bolts:
+        if b.mine or b.dead: continue
+        d = dist_c(b.pos) - ORBIT_R
+        if d < 0.0: continue
+        t = d / f64(length(b.vel))
+        a = angle_c(b.pos)
+        if t < 1.6: arc(CENTER, ORBIT_R, 5, a - 0.07, a + 0.07, with_alpha(COL_BOLT, f32(0.8 * (1.0 - t / 1.6))))
+        if t < next_t:
+            next_t = t
+            next_a = a
+    if aim_help and next_t < 1.2:
+        off = catch_offset(next_a)
+        if off > -2.0:
+            p = polar(next_a, ORBIT_R)
+            out = next_a + off * DEFLECT
+            alpha = f32(0.4 * (1.0 - next_t / 1.2))
+            if let tp = turret_pos(aim_at(p, out, -1)): dashed(p, tp, 2, with_alpha(COL_PLAYER, alpha))
+            else: dashed(p, p + from_angle(out) * 90.0, 2, with_alpha(COL_PLAYER, alpha * 0.5))
+    # turrets about to fire: a line along the way the bolt will come
+    loop t in turrets:
+        if t.charge < 0.0: continue
+        k = f32(1.0 - t.charge / TELEGRAPH)
+        line(polar(t.a, t.r - 20.0), polar(t.a, ORBIT_R + 14.0), 1.5, with_alpha(COL_BOLT, 0.06 + 0.3 * k))
+
+# a regular polygon around p, the first corner toward angle a
+shape = (p: vec2, n: int, size: f64, a: f64) -> vec2[]:
+    pts: vec2[]
+    loop i in [0..n): pts.push(p + from_angle(a + TAU * f64(i) / f64(n)) * f32(size))
+    pts
+
+draw_turret = (t: Turret):
+    if t.age < 0.0: return
+    p = polar(t.a, t.r)
+    grow = ease_out_back(clamp(t.age, 0.0, 1.0))
+    if t.age < 1.0: ring(p, 46.0 * (1.0 - t.age) + 10.0, 2, with_alpha(COL_ENEMY, f32(t.age)), 32)
+    size = 19.0 * grow
+    col = lerp(COL_ENEMY, rgb(1, 1, 1), f32(t.flash))
+    inward = t.a + PI
+    glow = 0.0
+    if t.charge >= 0.0: glow = 1.0 - t.charge / TELEGRAPH
+    blend(.add)
+    circle_gradient(p, 30.0 + 12.0 * glow, with_alpha(lerp(COL_ENEMY, COL_BOLT, f32(glow)), f32(0.12 + 0.35 * glow)), rgba(0, 0, 0, 0), 24)
+    blend(.alpha)
+    if t.kind == .orbiter:
+        ring(p, size * 1.7, 1.5, with_alpha(col, 0.45), 24)
+        circle(p + from_angle(elapsed() * 3.0 * sign(t.spin)) * f32(size * 1.7), 3, col)
+    if t.kind == .armored:
+        polygon(shape(p, 6, size * 1.35, inward), rgb(0.35, 0.12, 0.16))
+        if t.hp > 1: polyline(shape(p, 6, size * 1.35, inward), 3, col, true)
+    if t.kind == .splitter:
+        polygon(shape(p, 4, size * 1.25, inward), col)
+        line(p - from_angle(inward) * f32(size * 1.25), p + from_angle(inward) * f32(size * 1.25), 3, rgb(0.1, 0.03, 0.06))
+    else:
+        tip = p + from_angle(inward) * f32(size * 1.3)
+        triangle(tip, p + from_angle(inward + 2.4) * f32(size), p + from_angle(inward - 2.4) * f32(size), col)
+        if t.kind == .burst:
+            q = p - from_angle(inward) * f32(size * 0.9)
+            triangle(q + from_angle(inward) * f32(size * 0.8), q + from_angle(inward + 2.4) * f32(size * 0.6), q + from_angle(inward - 2.4) * f32(size * 0.6), col)
+    if t.volatile:
+        circle(p, 4.0 + 1.5 * sin(elapsed() * 8.0), COL_BOLT)
+    if glow > 0.0:
+        circle(p + from_angle(inward) * f32(size * 1.3), 3.0 + 5.0 * glow, with_alpha(COL_BOLT, f32(0.4 + 0.6 * glow)))
+
+draw_bolts = ():
+    blend(.add)
+    loop b in bolts:
+        c = COL_BOLT
+        if b.mine: c = COL_RETURN
+        n = b.trail.len()
+        loop i in 0.. and q in b.trail:
+            k = 1.0 - f64(i) / f64(n)
+            circle(q, b.size * (0.3 + 0.6 * k), with_alpha(c, f32(0.35 * k)), 10)
+        circle_gradient(b.pos, b.size * 3.5, with_alpha(c, 0.5), with_alpha(c, 0), 16)
+    blend(.alpha)
+    loop b in bolts:
+        if b.mine: circle(b.pos, b.size * 0.8, rgb(1, 1, 1), 12)
+        else: polygon(shape(b.pos, 4, b.size, angle(b.vel)), rgb(1, 0.92, 0.7))
+
+draw_blasts = ():
+    blend(.add)
+    loop x in blasts:
+        k = x.age / 0.6
+        r = x.r * ease_out(min(k * 1.4, 1.0))
+        c = lerp(COL_BOLT, COL_ENEMY, f32(k))
+        if x.depth < 0: c = COL_PLAYER
+        ring(x.pos, r, 10.0 * (1.0 - k) + 1.0, with_alpha(c, f32(1.0 - k)), 48)
+        if k < 0.35: circle_gradient(x.pos, x.r * 0.7, rgba(1, 0.95, 0.85, f32((0.35 - k) * 2.0)), rgba(1, 0.6, 0.3, 0), 32)
+    blend(.alpha)
+
+draw_core = ():
+    pulse = 1.0 + 0.04 * sin(elapsed() * 3.0)
+    blend(.add)
+    circle_gradient(CENTER, 140, rgba(0.4, 0.9, 1, 0.22), rgba(0.4, 0.9, 1, 0), 48)
+    blend(.alpha)
+    if over and core_hp <= 0:
+        ring(CENTER, CORE_R + 40.0 * over_time, 3, rgba(0.6, 1, 1, f32(max(1.0 - over_time, 0.0))), 48)
+        return
+    circle(CENTER, CORE_R * pulse, rgb(0.85, 0.98, 1), 40)
+    circle(CENTER, CORE_R * 0.55 * pulse, rgb(1, 1, 1), 32)
+    loop i in [0..3):
+        r = CORE_R + 9.0 + 7.0 * f64(i)
+        if i < core_hp: ring(CENTER, r, 3, rgba(0.35, 0.95, 1, 0.75), 48)
+        else: ring(CENTER, r, 2, rgba(1, 0.3, 0.4, 0.18), 48)
+
+draw_shield = (a: f64):
+    h = shield_half()
+    blend(.add)
+    arc(CENTER, ORBIT_R, 30, a - h, a + h, with_alpha(COL_PLAYER, f32(0.1 + 0.3 * shield_glow)))
+    blend(.alpha)
+    c = lerp(COL_PLAYER, rgb(1, 1, 1), f32(shield_glow))
+    arc(CENTER, ORBIT_R, 9, a - h, a + h, c)
+    circle(polar(a - h, ORBIT_R), 4.5, c, 12)
+    circle(polar(a + h, ORBIT_R), 4.5, c, 12)
+    circle(polar(a, ORBIT_R + 9.0), 2.5, rgb(1, 1, 1), 8)        # (its middle)
+
+draw_popups = ():
+    loop p in popups:
+        k = p.age / 1.2
+        text_centered(p.s, p.pos + vec2(0, f32(-40.0 * ease_out(k))), p.size, with_alpha(p.color, f32(min(2.0 - 2.0 * k, 1.0))))
+
+draw_arena = (aim_help: bool, shift: f64 = 0.0):
+    push_transform()
+    s = shake * shake_scale
+    translate(shift + random(-s, s), random(-s, s))
+    draw_floor()
+    draw_marks(aim_help)
+    loop t in turrets: draw_turret(t)
+    draw_blasts()
+    draw_bolts()
+    draw_core()
+    if not over:
+        draw_shield(shield)
+        if has(.twin) > 0: draw_shield(shield + PI)
+    draw(sparks)
+    draw_popups()
+    pop_transform()
+    if flash > 0.0:
+        v = visible_rect()
+        rect(f64(v.x), f64(v.y), f64(v.z), f64(v.w), rgba(1, 0.25, 0.3, f32(flash * 0.3)))
+
+# a small picture of each upgrade, for its card
+draw_upgrade_icon = (u: int, p: vec2, s: f64):
+    c = COL_PLAYER
+    if u == int(Up.wide): arc(p + vec2(0, f32(s * 0.6)), s, 6, -PI / 2.0 - 1.1, -PI / 2.0 + 1.1, c)
+    else if u == int(Up.twin):
+        arc(p, s * 0.7, 6, -PI / 2.0 - 0.6, -PI / 2.0 + 0.6, c)
+        arc(p, s * 0.7, 6, PI / 2.0 - 0.6, PI / 2.0 + 0.6, c)
+        circle(p, s * 0.25, rgb(0.85, 0.98, 1))
+    else if u == int(Up.fork):
+        loop k in [-1.0, 0.0, 1.0]: line(p + vec2(0, f32(s * 0.6)), p + from_angle(-PI / 2.0 + k * 0.6) * f32(s * 0.8), 4, c)
+    else if u == int(Up.blast):
+        ring(p, s * 0.75, 5, COL_BOLT, 32)
+        ring(p, s * 0.4, 3, COL_ENEMY, 24)
+    else if u == int(Up.pierce):
+        line(p - vec2(f32(s), 0), p + vec2(f32(s), 0), 4, c)
+        triangle(p + vec2(f32(s * 1.2), 0), p + vec2(f32(s * 0.7), f32(-s * 0.35)), p + vec2(f32(s * 0.7), f32(s * 0.35)), c)
+        polygon(shape(p - vec2(f32(s * 0.2), 0), 3, s * 0.4, PI), COL_ENEMY)
+    else if u == int(Up.nova):
+        ring(p, s * 0.85, 3, c, 40)
+        ring(p, s * 0.55, 2, with_alpha(c, 0.6), 32)
+        circle(p, s * 0.25, rgb(1, 1, 1))
+    else:
+        loop i in [0..3): ring(p, s * (0.35 + 0.2 * f64(i)), 3, c, 32)
+        line(p + vec2(f32(s * 0.7), f32(-s * 0.95)), p + vec2(f32(s * 0.7), f32(-s * 0.35)), 4, rgb(1, 1, 1))
+        line(p + vec2(f32(s * 0.4), f32(-s * 0.65)), p + vec2(f32(s * 1.0), f32(-s * 0.65)), 4, rgb(1, 1, 1))
+
+# ---------------- the screens around the arena ----------------
+enum Screen: title, settings, play, paused, over
+
+struct Settings:
+    music = 0.6
+    sound = 0.8
+    shake = true
+    fullscreen = false
+
+screen = Screen.title
+entered = 0                     # the frame the screen was entered in (its menu waits a frame)
+frame = 0
+settings_back = Screen.title    # where the settings screen returns to
+settings = Settings()
+best = 0
+best_chain = 0
+runs = 0                        # runs played (the first few show how to play)
+new_best = false
+card = 1                        # the upgrade card with the focus
+choice_age = 0.0                # how long the upgrade cards have been up
+pad_x = 0.0
+music_id = -1
+
+# ---------------- saving ----------------
+save_best = (): save_data("best", "score {best}\nchain {best_chain}\nruns {runs}")
+
+save_settings = ():
+    save_data("settings", "music {settings.music}\nsound {settings.sound}\nshake {settings.shake}\nfullscreen {settings.fullscreen}")
+
+load_saved = ():
+    if let s = load_data("settings"):
+        loop line in split(s, "\n"):
+            w = split(line, " ")
+            if w.len() < 2: continue
+            if w[0] == "music": settings.music = clamp(to_float(w[1]) ?? 0.6, 0.0, 1.0)
+            else if w[0] == "sound": settings.sound = clamp(to_float(w[1]) ?? 0.8, 0.0, 1.0)
+            else if w[0] == "shake": settings.shake = w[1] == "true"
+            else if w[0] == "fullscreen": settings.fullscreen = w[1] == "true"
+    if let s = load_data("best"):
+        loop line in split(s, "\n"):
+            w = split(line, " ")
+            if w.len() < 2: continue
+            if w[0] == "score": best = max(to_int(w[1]) ?? 0, 0)
+            else if w[0] == "chain": best_chain = max(to_int(w[1]) ?? 0, 0)
+            else if w[0] == "runs": runs = max(to_int(w[1]) ?? 0, 0)
+    apply_settings()
+
+apply_settings = ():
+    sound_volume = settings.sound
+    shake_scale = 0.0
+    if settings.shake: shake_scale = 1.0
+
+# ---------------- music ----------------
+theme = mix([
+    melody_loop("A2 . A3 A2 . A2 G3 A2 F2 . F3 F2 . F2 E3 F2 C3 . C4 C3 . C3 B3 C3 G2 . G3 G2 . G2 B2 D3", 124.0, .saw, 0.07),
+    melody_loop("E5 - - - D5 - C5 - A4 - - - - - - - G4 - - - A4 - C5 - D5 - - - - - E5 -", 124.0, .triangle, 0.06),
+])
+snd_move = tone(660.0, 0.05, .triangle, 0.2, 0.001, 0.04)
+
+music = ():
+    if music_id < 0: music_id = play(theme, settings.music, looping = true)
+    set_volume(music_id, settings.music)
+
+# ---------------- flow ----------------
+go = (s: Screen):
+    screen = s
+    entered = frame
+
+start_run = ():
+    new_run(time_ns(), false)
+    go(.play)
+
+end_run = ():
+    runs += 1
+    new_best = score > best
+    if new_best: best = score
+    best_chain = max(best_chain, chain_best)
+    save_best()
+    go(.over)
+
+update = (dt: f64):
+    frame += 1
+    if screen == .play:
+        if choices.len() > 0:
+            choice_age += dt
+            return
+        choice_age = 0.0
+        if key_pressed(.escape) or key_pressed(.p) or gamepad_pressed(.start):
+            go(.paused)
+            return
+        step(dt)
+        if over and over_time > 1.8: end_run()
+    else if screen == .over: step(dt)
+    else if screen == .title or (screen == .settings and settings_back == .title):
+        # the game plays itself behind the title
+        step(dt)
+        if over and over_time > 3.0: new_run(frame, true)
+
+# ---------------- drawing ----------------
+dim = (a: f32 = 0.55):
+    v = visible_rect()
+    rect(f64(v.x), f64(v.y), f64(v.z), f64(v.w), rgba(0.0, 0.01, 0.03, a))
+
+# a menu that waits for the frame after its screen was entered (the key that opened it is
+# still down in that frame)
+menu = (name: str, at: vec2) -> bool:
+    ui_begin(name, at)
+    frame > entered
+
+# 12,345
+commas = (n: int) -> str:
+    if n < 1000: return "{n}"
+    r = n % 1000
+    if r < 10: return "{commas(n / 1000)},00{r}"
+    if r < 100: return "{commas(n / 1000)},0{r}"
+    "{commas(n / 1000)},{r}"
+
+time_str = (t: f64) -> str:
+    m = int(t / 60.0)
+    s = int(t) - m * 60
+    if s < 10: return "{m}:0{s}"
+    "{m}:{s}"
+
+# words over lines no wider than w
+wrap_text = (s: str, w: f64, size: f64) -> str[]:
+    lines: str[]
+    cur = ""
+    loop word in split(s, " "):
+        next = word
+        if cur != "": next = "{cur} {word}"
+        if cur != "" and text_width(next, size) > w:
+            lines.push(cur)
+            cur = word
+        else: cur = next
+    if cur != "": lines.push(cur)
+    lines
+
+draw = ():
+    clear(rgb(0.0, 0.0, 0.02))
+    post_effects(0.8, 0.6, 0.5, 1.1)
+    if screen == .title:
+        draw_arena(false, 250.0)
+        draw_title()
+    else if screen == .settings and settings_back == .title:
+        draw_arena(false, 250.0)
+        draw_settings()
+    else if screen == .settings:
+        draw_arena(false)
+        draw_hud()
+        draw_settings()
+    else:
+        draw_arena(screen == .play and runs < 5)
+        draw_hud()
+        if screen == .play and choices.len() > 0: draw_choices()
+        else if screen == .paused: draw_pause()
+        else if screen == .over: draw_over()
+
+draw_hud = ():
+    text(commas(score), vec2(32, 18), 46, rgb(1, 1, 1))
+    text("x{mult()}", vec2(f32(44.0 + text_width(commas(score), 46.0)), 30), 30, with_alpha(COL_PLAYER, f32(0.5 + 0.5 * min(f64(streak) / 4.0, 1.0))))
+    text("best {commas(max(best, score))}", vec2(34, 72), 20, rgba(1, 1, 1, 0.45))
+    t = time_str(run_time)
+    text(t, vec2(f32(1248.0 - text_width(t, 30.0)), 22), 30, rgba(1, 1, 1, 0.6))
+    if screen != .play or over: return
+    # the first runs: how to play
+    hint = ""
+    if catches == 0 and run_time > 1.5: hint = "turn the shield (left / right, or the mouse) to catch the bolts"
+    else if catches >= 3 and catches < 14 and banks == 0 and runs < 3: hint = "catch near the shield's edge to bank a bolt to another turret: double points"
+    if hint != "" and runs < 5: text_centered(hint, vec2(640, 690), 22, rgba(1, 1, 1, 0.7))
+
+# a dark panel on the left, fading out to the right
+side_panel = ():
+    v = visible_rect()
+    c = rgba(0, 0.01, 0.03, 0.88)
+    rect(f64(v.x), f64(v.y), 560.0 - f64(v.x), f64(v.w), c)
+    top = v.y
+    bottom = v.y + v.w
+    quad_gradient(vec2(560, top), vec2(760, top), vec2(760, bottom), vec2(560, bottom), c, with_alpha(c, 0), with_alpha(c, 0), c)
+
+draw_title = ():
+    # (the game plays itself on the right)
+    side_panel()
+    text_centered("R E B O U N D", vec2(330, 170), 76, rgb(1, 1, 1))
+    text_centered("catch the bolts.  send them back.", vec2(330, 240), 26, with_alpha(COL_PLAYER, 0.9))
+    on = menu("title", vec2(330, 350))
+    if ui_button("Play") and on: start_run()
+    if ui_button("Settings") and on:
+        settings_back = .title
+        go(.settings)
+    when TARGET != "wasm":
+        if ui_button("Quit") and on: quit()
+    ui_end()
+    if best > 0: text_centered("best {commas(best)}    longest chain {best_chain}", vec2(330, 560), 24, rgba(1, 0.85, 0.5, 0.85))
+    text_centered("left / right or the mouse turn the shield", vec2(330, 650), 18, rgba(1, 1, 1, 0.5))
+    text_centered("escape to pause", vec2(330, 676), 18, rgba(1, 1, 1, 0.5))
+
+draw_settings = ():
+    if settings_back == .title: side_panel()
+    else: dim(0.75)
+    text_centered("Settings", vec2(330, 150), 64, rgb(1, 1, 1))
+    on = menu("settings", vec2(330, 290))
+    was = settings
+    settings.music = ui_slider("Music", settings.music)
+    settings.sound = ui_slider("Sounds", settings.sound)
+    settings.shake = ui_switch("Screen shake", settings.shake)
+    when TARGET != "wasm":
+        settings.fullscreen = ui_switch("Fullscreen", settings.fullscreen)
+    back = ui_button("Back") or ui_back()
+    ui_end()
+    apply_settings()
+    if settings.sound != was.sound: play(snd_move, 0.8 * settings.sound)
+    if settings.music != was.music: music()
+    if settings.fullscreen != was.fullscreen: set_fullscreen(settings.fullscreen)
+    if back and on:
+        save_settings()
+        go(settings_back)
+
+draw_pause = ():
+    dim()
+    text_centered("Paused", vec2(640, 200), 64, rgb(1, 1, 1))
+    on = menu("pause", vec2(640, 320))
+    if (ui_button("Resume") or ui_back() or gamepad_pressed(.start) or key_pressed(.p)) and on: go(.play)
+    if ui_button("Start again") and on: start_run()
+    if ui_button("Settings") and on:
+        settings_back = .paused
+        go(.settings)
+    if ui_button("Leave to the title") and on:
+        new_run(frame, true)
+        go(.title)
+    ui_end()
+
+draw_choices = ():
+    dim(0.6)
+    n = choices.len()
+    text_centered("choose an upgrade", vec2(640, 170), 44, rgb(1, 1, 1))
+    ready = choice_age > 0.35         # (a key held from playing does not choose)
+    sx = gamepad_axis(0)
+    left = key_typed(.left) or key_typed(.a) or gamepad_pressed(.left) or (sx < -0.6 and pad_x >= -0.6)
+    right = key_typed(.right) or key_typed(.d) or gamepad_pressed(.right) or (sx > 0.6 and pad_x <= 0.6)
+    pad_x = sx
+    if left: card = (card + n - 1) % n
+    if right: card = (card + 1) % n
+    card = clamp(card, 0, n - 1)
+    picked = -1
+    m = mouse_pos()
+    loop i in [0..n):
+        u = choices[i]
+        x = 640.0 + (f64(i) - f64(n - 1) / 2.0) * 330.0
+        r = Rect(f32(x - 150.0), 250, 300, 260)
+        if contains(r, m) and f64(length(mouse_delta())) > 0.0: card = i
+        focus = card == i
+        bg = rgba(0.04, 0.08, 0.13, 0.95)
+        if focus: bg = rgba(0.07, 0.16, 0.22, 0.98)
+        rect(f64(r.x), f64(r.y), f64(r.w), f64(r.h), bg)
+        oc = rgba(1, 1, 1, 0.15)
+        if focus: oc = with_alpha(COL_PLAYER, 0.9)
+        rect_outline(f64(r.x), f64(r.y), f64(r.w), f64(r.h), 3, oc)
+        draw_upgrade_icon(u, vec2(f32(x), 320), 34.0)
+        text_centered(upgrades[u].name, vec2(f32(x), 395), 34, rgb(1, 1, 1))
+        loop j in 0.. and l in wrap_text(upgrades[u].about, 260.0, 20.0):
+            text_centered(l, vec2(f32(x), f32(432.0 + 24.0 * f64(j))), 20, rgba(1, 1, 1, 0.7))
+        if taken[u] > 0: text_centered("({taken[u]} taken)", vec2(f32(x), 495), 16, rgba(1, 1, 1, 0.4))
+        if ready and contains(r, m) and mouse_pressed(.left): picked = i
+        if ready and ((i == 0 and key_pressed(.n1)) or (i == 1 and key_pressed(.n2)) or (i == 2 and key_pressed(.n3))): picked = i
+    if ready and (key_pressed(.enter) or key_pressed(.space) or gamepad_pressed(.a)): picked = card
+    text_centered("left / right and enter, or click", vec2(640, 560), 20, rgba(1, 1, 1, 0.45))
+    if picked >= 0:
+        choose(picked)
+        card = 1
+
+draw_over = ():
+    a = f32(clamp(over_time - 1.8, 0.0, 0.6) / 0.6)
+    dim(0.55 * a)
+    text_centered("the core is lost", vec2(640, 140), 40, rgba(1, 0.5, 0.55, a))
+    text_centered(commas(score), vec2(640, 225), 96, rgba(1, 1, 1, a))
+    if new_best: text_centered("a new best!", vec2(640, 300), 30, with_alpha(COL_BOLT, a))
+    else: text_centered("best {commas(best)}", vec2(640, 300), 26, rgba(1, 1, 1, 0.55 * a))
+    text_centered("{kills} turrets    longest chain {chain_best}    {banks} bank shots    {time_str(run_time)}", vec2(640, 350), 22, rgba(1, 1, 1, 0.75 * a))
+    parts: str[]
+    loop i in 0.. and n in taken:
+        if n == 1: parts.push(upgrades[i].name)
+        else if n > 1: parts.push("{upgrades[i].name} x{n}")
+    if parts.len() > 0: text_centered(join(parts, "   "), vec2(640, 385), 20, with_alpha(COL_PLAYER, 0.7 * a))
+    on = menu("over", vec2(640, 470))
+    if (ui_button("Again") or key_pressed(.r)) and on: start_run()
+    if ui_button("Title") and on:
+        new_run(frame, true)
+        go(.title)
+    ui_end()
+
+window("Rebound", 1280, 720)
+load_saved()
+when TARGET != "wasm":
+    if settings.fullscreen: set_fullscreen(true)
+new_run(1, true)
+music()

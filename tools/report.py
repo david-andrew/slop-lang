@@ -152,7 +152,7 @@ hello = os.path.join(BUILD, "hello.jo")
 open(hello, "w").write('print("hello, world")\n')
 t = wall_time([SLOPPY, hello])
 say(f"| hello world | 1 | {t * 1000:.0f} ms |")
-for g in ["examples/lumen/lumen.jo", "examples/dunes/dunes.jo"]:
+for g in ["examples/rebound/rebound.jo", "examples/dunes/dunes.jo"]:
     n = len(open(g).read().splitlines())
     t = wall_time([SLOPPY, "build", g, "-o", f"{BUILD}/g"])
     say(f"| {g} (compile only) | {n} | {t * 1000:.0f} ms |")
@@ -316,7 +316,7 @@ say()
 chrome = shutil.which("google-chrome") or shutil.which("chromium")
 webdir = os.path.join(ROOT, "build", "report-web")
 os.makedirs(webdir, exist_ok=True)
-for g in ["lumen", "dunes"]:
+for g in ["rebound", "dunes"]:
     html = os.path.join(webdir, f"{g}.html")
     r = run([SLOPPY, "build", f"examples/{g}/{g}.jo", "-o", html, "--target", "wasm"])
     text = open(html).read()
@@ -345,7 +345,7 @@ say()
 if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
     say("| game | mode | frame CPU time (update + draw + submit) | pixels, how frames reach the screen | screenshot |")
     say("|---|---|---|---|---|")
-    for g in ["lumen", "dunes"]:
+    for g in ["rebound", "dunes"]:
         for mode in ["debug", "release"]:
             exe = f"{BUILD}/{g}_{mode}"
             run([SLOPPY, "build", f"examples/{g}/{g}.jo", "-o", exe] + (["--release"] if mode == "release" else []))
@@ -371,7 +371,7 @@ say()
 say("| game | software frame CPU time | mean abs difference vs GPU frame (0-255) |")
 say("|---|---|---|")
 has_display = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-for g in ["cube", "lumen", "dunes"]:
+for g in ["cube", "rebound", "dunes"]:
     src = f"examples/{g}.jo" if g == "cube" else f"examples/{g}/{g}.jo"
     exe = f"{BUILD}/{g}_sw"
     run([SLOPPY, "build", src, "-o", exe, "--release"])

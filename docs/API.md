@@ -368,6 +368,7 @@ sfx_whoosh = () -> Sound
 sfx_chime = () -> Sound
 note_freq = (name: str) -> f64    # note name ("C4", "F#3", "Bb5") to frequency in Hz
 melody = (notes: str, bpm: f64 = 120.0, wave: Wave = .triangle, volume: f64 = 0.3, step: f64 = 0.5) -> Sound    # render a melody: notes separated by spaces, "-" holds the previous note, "." is a rest
+melody_loop = (notes: str, bpm: f64 = 120.0, wave: Wave = .triangle, volume: f64 = 0.3, step: f64 = 0.5) -> Sound    # a melody made to be played with looping = true: exactly as long as its notes, with the end of the last ones (and their release) carried round to the start, so the loop has no seam
 load_wav = (file: u8[]) -> Sound    # a WAV file's sound: integer samples of 8, 16, 24 or 32 bits or floats of 32 or 64, any number of channels (the first two are used; mono plays on both), any rate (resampled to MIX_RATE). Other files are an error that says what they are.
 ```
 
@@ -429,6 +430,7 @@ quad_gradient = (a: vec2, b: vec2, c: vec2, d: vec2, ca: vec4, cb: vec4, cc: vec
 circle = (center: vec2, radius: f64, c: vec4, segments: int = 0)
 circle_gradient = (center: vec2, radius: f64, inner: vec4, outer: vec4, segments: int = 48)    # circle that fades from `inner` color at the center to `outer` at the edge (glows, soft lights)
 ring = (center: vec2, radius: f64, thickness: f64, c: vec4, segments: int = 48)
+arc = (center: vec2, radius: f64, thickness: f64, start: f64, stop: f64, c: vec4, segments: int = 0)    # part of a ring: from angle `start` to `stop` (radians, clockwise on screen)
 line = (a: vec2, b: vec2, thickness: f64, c: vec4)
 polyline = (points: vec2[], thickness: f64, c: vec4, closed: bool = false)
 polygon = (points: vec2[], c: vec4)    # convex polygon (triangle fan)

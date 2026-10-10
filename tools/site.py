@@ -257,6 +257,18 @@ draw = ():
   <div class="feature"><h3>Runs anywhere it lands</h3><p>Native programs are static executables with no dependencies; web builds are one HTML file. Graphics drivers are optional: there is a software renderer.</p></div>
   <div class="feature"><h3>Self-hosted</h3><p>The compiler is written in Sloppy and compiles itself, even in this site's playground, where it runs as WebAssembly.</p></div>
 </section>
+<section class="showcase">
+  <a href="rebound/"><img src="assets/rebound.png" alt="Rebound: a shield arcs around a glowing core; a chain of blasts runs through a line of turrets"></a>
+  <div>
+    <h2>Rebound</h2>
+    <p>A complete arcade game in one file of Sloppy. Turn the shield to catch the turrets' bolts and send
+    them back: blasts set off the turrets beside them, catches near the shield's edge bank off to other
+    turrets, and every few turrets you choose an upgrade. Menus, settings, a saved best score, and sound
+    made by the built-in synthesizer.</p>
+    <div class="buttons"><a class="btn primary" href="rebound/">Play it</a><a class="btn" href="playground/#example=rebound">Change it in the playground</a>
+    <a class="btn" href="https://github.com/david-andrew/sloppy-lang/blob/master/examples/rebound/rebound.jo">Read the source</a></div>
+  </div>
+</section>
 <section class="strip">
   <h2>Numbers, arrays, and the rest</h2>
   <pre><code class="sloppy">fib = (n: int) -> int:
@@ -289,6 +301,10 @@ def main():
     t = t.replace('<title>Sloppy playground</title>', '<title>Sloppy playground</title><link rel="icon" href="../icon-32.png">'
                   + preview_meta("Sloppy playground", "Write and run Sloppy programs and games in your browser: the compiler itself runs here, as WebAssembly.", "playground/"), 1)
     open(pg, "w").write(t)
+    # Rebound, to play (sloppy-lang.org/rebound/)
+    os.makedirs(os.path.join(out, "rebound"))
+    subprocess.run([os.path.join(root, "bin", "sloppy"), "build", os.path.join(root, "examples", "rebound", "rebound.jo"), "--target", "wasm",
+                    "-o", os.path.join(out, "rebound", "index.html")], check=True, env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")))
     # curl -fsSL .../install | bash
     shutil.copy(os.path.join(root, "tools", "install.sh"), os.path.join(out, "install"))
     # irm https://sloppy-lang.org/install.ps1 | iex
