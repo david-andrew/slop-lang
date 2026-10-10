@@ -1,0 +1,2283 @@
+# BREAKWATER - hold a relay platform at sea against wave after wave of raiders, in first person.
+#
+# Your shield takes the hits first and comes back if you stay out of fire for a few seconds;
+# your health does not, until the wave is over. You carry two weapons: the caster's bolts strip
+# shields twice as fast but it overheats, and the rifle finishes what is left (aim for heads).
+# Grenades bounce, and a melee strike hits hard up close. How many waves can you hold?
+#
+# Mouse: look (click to capture it), W A S D: move, Space: jump, left button: fire, R: reload,
+# Q or the wheel: swap weapons, G or the right button: grenade, F or V: melee. A gamepad works
+# too (triggers fire and throw, B melee, Y swap, X reload).
+
+build:
+    output = "breakwater"
+    name = "Breakwater"
+    icon = "icon.png"
+
+# ---------------- tuning ----------------
+const STEP = 1.0 / 120.0        # the simulation's fixed step (seconds)
+const RUN = 6.0                 # m/s
+const ACCEL = 70.0              # m/s² on the ground; in the air, a third of it
+const GRAVITY = 18.0
+const JUMP = 6.8                # (1.3 m high)
+const RADIUS = 0.4
+const EYE = 1.62
+const STEP_UP = 0.45            # what feet climb without a jump
+const SHIELD = 80.0
+const HEALTH = 60.0
+const RECHARGE_WAIT = 3.5       # seconds out of fire before the shield comes back,
+const RECHARGE = 40.0           # at this many points a second
+const HALF_X = 28.0             # the deck: 56 by 44 m
+const HALF_Z = 22.0
+const MAX_ALIVE = 8
+const MAX_FIRING = 3            # raiders shooting at once
+
+const RIFLE_MAG = 36
+const RIFLE_GAP = 0.105         # seconds between shots
+const RIFLE_RELOAD = 1.6
+const CASTER_GAP = 0.15
+const CASTER_HEAT = 0.085       # per bolt (12 to overheat)
+const VENT = 2.2                # overheated: seconds to cool
+const MELEE_REACH = 2.2
+const LUNGE_REACH = 4.5
+
+# ---------------- small helpers ----------------
+v3 = (x: f64, y: f64, z: f64) -> vec3: vec3(f32(x), f32(y), f32(z))
+flat = (v: vec3) -> vec3: vec3(v.x, 0, v.z)
+# the way a yaw and pitch look (yaw 0: toward -z), and the yaw of a direction
+look_dir = (yaw: f64, pitch: f64) -> vec3: v3(-sin(yaw) * cos(pitch), sin(pitch), -cos(yaw) * cos(pitch))
+yaw_of = (d: vec3) -> f64: atan2(-f64(d.x), -f64(d.z))
+wrap = (a: f64) -> f64: a - TAU * floor((a + PI) / TAU)
+chance = (p: f64) -> bool: random() < p
+# a random direction within `spread` radians of d
+scatter = (d: vec3, spread: f64) -> vec3:
+    side = normalize(cross(d, vec3(0, 1, 0)))
+    if length(side) < 0.5: side = vec3(1, 0, 0)
+    up = cross(side, d)
+    a = random(0.0, TAU)
+    r = spread * sqrt(random())
+    normalize(d + side * f32(cos(a) * r) + up * f32(sin(a) * r))
+
+# ---------------- the platform ----------------
+# Everything solid is a block standing on the deck: a box, or a ramp whose top rises along x or
+# z. Bodies collide with blocks too high to step onto and stand on the rest; shots stop at them.
+struct Block:
+    lo: vec3
+    hi: vec3
+    rise: int                   # 0 a box; a ramp rising toward 1 +x, 2 -x, 3 +z, 4 -z
+    look: int                   # how it is drawn: 0 wall, 1 low cover, 2 platform, 3 tower, 4 gate screen
+
+blocks: Block[]
+gates: vec3[]                   # where raiders arrive
+
+box = (x: f64, z: f64, sx: f64, sz: f64, h: f64, look: int):
+    blocks.push(Block(v3(x - sx / 2.0, 0, z - sz / 2.0), v3(x + sx / 2.0, h, z + sz / 2.0), 0, look))
+
+# the height of a block's top over (x, z), taken inside its footprint
+top_of = (b: Block, x: f32, z: f32) -> f32:
+    if b.rise == 0: return b.hi.y
+    fx = clamp((x - b.lo.x) / (b.hi.x - b.lo.x), f32(0), f32(1))
+    fz = clamp((z - b.lo.z) / (b.hi.z - b.lo.z), f32(0), f32(1))
+    if b.rise == 1: return b.hi.y * fx
+    if b.rise == 2: return b.hi.y * (1.0 - fx)
+    if b.rise == 3: return b.hi.y * fz
+    b.hi.y * (1.0 - fz)
+
+build_platform = ():
+    # the middle: a raised platform with the relay tower, ramps up from east and west, and low
+    # parapets along its long sides
+    box(0, 0, 14, 12, 2, 2)
+    blocks.push(Block(v3(7, 0, -2), v3(13, 2, 2), 2, 2))
+    blocks.push(Block(v3(-13, 0, -2), v3(-7, 2, 2), 1, 2))
+    box(0, 0, 2.4, 2.4, 9, 3)
+    loop s in [-1.0, 1.0]:
+        box(-4.25 * s, 5.7 * s, 4.5, 0.6, 2.9, 1)
+        box(4.25 * s, 5.7 * s, 4.5, 0.6, 2.9, 1)
+    # cover on the deck, the same turned half a circle on the other side
+    loop s in [-1.0, 1.0]:
+        box(-16 * s, 9 * s, 4, 1, 1.1, 1)
+        box(17 * s, 14 * s, 1, 4, 1.1, 1)
+        box(-6 * s, 14.5 * s, 5, 0.8, 2.8, 0)
+        box(9 * s, 9.5 * s, 0.8, 4, 2.8, 0)
+        box(1 * s, 17.5 * s, 1.4, 1.4, 4, 0)
+        box(-16 * s, 17 * s, 1.4, 1.4, 4, 0)
+        box(22 * s, 4 * s, 4, 1, 1.1, 1)
+        box(12 * s, 18.5 * s, 3, 1, 1.1, 1)
+        box(-22.5 * s, 2 * s, 1, 4, 1.1, 1)
+    # the four corners: screened bays the raiders arrive in
+    loop sx in [-1.0, 1.0]:
+        loop sz in [-1.0, 1.0]:
+            box(21 * sx, 20 * sz, 0.8, 4, 3.2, 4)
+            box(26 * sx, 15 * sz, 4, 0.8, 3.2, 4)
+            gates.push(v3(25 * sx, 0, 19 * sz))
+
+# the footprint point nearest p
+nearest_in = (b: Block, p: vec3) -> vec3: vec3(clamp(p.x, b.lo.x, b.hi.x), 0, clamp(p.z, b.lo.z, b.hi.z))
+
+touches = (b: Block, p: vec3, r: f32) -> bool:
+    q = nearest_in(b, p)
+    dx = p.x - q.x
+    dz = p.z - q.z
+    dx * dx + dz * dz < r * r
+
+# what a body (feet at p, radius r) stands on: the highest top under it within a step of its feet
+floor_under = (p: vec3, r: f32) -> f32:
+    y: f32 = 0.0
+    loop b in blocks:
+        if not touches(b, p, r): continue
+        t = top_of(b, p.x, p.z)
+        if t <= p.y + STEP_UP and t > y: y = t
+    y
+
+# p moved out of the blocks too high to step onto, and kept on the deck
+collide = (p0: vec3, r: f32) -> vec3:
+    p = p0
+    loop round in [0..2):
+        loop b in blocks:
+            q = nearest_in(b, p)
+            if top_of(b, q.x, q.z) <= p.y + STEP_UP: continue
+            dx = p.x - q.x
+            dz = p.z - q.z
+            d2 = dx * dx + dz * dz
+            if d2 >= r * r: continue
+            if d2 > 0.000001:
+                d = f32(sqrt(f64(d2)))
+                p.x += dx * (r - d) / d
+                p.z += dz * (r - d) / d
+            else:
+                # (the middle inside: out through the nearest side)
+                l = p.x - b.lo.x
+                rt = b.hi.x - p.x
+                n = p.z - b.lo.z
+                s = b.hi.z - p.z
+                m = min(min(l, rt), min(n, s))
+                if m == l: p.x = b.lo.x - r
+                else if m == rt: p.x = b.hi.x + r
+                else if m == n: p.z = b.lo.z - r
+                else: p.z = b.hi.z + r
+    p.x = clamp(p.x, f32(-HALF_X) + r, f32(HALF_X) - r)
+    p.z = clamp(p.z, f32(-HALF_Z) + r, f32(HALF_Z) - r)
+    p
+
+# something that walks: the player and the raiders
+struct Body:
+    pos: vec3                   # (the feet)
+    vel: vec3
+    radius: f32
+    grounded: bool = false
+
+move_body = (b: mut Body, dt: f64):
+    p = collide(b.pos + vec3(b.vel.x, 0, b.vel.z) * f32(dt), b.radius)
+    b.vel.y -= f32(GRAVITY * dt)
+    p.y += b.vel.y * f32(dt)
+    fl = floor_under(p, b.radius)
+    was = b.grounded
+    b.grounded = false
+    if p.y <= fl:
+        p.y = fl
+        b.vel.y = max(b.vel.y, f32(0))
+        b.grounded = true
+    else if was and b.vel.y <= 0.0 and p.y - fl < 0.35:
+        # (walking down a ramp: keep to it)
+        p.y = fl
+        b.vel.y = 0
+        b.grounded = true
+    b.pos = p
+
+# along one axis: the part of [t0, t1] where o + d t is within [lo, hi]
+slab = (o: f32, d: f32, lo: f32, hi: f32, t0: f32, t1: f32) -> (f32, f32):
+    if abs(d) < 0.000001:
+        if o < lo or o > hi: return (f32(1), f32(0))
+        return (t0, t1)
+    a = (lo - o) / d
+    c = (hi - o) / d
+    if a > c: return (max(t0, c), min(t1, a))
+    (max(t0, a), min(t1, c))
+
+# how far the ray from o along d (a unit vector) goes before a block or the deck, up to far
+ray_world = (o: vec3, d: vec3, far: f32) -> f32:
+    near_t = far
+    if d.y < 0.0 and o.y >= 0.0:
+        t = -o.y / d.y
+        if t < near_t and abs(o.x + d.x * t) < f32(HALF_X + 1.0) and abs(o.z + d.z * t) < f32(HALF_Z + 1.0): near_t = t
+    loop b in blocks:
+        sx = slab(o.x, d.x, b.lo.x, b.hi.x, 0, near_t)
+        sy = slab(o.y, d.y, 0, b.hi.y, sx.0, sx.1)
+        s = slab(o.z, d.z, b.lo.z, b.hi.z, sy.0, sy.1)
+        if s.0 > s.1: continue
+        if b.rise == 0:
+            near_t = s.0
+            continue
+        # a ramp: where the ray goes under its top
+        under = (t: f32) -> f32: top_of(b, o.x + d.x * t, o.z + d.z * t) - (o.y + d.y * t)
+        f0 = under(s.0)
+        f1 = under(s.1)
+        if f0 >= 0.0: near_t = s.0
+        else if f1 >= 0.0: near_t = s.0 + (s.1 - s.0) * f0 / (f0 - f1)
+    near_t
+
+clear_line = (a: vec3, b: vec3) -> bool:
+    l = length(b - a)
+    if l < 0.01: return true
+    ray_world(a, (b - a) * (1.0 / l), l) >= l - 0.02
+
+# the distance along the ray to a sphere (-1: it misses)
+ray_sphere = (o: vec3, d: vec3, c: vec3, r: f32) -> f32:
+    oc = o - c
+    b = dot(oc, d)
+    q = dot(oc, oc) - r * r
+    dd = b * b - q
+    if dd < 0.0: return -1
+    s = f32(sqrt(f64(dd)))
+    if -b - s >= 0.0: return -b - s
+    if -b + s >= 0.0: return 0
+    -1
+
+# ---------------- paths ----------------
+# The deck as 1 m cells: a cell is walkable if the ground half a meter round it is about as
+# high as at its middle (so walls keep their distance and drops are left alone). Raiders walk
+# down the distances to their goal.
+const GW = 56
+const GH = 44
+cell_y: f32[]
+walkable: bool[]
+cover_cells: int[]              # walkable cells beside something tall enough to hide behind
+fields: {int: int[]} = {}       # distances to a goal cell, by the cell
+
+height_at = (x: f32, z: f32) -> f32:
+    y: f32 = 0.0
+    loop b in blocks:
+        if x >= b.lo.x and x <= b.hi.x and z >= b.lo.z and z <= b.hi.z: y = max(y, top_of(b, x, z))
+    y
+
+cell_of = (p: vec3) -> int:
+    cx = clamp(int(floor(f64(p.x) + HALF_X)), 0, GW - 1)
+    cz = clamp(int(floor(f64(p.z) + HALF_Z)), 0, GH - 1)
+    cz * GW + cx
+
+cell_pos = (c: int) -> vec3: v3(f64(c % GW) + 0.5 - HALF_X, f64(cell_y[c]), f64(c / GW) + 0.5 - HALF_Z)
+
+build_paths = ():
+    cell_y = fill(f32(0), GW * GH)
+    walkable = fill(false, GW * GH)
+    loop c in [0..GW * GH):
+        cell_y[c] = height_at(f32(f64(c % GW) + 0.5 - HALF_X), f32(f64(c / GW) + 0.5 - HALF_Z))
+    loop c in [0..GW * GH):
+        x = c % GW
+        z = c / GW
+        if x == 0 or z == 0 or x == GW - 1 or z == GH - 1 or cell_y[c] > 2.5: continue
+        mid = cell_pos(c)
+        ok = true
+        loop k in [0..12):
+            a = TAU * f64(k) / 12.0
+            y = height_at(mid.x + f32(cos(a) * 0.6), mid.z + f32(sin(a) * 0.6))
+            if abs(y - cell_y[c]) > 0.6: ok = false
+        walkable[c] = ok
+    # cover: a walkable cell two steps from something tall
+    loop c in [0..GW * GH):
+        if not walkable[c]: continue
+        x = c % GW
+        z = c / GW
+        loop d in [(2, 0), (-2, 0), (0, 2), (0, -2)]:
+            nx = x + d.0
+            nz = z + d.1
+            if nx < 0 or nz < 0 or nx >= GW or nz >= GH: continue
+            if cell_y[nz * GW + nx] - cell_y[c] > 1.0:
+                cover_cells.push(c)
+                break
+
+# the distances (in steps) from every cell to goal, over walkable cells
+field_to = (goal: int) -> int[]:
+    if let f = fields.get(goal): return f
+    if fields.len() > 300: fields.clear()
+    dist = fill(1000000, GW * GH)
+    queue: int[] = [goal]
+    dist[goal] = 0
+    k = 0
+    loop k < queue.len():
+        c = queue[k]
+        k += 1
+        x = c % GW
+        z = c / GW
+        loop d in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]:
+            nx = x + d.0
+            nz = z + d.1
+            if nx < 0 or nz < 0 or nx >= GW or nz >= GH: continue
+            n = nz * GW + nx
+            if not walkable[n] or dist[n] <= dist[c] + 1: continue
+            # (diagonals only where both sides are open)
+            if d.0 != 0 and d.1 != 0 and (not walkable[z * GW + nx] or not walkable[nz * GW + x]): continue
+            dist[n] = dist[c] + 1
+            queue.push(n)
+    fields[goal] = dist
+    dist
+
+# the walkable cell nearest c (c itself if it is), looking up to 4 cells away
+walkable_near = (c: int) -> int:
+    if walkable[c]: return c
+    x = c % GW
+    z = c / GW
+    loop r in [1..5):
+        found = -1
+        fd = 1000
+        loop dz in [-r..r + 1):
+            loop dx in [-r..r + 1):
+                nx = x + dx
+                nz = z + dz
+                if nx < 0 or nz < 0 or nx >= GW or nz >= GH: continue
+                n = nz * GW + nx
+                if walkable[n] and dx * dx + dz * dz < fd:
+                    found = n
+                    fd = dx * dx + dz * dz
+        if found >= 0: return found
+    c
+
+# where to head next on the way from p to goal: the neighbor cell nearest the goal (or the
+# goal itself when it is close). Off the walkable cells (pushed into a corner, or a goal on a
+# crate), the nearest walkable cell stands in.
+toward = (p: vec3, goal: vec3) -> vec3:
+    if length(flat(goal - p)) < 2.0: return goal
+    g = walkable_near(cell_of(goal))
+    if not walkable[g]: return goal
+    f = field_to(g)
+    c = cell_of(p)
+    if not walkable[c]:
+        w = walkable_near(c)
+        if w != c: return cell_pos(w)
+    bestc = c
+    x = c % GW
+    z = c / GW
+    loop d in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]:
+        nx = x + d.0
+        nz = z + d.1
+        if nx < 0 or nz < 0 or nx >= GW or nz >= GH: continue
+        n = nz * GW + nx
+        if f[n] < f[bestc]: bestc = n
+    if bestc == c: return goal
+    cell_pos(bestc)
+
+# ---------------- sounds ----------------
+quiet = false                   # (no sound: the balance test)
+snd_rifle = mix([tone(150.0, 0.11, .noise, 0.55, 0.001, 0.1, 0.4), tone(95.0, 0.09, .square, 0.22, 0.001, 0.08, 0.6)])
+snd_caster = mix([tone(1100.0, 0.16, .sine, 0.28, 0.001, 0.14, 0.35), tone(420.0, 0.12, .triangle, 0.2, 0.001, 0.1, 0.6)])
+snd_bolt = mix([tone(700.0, 0.2, .square, 0.12, 0.002, 0.17, 0.45), tone(300.0, 0.15, .sine, 0.2, 0.002, 0.12, 0.5)])
+snd_shell = mix([tone(160.0, 0.5, .square, 0.18, 0.01, 0.4, 2.2), tone(90.0, 0.4, .noise, 0.3, 0.01, 0.35, 0.8)])
+snd_click = tone(2400.0, 0.03, .square, 0.18, 0.001, 0.02)
+snd_clack = mix([tone(900.0, 0.05, .noise, 0.35, 0.001, 0.04), tone(300.0, 0.05, .square, 0.15, 0.001, 0.04)])
+snd_vent = tone(500.0, 0.9, .noise, 0.25, 0.02, 0.8, 0.4)
+snd_boom = mix([sfx_explosion(), tone(55.0, 0.8, .sine, 0.6, 0.002, 0.7, 0.5)])
+snd_pop = mix([tone(1800.0, 0.35, .saw, 0.2, 0.001, 0.3, 0.3), tone(2600.0, 0.2, .noise, 0.25, 0.001, 0.18)])
+snd_crack = mix([tone(1400.0, 0.5, .saw, 0.22, 0.001, 0.45, 0.25), tone(3000.0, 0.15, .noise, 0.3, 0.001, 0.12)])
+snd_charge = tone(330.0, 1.1, .square, 0.1, 0.05, 0.15, 2.4)
+snd_beep = tone(1250.0, 0.09, .square, 0.12, 0.002, 0.05)
+snd_tick = tone(3200.0, 0.025, .sine, 0.22, 0.001, 0.02)
+snd_kill = mix([tone(1600.0, 0.12, .sine, 0.25, 0.001, 0.1), tone(2400.0, 0.12, .sine, 0.15, 0.001, 0.1)])
+snd_squeal = tone(1500.0, 0.5, .square, 0.1, 0.01, 0.3, 1.7, 12.0)
+snd_hit_me = tone(240.0, 0.1, .noise, 0.4, 0.001, 0.08)
+snd_whoosh = sfx_whoosh()
+snd_bounce = tone(700.0, 0.05, .triangle, 0.25, 0.001, 0.04)
+snd_warp = mix([tone(180.0, 1.6, .sine, 0.3, 0.6, 0.3, 3.0), tone(90.0, 1.6, .noise, 0.12, 0.8, 0.3)])
+snd_step = tone(120.0, 0.05, .noise, 0.14, 0.002, 0.04)
+snd_swing = tone(300.0, 0.14, .noise, 0.3, 0.005, 0.12, 2.0)
+snd_smack = mix([tone(110.0, 0.15, .square, 0.35, 0.001, 0.13, 0.5), tone(600.0, 0.08, .noise, 0.4, 0.001, 0.07)])
+snd_horn = mix([tone(146.8, 1.6, .saw, 0.12, 0.1, 0.9), tone(220.0, 1.6, .saw, 0.09, 0.1, 0.9), tone(293.7, 1.6, .triangle, 0.08, 0.2, 0.9)])
+snd_cleared = mix([tone(587.3, 0.9, .sine, 0.22, 0.01, 0.8), tone(880.0, 0.9, .sine, 0.16, 0.12, 0.7), tone(1174.7, 0.9, .sine, 0.12, 0.24, 0.6)])
+theme = mix([
+    melody_loop("D3 - - - - - - - A2 - - - - - - - Bb2 - - - - - - - F2 - - - C3 - - -", 66.0, .triangle, 0.1, 1.0),
+    melody_loop("D4 - - - E4 - F4 - - - E4 - D4 - - - A4 - - - G4 - F4 - - - E4 - - - - - D4 - - - F4 - G4 - - - A4 - - - - - - - - - - -", 66.0, .sine, 0.07, 0.5),
+    melody_loop("A4 - - - - - - - F4 - - - - - - - F4 - - - - - - - A4 - - - G4 - - -", 66.0, .sine, 0.035, 1.0),
+])
+
+sound_volume = 0.8              # (settings)
+
+# a sound, quieter and to one side with distance and direction from the player when it has a place
+sfx = (s: Sound, volume: f64 = 1.0, pitch: f64 = 1.0):
+    if quiet: return
+    play(s, volume * sound_volume, pitch = pitch)
+
+sfx_at = (s: Sound, at: vec3, volume: f64 = 1.0, pitch: f64 = 1.0):
+    if quiet: return
+    d = at - eye()
+    l = f64(length(d))
+    pan = 0.0
+    if l > 0.1: pan = f64(dot(d * f32(1.0 / l), right_of(you.yaw))) * 0.8
+    play(s, volume * sound_volume / (1.0 + l * 0.08), pan, pitch)
+
+# ---------------- the player ----------------
+struct Player:
+    body: Body
+    yaw: f64 = 0.0
+    pitch: f64 = 0.0
+    shield: f64 = SHIELD
+    health: f64 = HEALTH
+    calm: f64 = 10.0            # seconds since the last hit
+    alive: bool = true
+    air: f64 = 0.0              # seconds off the ground (a jump still works just after leaving it)
+    jump_wait: f64 = 1.0        # seconds since jump was pressed (it works just before landing)
+    walked: f64 = 0.0           # meters, for footsteps and the weapon's bob
+    kick: f64 = 0.0             # recoil, settling back
+    shake: f64 = 0.0
+    lunge: int = -1             # the raider a melee strike is lunging at
+    lunge_time: f64 = 0.0
+
+struct Gun:
+    name: str
+    ammo: int = 0               # rounds in the magazine (rifle)
+    heat: f64 = 0.0             # 0 to 1 (caster)
+    vent: f64 = 0.0             # overheated: seconds left to cool
+    wait: f64 = 0.0             # until it can fire
+    reload: f64 = 0.0           # reloading: seconds left
+    bloom: f64 = 0.0            # spread added by firing (rifle), radians
+    flash: f64 = 0.0            # (the muzzle flash)
+
+# what the player does in a step: from the keyboard, mouse and pad, or the autopilot
+struct Controls:
+    move: vec2                  # x right, y forward
+    jump: bool = false
+    fire: bool = false
+    grenade: bool = false
+    melee: bool = false
+    reload: bool = false
+    swap: bool = false
+
+you = Player(Body(v3(0, 2, 0), vec3(0, 0, 0), RADIUS))
+guns = [Gun("RIFLE", RIFLE_MAG), Gun("CASTER")]
+held = 0                        # 0 the rifle, 1 the caster
+swap_time = 0.0                 # lowering one weapon and raising the other
+melee_time = 0.0                # the strike's swing (and its cooldown)
+throw_time = 0.0
+grenades = 2
+recharge_id = -1
+alarm = 0.0
+
+eye = () -> vec3: you.body.pos + vec3(0, f32(EYE), 0)
+aim = () -> vec3: look_dir(you.yaw, you.pitch)
+right_of = (yaw: f64) -> vec3: v3(cos(yaw), 0, -sin(yaw))
+chest = () -> vec3: you.body.pos + vec3(0, 1.2, 0)
+
+# ---------------- raiders ----------------
+enum Kind: skitter, warden, lobber
+enum Mood: roam, hold, retreat, panic, charge
+
+struct Foe:
+    kind: Kind
+    body: Body
+    yaw: f64 = 0.0
+    health: f64 = 0.0
+    shield: f64 = 0.0
+    calm: f64 = 10.0            # seconds since it was hit (its shield returns)
+    mood: Mood = .roam
+    mood_time: f64 = 0.0
+    goal: vec3 = vec3(0, 0, 0)
+    think: f64 = 0.0            # until it next picks a goal
+    sees: bool = false
+    seen: f64 = 0.0             # how long it has had the player in sight
+    unseen: f64 = 0.0           # how long it has not (too long, and it comes looking)
+    look: f64 = 0.0             # until it next checks
+    fire_wait: f64 = 1.5
+    burst: int = 0
+    shot_wait: f64 = 0.0
+    windup: f64 = 0.0
+    flinch: f64 = 0.0
+    dodge: f64 = 0.0
+    dodge_dir: f32 = 1
+    dodge_wait: f64 = 0.0
+    strafe: f32 = 1
+    strafe_time: f64 = 0.0
+    melee_wait: f64 = 0.0
+    shield_flash: f64 = 0.0
+    dead: f64 = -1.0            # seconds since it fell (-1: alive)
+    tip: f32 = 1
+    gait: f64 = 0.0
+    blip: f64 = 9.0             # seconds since it moved fast or fired (the tracker shows it)
+
+struct KindInfo:
+    health: f64
+    shield: f64
+    speed: f64
+    radius: f32
+    points: int
+    name: str
+
+kinds = [KindInfo(45, 0, 4.0, 0.45, 100, "skitter"), KindInfo(70, 70, 3.3, 0.5, 250, "warden"),
+         KindInfo(280, 0, 2.2, 0.8, 400, "lobber")]
+info = (f: Foe) -> KindInfo: kinds[int(f.kind)]
+
+foes: Foe[]
+
+alive = (f: Foe) -> bool: f.dead < 0.0
+foe_eye = (f: Foe) -> vec3:
+    if f.kind == .skitter: return f.body.pos + vec3(0, 1.05, 0)
+    if f.kind == .warden: return f.body.pos + vec3(0, 2.0, 0)
+    f.body.pos + vec3(0, 2.2, 0)
+foe_center = (f: Foe) -> vec3:
+    if f.kind == .skitter: return f.body.pos + vec3(0, 0.65, 0)
+    if f.kind == .warden: return f.body.pos + vec3(0, 1.25, 0)
+    f.body.pos + vec3(0, 1.4, 0)
+muzzle = (f: Foe) -> vec3:
+    fw = look_dir(f.yaw, 0.0)
+    if f.kind == .skitter: return f.body.pos + vec3(0, 0.75, 0) + fw * 0.6
+    if f.kind == .warden: return f.body.pos + vec3(0, 1.3, 0) + fw * 0.8
+    f.body.pos + vec3(0, 2.7, 0) + fw * 0.6
+
+# a sphere h up from p, and whether it is the head
+ball_at = (p: vec3, h: f32, r: f32, head: bool) -> (vec3, f32, bool): (p + vec3(0, h, 0), r, head)
+
+# where a shot along the ray hits a raider: its index (-1: none), the distance, and a head shot
+ray_foes = (o: vec3, d: vec3, far: f32, slack: f32) -> (int, f32, bool):
+    near_t = far
+    who = -1
+    head = false
+    loop i in 0.. and f in foes:
+        if not alive(f): continue
+        p = f.body.pos
+        spheres: (vec3, f32, bool)[] = []
+        if f.kind == .skitter: spheres = [ball_at(p, 0.65, 0.48, false), ball_at(p, 1.08, 0.2, true)]
+        else if f.kind == .warden: spheres = [ball_at(p, 0.55, 0.38, false), ball_at(p, 1.15, 0.42, false), ball_at(p, 1.6, 0.42, false), ball_at(p, 2.02, 0.19, true)]
+        else: spheres = [ball_at(p, 0.7, 0.75, false), ball_at(p, 1.6, 0.9, false)]
+        loop s in spheres:
+            t = ray_sphere(o, d, s.0, s.1 + slack)
+            if t >= 0.0 and t < near_t:
+                near_t = t
+                who = i
+                head = s.2
+    (who, near_t, head)
+
+# ---------------- shots, grenades and effects ----------------
+struct Bolt:
+    pos: vec3
+    vel: vec3
+    damage: f64
+    shield_damage: f64
+    mine: bool                  # the player's (else a raider's)
+    lob: bool                   # a lobber's shell: it falls, and bursts where it lands
+    life: f64
+    target: vec3 = vec3(0, 0, 0)
+    from: vec3 = vec3(0, 0, 0)
+    by: int = 0                 # (the kind that fired it)
+
+struct Nade:
+    pos: vec3
+    vel: vec3
+    fuse: f64 = -1.0            # starts at the first bounce
+    age: f64 = 0.0
+
+struct Spark:
+    pos: vec3
+    vel: vec3
+    life: f64
+    full: f64
+    color: vec4
+    size: f32
+    falls: bool
+
+struct Tracer:
+    a: vec3
+    b: vec3
+    life: f64
+
+struct Flash:
+    pos: vec3
+    color: vec3
+    radius: f64
+    life: f64
+    full: f64
+
+struct Warp:
+    pos: vec3
+    time: f64
+    group: Kind[]
+
+struct Popup:
+    text: str
+    age: f64
+    big: bool
+
+bolts: Bolt[]
+nades: Nade[]
+sparks: Spark[]
+tracers: Tracer[]
+flashes: Flash[]
+warps: Warp[]
+popups: Popup[]
+hurt_from: (vec3, f64)[]        # where hits came from, and how long ago
+hit_mark = 0.0                  # the reticle's hit marker (and a kill's)
+kill_mark = 0.0
+
+burst = (at: vec3, n: int, speed: f64, color: vec4, life: f64, size: f64, falls: bool = true):
+    loop k in [0..n):
+        v = scatter(vec3(0, 1, 0), 2.6) * f32(speed * random(0.3, 1.0))
+        sparks.push(Spark(at, v, life * random(0.6, 1.0), life, color, f32(size * random(0.6, 1.2)), falls))
+
+flash_at = (at: vec3, color: vec3, radius: f64, life: f64): flashes.push(Flash(at, color, radius, life, life))
+
+popup = (text: str, big: bool = false): popups.push(Popup(text, 0.0, big))
+
+# ---------------- score and waves ----------------
+score = 0
+wave = 0
+pending: Kind[]                 # raiders still to arrive this wave
+between = 0.0                   # the break after a wave (seconds left)
+chain = 0                       # kills in quick succession
+chain_time = 0.0
+kills = 0
+shots = 0
+hits = 0
+run_time = 0.0
+over = false
+over_time = 0.0
+damage_by: f64[] = [0, 0, 0, 0] # (the balance test: damage taken from each kind, and own grenades)
+cause = ""
+
+# the raiders of wave n: more each wave, wardens joining early, lobbers from wave 3
+plan = (n: int) -> Kind[]:
+    count = min(4 + 2 * n, 21)
+    lob = 0
+    if n >= 3: lob = 1
+    if n >= 6: lob = 2
+    war = min(1 + n / 2, 7)
+    out: Kind[]
+    loop i in [0..lob): out.push(.lobber)
+    loop i in [0..war): out.push(.warden)
+    loop out.len() < count: out.push(.skitter)
+    # (shuffled, but the lobbers never first)
+    loop i in [1..out.len()):
+        j = random_int(1, out.len())
+        t = out[i]
+        out[i] = out[j]
+        out[j] = t
+    out
+
+# raiders get quicker to fire and hit a little harder, wave by wave
+fierce = () -> f64: min(1.0 + 0.04 * f64(max(wave - 1, 0)), 1.5)
+
+start_wave = (n: int):
+    wave = n
+    pending = plan(n)
+    popup("WAVE {n}", true)
+    sfx(snd_horn, 0.9)
+
+# a group warps in at a bay away from the player (one it cannot see into, if it can)
+open_warp = ():
+    order: int[]
+    loop i in [0..gates.len()): order.push(i)
+    order.sort_by((i: int) -> f32: -length(gates[i] - you.body.pos))
+    pick = order[random_int(0, 2)]
+    group: Kind[]
+    n = min(random_int(2, 5), MAX_ALIVE - count_alive())
+    loop group.len() < n and pending.len() > 0:
+        k = pending.pop()
+        group.push(k)
+        if k == .lobber: break
+    warps.push(Warp(gates[pick], 0.0, group))
+    sfx_at(snd_warp, gates[pick], 1.2)
+
+count_alive = () -> int:
+    n = 0
+    loop f in foes:
+        if alive(f): n += 1
+    n
+
+spawn = (k: Kind, at: vec3):
+    ki = kinds[int(k)]
+    f = Foe(k, Body(at, vec3(0, 0, 0), ki.radius))
+    f.health = ki.health
+    f.shield = ki.shield
+    f.yaw = yaw_of(flat(vec3(0, 0, 0) - at))
+    f.think = random(0.0, 0.6)
+    f.fire_wait = random(1.0, 2.5)
+    f.strafe = f32(random_int(0, 2) * 2 - 1)
+    foes.push(f)
+
+step_waves = (dt: f64):
+    if between > 0.0:
+        between -= dt
+        if between <= 0.0: start_wave(wave + 1)
+        return
+    loop mut w in warps:
+        w.time += dt
+        if w.time >= 1.6:
+            loop i in 0.. and k in w.group:
+                a = TAU * f64(i) / f64(w.group.len())
+                spawn(k, w.pos + v3(cos(a) * 1.4, 0, sin(a) * 1.4))
+            burst(w.pos + vec3(0, 1, 0), 24, 7.0, vec4(1.0, 0.6, 0.25, 1), 0.7, 0.07, false)
+    warps = [loop w in warps if w.time < 1.6: w]
+    n = count_alive()
+    if pending.len() == 0 and n == 0 and warps.len() == 0:
+        # the wave is over: a bonus, health back, another grenade, a breather
+        bonus = 250 * wave
+        score += bonus
+        popup("WAVE {wave} HELD   +{bonus}", true)
+        sfx(snd_cleared, 0.9)
+        you.health = HEALTH
+        grenades = min(grenades + 1, 4)
+        between = 7.0
+        foes = [loop f in foes if alive(f): f]
+        return
+    if pending.len() > 0 and warps.len() == 0 and n < MAX_ALIVE - 1: open_warp()
+
+# a raider is down: points, a chain for quick kills, and fear among the skitters nearby
+killed = (i: int, how: str):
+    f = foes[i]
+    ki = info(f)
+    kills += 1
+    if chain_time > 0.0: chain = min(chain + 1, 5)
+    else: chain = 0
+    chain_time = 3.0
+    pts = ki.points + 50 * chain
+    if how == "head":
+        pts += 50
+        popup("HEADSHOT  +50")
+    if how == "melee":
+        pts += 50
+        popup("STRUCK DOWN  +50")
+    if chain == 1: popup("DOUBLE  +50")
+    else if chain == 2: popup("TRIPLE  +100")
+    else if chain >= 3: popup("RAMPAGE  +{50 * chain}")
+    score += pts
+    kill_mark = 0.3
+    sfx(snd_kill, 0.6)
+    if f.kind == .warden:
+        loop mut o in foes:
+            if alive(o) and o.kind == .skitter and length(o.body.pos - f.body.pos) < 15.0 and chance(0.8):
+                o.mood = .panic
+                o.mood_time = random(2.0, 3.2)
+                o.burst = 0
+                sfx_at(snd_squeal, o.body.pos, 0.7, random(0.9, 1.2))
+    foes[i].dead = 0.0
+    foes[i].tip = f32(random_int(0, 2) * 2 - 1)
+    burst(foe_center(f), 18, 5.0, vec4(1.0, 0.55, 0.2, 1), 0.8, 0.06)
+
+# damage to a raider: shields take shield_damage first (what is left over carries on in proportion)
+hurt_foe = (i: int, damage: f64, shield_damage: f64, head: bool, how: str):
+    if not alive(foes[i]): return
+    f = foes[i]
+    left = 1.0
+    if f.shield > 0.0:
+        f.shield_flash = 0.25
+        if shield_damage >= f.shield:
+            left = (shield_damage - f.shield) / shield_damage
+            f.shield = 0
+            sfx_at(snd_pop, foe_center(f), 0.9)
+            burst(foe_center(f), 26, 6.0, vec4(1.0, 0.75, 0.3, 1), 0.5, 0.05, false)
+            if f.kind == .warden:
+                f.mood = .retreat
+                f.think = 0
+        else:
+            f.shield -= shield_damage
+            left = 0
+    d = damage * left
+    if head and f.shield <= 0.0: d *= 2.2
+    f.health -= d
+    f.calm = 0
+    if f.flinch <= -0.6 and d > 0.0: f.flinch = 0.14
+    if f.kind == .skitter and f.health < 20.0 and f.mood != .panic and chance(0.3):
+        f.mood = .panic
+        f.mood_time = 2.0
+    foes[i] = f
+    hit_mark = 0.15
+    if f.health <= 0.0:
+        if head and f.shield <= 0.0 and how == "shot": killed(i, "head")
+        else: killed(i, how)
+
+# ---------------- the player: moving, weapons, damage ----------------
+hurt = (amount: f64, from: vec3, by: int):
+    if not you.alive or over: return
+    had = you.shield
+    you.calm = 0
+    left = amount
+    if you.shield > 0.0:
+        a = min(you.shield, left)
+        you.shield -= a
+        left -= a
+        if you.shield <= 0.0 and had > 0.0:
+            sfx(snd_crack, 0.8)
+            you.shake = max(you.shake, 0.6)
+    you.health -= left
+    if by >= 0: damage_by[by] += amount
+    hurt_from.push((from, 0.0))
+    you.shake = max(you.shake, 0.25)
+    sfx(snd_hit_me, 0.5)
+    if recharge_id >= 0:
+        stop(recharge_id)
+        recharge_id = -1
+    if you.health <= 0.0:
+        you.health = 0
+        you.alive = false
+        over = true
+        if by == 0: cause = "a skitter"
+        else if by == 1: cause = "a warden"
+        else if by == 2: cause = "a lobber's shell"
+        else: cause = "your own grenade"
+
+blast = (at: vec3, radius: f64, damage: f64, mine: bool):
+    loop i in 0.. and f in foes:
+        if not alive(f) or not mine: continue
+        c = foe_center(f)
+        d = f64(length(c - at))
+        if d > radius or not clear_line(at + vec3(0, 0.3, 0), c): continue
+        k = 1.0 - d / radius
+        hurt_foe(i, damage * k, damage * k, false, "blast")
+        push = normalize(flat(c - at) + vec3(0, 0.01, 0)) * f32(7.0 * k)
+        foes[i].body.vel += push + vec3(0, f32(4.0 * k), 0)
+    d = f64(length(chest() - at))
+    if d < radius and clear_line(at + vec3(0, 0.3, 0), chest()):
+        k = 1.0 - d / radius
+        by = 2
+        if mine: by = 3
+        hurt(damage * k * 0.8, at, by)
+        you.body.vel += normalize(flat(chest() - at) + vec3(0, 0.01, 0)) * f32(6.0 * k) + vec3(0, f32(3.0 * k), 0)
+    you.shake = max(you.shake, clamp(1.2 - d / 20.0, 0.0, 1.0))
+    burst(at + vec3(0, 0.3, 0), 40, 9.0, vec4(1.0, 0.7, 0.3, 1), 0.9, 0.09)
+    burst(at + vec3(0, 0.3, 0), 16, 4.0, vec4(0.25, 0.25, 0.28, 1), 1.4, 0.16)
+    flash_at(at + vec3(0, 1, 0), vec3(1.0, 0.6, 0.25), radius * 2.5, 0.35)
+    sfx_at(snd_boom, at, 1.4)
+    # skitters near a blast run from it
+    loop mut o in foes:
+        if alive(o) and o.kind == .skitter and length(o.body.pos - at) < 8.0 and chance(0.5):
+            o.mood = .panic
+            o.mood_time = 1.5
+
+fire = ():
+    g = guns[held]
+    o = eye()
+    if held == 0:
+        if g.ammo <= 0:
+            if g.reload <= 0.0:
+                g.reload = RIFLE_RELOAD
+                sfx(snd_clack, 0.6)
+            guns[held] = g
+            return
+        g.ammo -= 1
+        g.wait = RIFLE_GAP
+        d = scatter(aim(), 0.009 + g.bloom)
+        g.bloom = min(g.bloom + 0.005, 0.032)
+        you.kick += 0.006
+        shots += 1
+        far = ray_world(o, d, 200)
+        h = ray_foes(o, d, far, 0.0)
+        # (a near miss still counts, just: bullet magnetism, as every shooter has)
+        if h.0 < 0: h = ray_foes(o, d, far, f32(0.08 + 0.006 * f64(far)))
+        stop_at = o + d * far
+        if h.0 >= 0:
+            stop_at = o + d * h.1
+            hits += 1
+            hurt_foe(h.0, 10.0, 7.0, h.2, "shot")
+            c = vec4(1.0, 0.85, 0.5, 1)
+            if foes[h.0].shield > 0.0: c = vec4(1.0, 0.7, 0.3, 1)
+            burst(stop_at, 5, 3.0, c, 0.25, 0.035, false)
+        else if far < 199.0: burst(stop_at, 4, 2.5, vec4(0.9, 0.9, 0.8, 1), 0.3, 0.03)
+        tracers.push(Tracer(gun_muzzle() + d * 1.5, stop_at, 0.05))
+        sfx(snd_rifle, 0.55, random(0.95, 1.05))
+    else:
+        if g.vent > 0.0: return
+        g.wait = CASTER_GAP
+        g.heat += CASTER_HEAT
+        you.kick += 0.004
+        shots += 1
+        d = scatter(aim(), 0.012)
+        # (from the eye, so it goes where the reticle is; it is drawn from the weapon)
+        bolts.push(Bolt(o + d * 0.5, d * 52.0, 13.0, 30.0, true, false, 3.0, from = gun_muzzle()))
+        sfx(snd_caster, 0.5, random(0.95, 1.05))
+        if g.heat >= 1.0:
+            g.heat = 1
+            g.vent = VENT
+            sfx(snd_vent, 0.7)
+    g.flash = 0.05
+    guns[held] = g
+
+throw_grenade = ():
+    grenades -= 1
+    throw_time = 0.45
+    d = aim()
+    nades.push(Nade(eye() + d * 0.5 + right_of(you.yaw) * 0.2 - vec3(0, 0.15, 0), d * 15.0 + vec3(0, 3.5, 0) + you.body.vel * 0.5))
+    sfx(snd_whoosh, 0.6)
+
+# a melee strike: at a raider in reach (lunging at it from a little further), else the air
+strike = ():
+    melee_time = 0.8
+    sfx(snd_swing, 0.6)
+    tgt = -1
+    bd = LUNGE_REACH
+    loop i in 0.. and f in foes:
+        if not alive(f): continue
+        to = foe_center(f) - eye()
+        d = f64(length(flat(to)))
+        if d > bd or abs(f64(foe_center(f).y) - f64(eye().y)) > 2.2: continue
+        if abs(wrap(yaw_of(to) - you.yaw)) > 0.45: continue
+        if not clear_line(eye(), foe_center(f)): continue
+        tgt = i
+        bd = d
+    if tgt < 0: return
+    you.lunge = tgt
+    you.lunge_time = 0.25
+
+land_strike = (i: int):
+    you.lunge = -1
+    f = foes[i]
+    sfx_at(snd_smack, foe_center(f), 1.0)
+    burst(foe_center(f), 12, 4.0, vec4(1.0, 0.8, 0.5, 1), 0.4, 0.05)
+    hurt_foe(i, 70.0, 70.0, false, "melee")
+    foes[i].body.vel += normalize(flat(foe_center(f) - eye())) * 6.0 + vec3(0, 2, 0)
+    foes[i].flinch = 0.3
+    you.shake = max(you.shake, 0.3)
+
+# the weapon's muzzle, in the world (for tracers and bolts as they are drawn)
+gun_muzzle = () -> vec3:
+    o = eye()
+    o + aim() * 0.9 + right_of(you.yaw) * 0.12 - look_up() * 0.11
+
+look_up = () -> vec3: cross(right_of(you.yaw), aim())
+
+step_player = (c: Controls, dt: f64):
+    if not you.alive:
+        you.body.vel.x *= 0.9
+        you.body.vel.z *= 0.9
+        move_body(you.body, dt)
+        return
+    # walking: quick to start and stop on the ground, a third of that in the air
+    fw = flat(look_dir(you.yaw, 0.0))
+    want = (fw * c.move.y + right_of(you.yaw) * c.move.x) * f32(RUN)
+    rate = ACCEL
+    if not you.body.grounded: rate = ACCEL / 3.0
+    hv = flat(you.body.vel)
+    dv = want - hv
+    l = f64(length(dv))
+    if l > rate * dt: dv = dv * f32(rate * dt / l)
+    you.body.vel += dv
+    if you.lunge >= 0:
+        f = foes[you.lunge]
+        to = flat(foe_center(f) - you.body.pos)
+        you.lunge_time -= dt
+        if not alive(f) or you.lunge_time <= 0.0 or length(to) < f32(1.2 + f64(info(f).radius)):
+            if alive(f) and length(to) < f32(MELEE_REACH + f64(info(f).radius)): land_strike(you.lunge)
+            you.lunge = -1
+        else: you.body.vel = normalize(to) * 13.0 + vec3(0, you.body.vel.y, 0)
+    # jumping (a moment after leaving an edge, or pressed a moment before landing, still counts)
+    you.jump_wait += dt
+    if c.jump: you.jump_wait = 0
+    if you.body.grounded: you.air = 0
+    else: you.air += dt
+    if you.jump_wait < 0.1 and you.air < 0.08 and you.body.vel.y <= 0.5:
+        you.body.vel.y = f32(JUMP)
+        you.body.grounded = false
+        you.air = 1
+        you.jump_wait = 1
+    was = you.body.pos
+    move_body(you.body, dt)
+    if you.body.grounded:
+        before = you.walked
+        you.walked += f64(length(flat(you.body.pos - was)))
+        if floor(you.walked / 1.8) != floor(before / 1.8): sfx(snd_step, 0.6, random(0.85, 1.15))
+    # the shield: back after a few quiet seconds
+    you.calm += dt
+    if you.calm >= RECHARGE_WAIT and you.shield < SHIELD:
+        if you.shield <= 0.0 or recharge_id < 0:
+            if recharge_id < 0 and not quiet: recharge_id = play(snd_charge, 0.5 * sound_volume)
+        you.shield = min(SHIELD, you.shield + RECHARGE * dt)
+    if you.shield >= SHIELD: recharge_id = -1
+    if you.shield <= 0.0:
+        alarm -= dt
+        if alarm <= 0.0:
+            alarm = 0.4
+            sfx(snd_beep, 0.6)
+    # the weapons
+    loop mut g in guns:
+        g.wait -= dt
+        g.flash -= dt
+        g.bloom = max(0.0, g.bloom - 0.05 * dt)
+        if g.vent > 0.0:
+            g.vent -= dt
+            g.heat = max(0.0, g.vent / VENT)
+        else if g.wait < -0.25: g.heat = max(0.0, g.heat - 0.6 * dt)
+    rf = guns[0]
+    if rf.reload > 0.0:
+        rf.reload -= dt
+        if rf.reload <= 0.0:
+            rf.ammo = RIFLE_MAG
+            sfx(snd_clack, 0.7, 1.3)
+    guns[0] = rf
+    swap_time -= dt
+    melee_time -= dt
+    throw_time -= dt
+    you.kick = max(0.0, you.kick - you.kick * 12.0 * dt)
+    busy = swap_time > 0.0 or melee_time > 0.5 or throw_time > 0.2
+    if c.swap and swap_time <= 0.0:
+        held = 1 - held
+        swap_time = 0.3
+        guns[0].reload = 0
+        sfx(snd_clack, 0.5, 0.8)
+    else if c.melee and melee_time <= 0.0: strike()
+    else if c.grenade and grenades > 0 and throw_time <= 0.0 and not busy: throw_grenade()
+    else if c.reload and held == 0 and guns[0].ammo < RIFLE_MAG and guns[0].reload <= 0.0 and not busy:
+        guns[0].reload = RIFLE_RELOAD
+        sfx(snd_clack, 0.6)
+    else if c.fire and not busy and guns[held].wait <= 0.0 and (held == 1 or guns[0].reload <= 0.0): fire()
+
+# ---------------- raiders: what they do ----------------
+# A goal near `from`: a walkable cell (or a cover cell) scored by how far it is from the
+# player (wanting lo to hi m), whether it sees the player (wanted or not), and how crowded it is.
+pick_goal = (f: Foe, lo: f64, hi: f64, sight: int, cover: bool) -> vec3:
+    spot = f.body.pos
+    spot_score = -1000000.0
+    target = chest()
+    loop k in [0..14):
+        c = 0
+        if cover and cover_cells.len() > 0: c = cover_cells[random_int(0, cover_cells.len())]
+        else:
+            p = f.body.pos + v3(random(-12.0, 12.0), 0, random(-12.0, 12.0))
+            c = cell_of(p)
+        if not walkable[c]: continue
+        cp = cell_pos(c)
+        d = f64(length(flat(cp - target)))
+        s = -f64(length(flat(cp - f.body.pos))) * 0.3
+        if d < lo: s -= (lo - d) * 3.0
+        if d > hi: s -= (d - hi) * 2.0
+        if sight != 0:
+            sees = clear_line(cp + vec3(0, 1.5, 0), target + vec3(0, 0.4, 0))
+            if sees == (sight > 0): s += 10.0
+        loop o in foes:
+            if alive(o) and length(flat(o.goal - cp)) < 2.5: s -= 6.0
+        if s > spot_score:
+            spot_score = s
+            spot = cp
+    spot
+
+fire_bolt = (f: mut Foe):
+    m = muzzle(f)
+    target = chest() + v3(0, random(-0.3, 0.4), 0)
+    if f.kind == .warden: target += flat(you.body.vel) * f32(f64(length(target - m)) / 24.0 * 0.5)
+    d = normalize(target - m)
+    speed = 17.0
+    dmg = 7.0
+    spread = 0.06
+    if f.kind == .warden:
+        speed = 24.0
+        dmg = 6.0
+        spread = 0.045
+    d = scatter(d, spread)
+    bolts.push(Bolt(m, d * f32(speed), dmg * fierce(), dmg * fierce(), false, false, 4.0, from = m, by = int(f.kind)))
+    sfx_at(snd_bolt, m, 0.8, random(0.9, 1.1) * (1.2 - 0.25 * f64(int(f.kind))))
+    f.blip = 0
+
+# a lobber's shell: up and over, landing where the player is headed in 1.3 s
+lob_shell = (f: mut Foe):
+    m = muzzle(f)
+    t = 1.3
+    target = you.body.pos + flat(you.body.vel) * 0.6 + v3(random(-1.5, 1.5), 0, random(-1.5, 1.5))
+    target.y = floor_under(target, 0.1)
+    v = (target - m) * f32(1.0 / t) + vec3(0, f32(0.5 * GRAVITY * t), 0)
+    bolts.push(Bolt(m, v, 45.0 * fierce(), 45.0, false, true, 3.0, target, m))
+    sfx_at(snd_shell, m, 1.0)
+    f.blip = 0
+
+firing = 0                      # raiders shooting (or winding up) now
+
+think = (f: mut Foe, dt: f64):
+    ki = info(f)
+    if f.dead >= 0.0:
+        f.dead += dt
+        f.body.vel.x *= f32(0.9)
+        f.body.vel.z *= f32(0.9)
+        move_body(f.body, dt)
+        return
+    f.calm += dt
+    f.flinch -= dt
+    f.dodge -= dt
+    f.dodge_wait -= dt
+    f.melee_wait -= dt
+    f.shield_flash -= dt
+    f.mood_time -= dt
+    f.think -= dt
+    f.blip += dt
+    f.strafe_time -= dt
+    if ki.shield > 0.0 and f.calm > 4.0 and f.shield < ki.shield:
+        if f.shield <= 0.0: f.shield_flash = 0.4
+        f.shield = min(ki.shield, f.shield + 30.0 * dt)
+    # seeing the player (checked a few times a second)
+    f.look -= dt
+    if f.look <= 0.0:
+        f.look = random(0.15, 0.3)
+        f.sees = you.alive and clear_line(foe_eye(f), eye())
+    if f.sees:
+        f.seen += dt
+        f.unseen = 0
+    else:
+        f.seen = 0
+        f.unseen += dt
+    to = flat(chest() - f.body.pos)
+    dist = f64(length(to))
+    # moods
+    if f.mood == .panic and f.mood_time <= 0.0:
+        f.mood = .roam
+        f.think = 0
+    if f.mood == .retreat and f.shield >= ki.shield:
+        f.mood = .roam
+        f.think = 0
+    if you.alive and f.mood != .panic and f.mood != .retreat:
+        # close up, wardens and lobbers go for a melee strike
+        if f.kind != .skitter and dist < 4.0: f.mood = .charge
+        else if f.mood == .charge and dist > 6.0:
+            f.mood = .roam
+            f.think = 0
+    # where to go
+    if not you.alive:
+        if f.think <= 0.0:
+            f.think = random(2.0, 5.0)
+            f.goal = cell_pos(cell_of(f.body.pos + v3(random(-10.0, 10.0), 0, random(-10.0, 10.0))))
+    else if f.mood == .panic:
+        if f.think <= 0.0:
+            f.think = 0.8
+            f.goal = pick_goal(f, 18.0, 40.0, -1, false)
+    else if f.mood == .retreat:
+        if f.think <= 0.0:
+            f.think = 2.0
+            f.goal = pick_goal(f, 10.0, 30.0, -1, true)
+    else if f.mood == .charge: f.goal = you.body.pos
+    else if f.unseen > 6.0:
+        # hunting: toward the player until it sees them again
+        f.goal = you.body.pos
+        if f.sees: f.unseen = 0
+    else if f.think <= 0.0:
+        if f.kind == .skitter:
+            f.think = random(1.5, 3.0)
+            f.goal = pick_goal(f, 7.0, 14.0, 1, false)
+        else if f.kind == .warden:
+            f.think = random(2.5, 4.5)
+            f.goal = pick_goal(f, 8.0, 20.0, 1, true)
+        else:
+            f.think = random(4.0, 7.0)
+            f.goal = pick_goal(f, 14.0, 24.0, 0, false)
+    # moving: along the path, strafing a little once there, dodging when aimed at
+    speed = ki.speed
+    if f.mood == .panic: speed *= 1.3
+    if f.mood == .charge: speed *= 1.25
+    way = toward(f.body.pos, f.goal)
+    want = flat(way - f.body.pos)
+    if length(want) > 0.3: want = normalize(want) * f32(speed)
+    else:
+        if f.strafe_time <= 0.0:
+            f.strafe_time = random(0.7, 1.6)
+            f.strafe = -f.strafe
+        side = vec3(0, 0, 0)
+        if dist > 0.1: side = normalize(cross(to, vec3(0, 1, 0)))
+        want = side * f.strafe * f32(speed * 0.45)
+        if f.kind == .lobber: want = vec3(0, 0, 0)
+    if f.kind == .warden and you.alive and f.dodge_wait <= 0.0 and f.sees and dist < 25.0:
+        off = abs(wrap(yaw_of(f.body.pos - you.body.pos) - you.yaw))
+        if off < 0.06 and (guns[held].wait > 0.0 or throw_time > 0.0) and chance(0.5):
+            f.dodge = 0.35
+            f.dodge_wait = 2.0
+            f.dodge_dir = f32(random_int(0, 2) * 2 - 1)
+    if f.dodge > 0.0: want = normalize(cross(to, vec3(0, 1, 0))) * f.dodge_dir * 7.0
+    if f.flinch > 0.0 or f.windup > 0.0: want = want * 0.2
+    # keeping apart
+    loop o in foes:
+        if not alive(o): continue
+        od = flat(f.body.pos - o.body.pos)
+        ol = length(od)
+        if ol > 0.01 and ol < 1.6: want += od * f32(2.0 * (1.6 - f64(ol)) / f64(ol))
+    grip = 18.0
+    if not f.body.grounded: grip = 2.0
+    dv = want - flat(f.body.vel)
+    l = f64(length(dv))
+    if l > grip * dt: dv = dv * f32(grip * dt / l)
+    f.body.vel += dv
+    was = f.body.pos
+    move_body(f.body, dt)
+    moved = f64(length(flat(f.body.pos - was))) / dt
+    f.gait += moved * dt * 2.6
+    if moved > 2.5: f.blip = 0
+    # facing: the player when in sight, else the way it walks
+    face = f.yaw
+    if f.sees and f.mood != .panic: face = yaw_of(to)
+    else if moved > 0.5: face = yaw_of(flat(f.body.pos - was))
+    f.yaw += wrap(face - f.yaw) * min(1.0, 8.0 * dt)
+    # striking
+    if f.mood == .charge and f.melee_wait <= 0.0 and dist < 2.2 + f64(ki.radius):
+        f.melee_wait = 1.3
+        dmg = 35.0
+        if f.kind == .lobber: dmg = 45.0
+        hurt(dmg * fierce(), f.body.pos, int(f.kind))
+        you.body.vel += normalize(to) * 5.0 + vec3(0, 2.5, 0)
+        sfx_at(snd_smack, f.body.pos, 1.0, 0.7)
+    # shooting: bursts (only a few raiders at once), after a moment to react
+    if f.burst > 0:
+        f.shot_wait -= dt
+        if f.shot_wait <= 0.0:
+            fire_bolt(f)
+            f.burst -= 1
+            f.shot_wait = 0.16
+            if f.kind == .warden: f.shot_wait = 0.13
+            if f.burst == 0: f.fire_wait = random(1.3, 2.1) / fierce()
+        return
+    if f.windup > 0.0:
+        f.windup -= dt
+        if f.windup <= 0.0:
+            lob_shell(f)
+            f.fire_wait = random(2.8, 3.6) / fierce()
+        return
+    f.fire_wait -= dt
+    if f.fire_wait > 0.0 or not you.alive or f.mood == .panic or f.mood == .retreat or f.flinch > 0.0: return
+    if firing >= MAX_FIRING or (wave <= 2 and firing >= 2): return
+    react = 0.7
+    if f.kind == .warden: react = 0.5
+    if f.kind == .lobber:
+        if dist > 6.0 and dist < 34.0 and (f.sees or f.seen > 0.0 or chance(0.3)):
+            f.windup = 0.9
+            firing += 1
+        else: f.fire_wait = 0.5
+        return
+    if f.sees and f.seen > react and dist < 32.0:
+        f.burst = 3
+        if f.kind == .warden: f.burst = 4
+        f.shot_wait = 0
+        firing += 1
+
+step_foes = (dt: f64):
+    firing = 0
+    loop f in foes:
+        if alive(f) and (f.burst > 0 or f.windup > 0.0): firing += 1
+    loop mut f in foes: think(f, dt)
+    # (the fallen are cleared away, but not while a strike lunges at one of them by number)
+    if you.lunge < 0: foes = [loop f in foes if f.dead < 3.0: f]
+
+# ---------------- shots and grenades in flight ----------------
+# the nearest distance between the segment a-b and the point p
+seg_dist = (a: vec3, b: vec3, p: vec3) -> f32:
+    ab = b - a
+    l2 = dot(ab, ab)
+    t: f32 = 0.0
+    if l2 > 0.0: t = clamp(dot(p - a, ab) / l2, f32(0), f32(1))
+    length(a + ab * t - p)
+
+step_shots = (dt: f64):
+    loop mut b in bolts:
+        b.life -= dt
+        if b.lob: b.vel.y -= f32(GRAVITY * dt)
+        a = b.pos
+        e = a + b.vel * f32(dt)
+        l = length(e - a)
+        d = (e - a) * (1.0 / max(l, 0.0001))
+        hit = ray_world(a, d, l)
+        if b.mine:
+            h = ray_foes(a, d, hit, 0.1)
+            if h.0 >= 0:
+                hits += 1
+                hurt_foe(h.0, b.damage, b.shield_damage, false, "shot")
+                burst(a + d * h.1, 8, 3.5, vec4(0.4, 1.0, 0.95, 1), 0.35, 0.04, false)
+                flash_at(a + d * h.1, vec3(0.3, 1.0, 0.9), 3.0, 0.12)
+                b.life = 0
+                continue
+        else if not b.lob and you.alive:
+            # raiders' bolts: the player is a capsule from knees to head
+            p = you.body.pos
+            q = seg_dist(a, e, p + vec3(0, 0.5, 0))
+            q = min(q, seg_dist(a, e, p + vec3(0, 1.0, 0)))
+            q = min(q, seg_dist(a, e, p + vec3(0, 1.5, 0)))
+            if q < 0.45:
+                hurt(b.damage, b.from, b.by)
+                b.life = 0
+                continue
+        if hit < l:
+            b.life = 0
+            at = a + d * hit
+            if b.lob: blast(at, 3.5, b.damage, false)
+            else if b.mine: burst(at, 8, 3.0, vec4(0.4, 1.0, 0.95, 1), 0.35, 0.04, false)
+            else: burst(at, 6, 3.0, vec4(1.0, 0.55, 0.3, 1), 0.3, 0.04, false)
+            continue
+        b.pos = e
+    bolts = [loop b in bolts if b.life > 0.0: b]
+    # grenades: they bounce, and go off a second after the first bounce
+    loop mut n in nades:
+        n.age += dt
+        n.vel.y -= f32(GRAVITY * dt)
+        a = n.pos
+        e = a + n.vel * f32(dt)
+        l = length(e - a)
+        if l > 0.0:
+            d = (e - a) * (1.0 / l)
+            hit = ray_world(a, d, l + 0.12)
+            if hit < l + 0.12:
+                # bounce off whichever face it met (found by trying each axis alone)
+                if ray_world(a, vec3(0, sign_of(d.y), 0), abs(e.y - a.y) + 0.12) < abs(e.y - a.y) + 0.12: n.vel.y = -n.vel.y * 0.35
+                else if ray_world(a, vec3(sign_of(d.x), 0, 0), abs(e.x - a.x) + 0.12) < abs(e.x - a.x) + 0.12: n.vel.x = -n.vel.x * 0.5
+                else: n.vel.z = -n.vel.z * 0.5
+                n.vel = n.vel * 0.7
+                if n.fuse < 0.0: n.fuse = 1.0
+                if length(n.vel) > 2.0: sfx_at(snd_bounce, a, 0.6)
+                e = a
+        n.pos = e
+        if n.fuse > 0.0:
+            n.fuse -= dt
+            if n.fuse <= 0.0: n.age = 99
+        if n.age > 4.0 or n.pos.y < -3.0: n.age = 99
+        if n.age >= 99.0: blast(n.pos, 5.0, 120.0, true)
+    nades = [loop n in nades if n.age < 99.0: n]
+
+sign_of = (x: f32) -> f32:
+    if x < 0.0: return -1
+    1
+
+step_effects = (dt: f64):
+    loop mut s in sparks:
+        s.life -= dt
+        if s.falls: s.vel.y -= f32(GRAVITY * 0.6 * dt)
+        s.vel = s.vel * f32(1.0 - 1.5 * dt)
+        s.pos += s.vel * f32(dt)
+        if s.pos.y < 0.0 and s.falls:
+            s.pos.y = 0
+            s.vel = s.vel * 0.3
+    sparks = [loop s in sparks if s.life > 0.0: s]
+    loop mut t in tracers: t.life -= dt
+    tracers = [loop t in tracers if t.life > 0.0: t]
+    loop mut f in flashes: f.life -= dt
+    flashes = [loop f in flashes if f.life > 0.0: f]
+    loop mut p in popups: p.age += dt
+    popups = [loop p in popups if p.age < 2.5: p]
+    loop mut h in hurt_from: h.1 = h.1 + dt
+    hurt_from = [loop h in hurt_from if h.1 < 1.2: h]
+    hit_mark -= dt
+    kill_mark -= dt
+    you.shake = max(0.0, you.shake - 2.0 * dt)
+
+# one fixed step of the whole game
+step = (c: Controls, dt: f64):
+    if over: over_time += dt
+    else: run_time += dt
+    chain_time -= dt
+    step_player(c, dt)
+    step_foes(dt)
+    step_shots(dt)
+    if not over: step_waves(dt)
+    step_effects(dt)
+
+new_run = ():
+    you = Player(Body(v3(0, 2, 3), vec3(0, 0, 0), RADIUS))
+    guns = [Gun("RIFLE", RIFLE_MAG), Gun("CASTER")]
+    held = 0
+    grenades = 2
+    foes = []
+    bolts = []
+    nades = []
+    sparks = []
+    warps = []
+    popups = []
+    hurt_from = []
+    score = 0
+    wave = 0
+    pending = []
+    between = 3.0
+    chain = 0
+    kills = 0
+    shots = 0
+    hits = 0
+    run_time = 0
+    over = false
+    over_time = 0
+    damage_by = [0, 0, 0, 0]
+    cause = ""
+
+# ---------------- the autopilot (balance tests) ----------------
+# Fights like a steady player: aims at the nearest raider it can see (stripping shields with the
+# caster), with a reaction time and aiming error; strafes, backs off when they come close, and
+# takes cover when its shield is down.
+bot_react = 0.35
+bot_error = 0.02                # radians
+bot_target = -1
+bot_seen = 0.0
+bot_dir = 1.0
+bot_turn = 0.0
+bot_goal = vec3(0, 0, 0)
+bot_think = 0.0
+bot_lost = 0.0
+
+autopilot = (dt: f64) -> Controls:
+    c = Controls(vec2(0, 0))
+    tgt = -1
+    bd = 1000.0
+    loop i in 0.. and f in foes:
+        if not alive(f): continue
+        d = f64(length(foe_center(f) - eye()))
+        if d < bd and clear_line(eye(), foe_center(f)):
+            bd = d
+            tgt = i
+    if tgt != bot_target:
+        bot_target = tgt
+        bot_seen = 0
+    bot_seen += dt
+    if tgt >= 0:
+        f = foes[tgt]
+        want = held
+        if f.shield > 0.0 and guns[1].vent <= 0.0: want = 1
+        else if f.shield <= 0.0 or guns[1].vent > 0.0: want = 0
+        if want != held and swap_time <= 0.0: c.swap = true
+        point = foe_center(f) + vec3(0, 0.3, 0)
+        to = point - eye()
+        ty = yaw_of(to) + sin(run_time * 3.1) * bot_error
+        tp = atan2(f64(to.y), f64(length(flat(to)))) + cos(run_time * 2.3) * bot_error
+        k = min(1.0, 10.0 * dt)
+        if bot_seen > bot_react:
+            you.yaw += wrap(ty - you.yaw) * k
+            you.pitch += (tp - you.pitch) * k
+            off = abs(wrap(ty - you.yaw))
+            if off < 0.04 + bot_error: c.fire = true
+        if bd < 2.5 and melee_time <= 0.0: c.melee = true
+        # a grenade at two or more close together, not too near
+        if grenades > 0 and bd > 8.0 and bd < 18.0 and bot_seen > 1.0:
+            near = 0
+            loop o in foes:
+                if alive(o) and length(o.body.pos - f.body.pos) < 4.0: near += 1
+            if near >= 3 or (near >= 2 and chance(0.01)): c.grenade = true
+    if held == 0 and guns[0].ammo < 8 and (tgt < 0 or guns[0].ammo == 0): c.reload = true
+    # moving
+    bot_think -= dt
+    if bot_think <= 0.0:
+        bot_think = random(1.0, 2.0)
+        bot_dir = -bot_dir
+        if you.shield < SHIELD * 0.4 and tgt >= 0:
+            # cover: somewhere out of sight of what it fights
+            fake = Foe(.skitter, Body(you.body.pos, vec3(0, 0, 0), RADIUS))
+            bot_goal = pick_goal(fake, 10.0, 25.0, -1, true)
+        else: bot_goal = vec3(0, 0, 0)
+    world = vec3(0, 0, 0)
+    if tgt < 0: bot_lost += dt
+    else: bot_lost = 0
+    if bot_lost > 3.0:
+        # nothing in sight for a while: toward the nearest raider
+        nd = 1000.0
+        loop f in foes:
+            if alive(f) and f64(length(f.body.pos - you.body.pos)) < nd:
+                nd = f64(length(f.body.pos - you.body.pos))
+                bot_goal = f.body.pos
+        if nd < 1000.0: world = normalize(flat(toward(you.body.pos, bot_goal) - you.body.pos) + vec3(0.001, 0, 0))
+    else if length(bot_goal) > 0.0 and you.shield < SHIELD:
+        world = normalize(flat(toward(you.body.pos, bot_goal) - you.body.pos) + vec3(0.001, 0, 0))
+    else if tgt >= 0:
+        to = flat(foe_center(foes[tgt]) - you.body.pos)
+        side = normalize(cross(to, vec3(0, 1, 0)))
+        world = side * f32(bot_dir)
+        if bd < 7.0: world -= normalize(to)
+        if bd > 18.0: world += normalize(to) * 0.6
+    if length(world) > 0.0:
+        world = normalize(world)
+        c.move = vec2(dot(world, right_of(you.yaw)), dot(world, flat(look_dir(you.yaw, 0.0))))
+    c
+
+# ---------------- the platform, drawn ----------------
+const IVORY = vec4(0.88, 0.86, 0.8, 1)
+const SLATE = vec4(0.42, 0.48, 0.54, 1)
+const DECK = vec4(0.4, 0.45, 0.5, 1)
+const TEAL = vec4(0.25, 0.95, 0.9, 1)
+const AMBER = vec4(1.0, 0.55, 0.2, 1)
+
+world_mesh = Mesh()
+glow_mesh = Mesh()
+amber_mesh = Mesh()
+sea_mesh = Mesh()
+far_mesh = Mesh()
+beam_mesh = Mesh()
+cube = Mesh()
+ball = Mesh()
+disc = Mesh()
+shield_mesh = Mesh()
+foe_body: Mesh[]
+foe_glow: Mesh[]
+foe_leg: Mesh[]
+rifle_mesh = Mesh()
+rifle_glow = Mesh()
+caster_mesh = Mesh()
+caster_glow = Mesh()
+nade_mesh = Mesh()
+meshes_made = false
+
+make_meshes = ():
+    meshes_made = true
+    cube = cube_mesh(1.0)
+    ball = sphere_mesh(0.5, 10, 6)
+    disc = cylinder_mesh(1.0, 0.04, 32)
+    vs: Vertex3D[]
+    gl: Vertex3D[]
+    am: Vertex3D[]
+    # the deck: a slab, and tiles on it with dark seams between
+    add_box(vs, v3(0, -0.8, 0), v3(HALF_X * 2.0 + 2.0, 1.5, HALF_Z * 2.0 + 2.0), vec4(0.3, 0.34, 0.38, 1))
+    seed_random(3)
+    loop tx in [0..14):
+        loop tz in [0..11):
+            x = -HALF_X + 2.0 + f64(tx) * 4.0
+            z = -HALF_Z + 2.0 + f64(tz) * 4.0
+            shade = f32(random(-0.03, 0.03))
+            add_box(vs, v3(x, -0.03, z), v3(3.92, 0.06, 3.92), DECK + vec4(shade, shade, shade, 0))
+    # the railing round the edge, and the legs down into the sea
+    loop s in [-1.0, 1.0]:
+        add_box(vs, v3(0, 1.05, (HALF_Z + 0.3) * s), v3(HALF_X * 2.0 + 0.6, 0.1, 0.1), SLATE)
+        add_box(vs, v3((HALF_X + 0.3) * s, 1.05, 0), v3(0.1, 0.1, HALF_Z * 2.0 + 0.6), SLATE)
+        add_box(gl, v3(0, 0.08, (HALF_Z + 0.5) * s), v3(HALF_X * 2.0 + 1.0, 0.06, 0.06), TEAL)
+        add_box(gl, v3((HALF_X + 0.5) * s, 0.08, 0), v3(0.06, 0.06, HALF_Z * 2.0 + 1.0), TEAL)
+        loop k in [0..15):
+            x = -HALF_X + f64(k) * 4.0
+            add_box(vs, v3(x, 0.55, (HALF_Z + 0.3) * s), v3(0.12, 1.1, 0.12), SLATE)
+        loop k in [0..12):
+            z = -HALF_Z + f64(k) * 4.0
+            add_box(vs, v3((HALF_X + 0.3) * s, 0.55, z), v3(0.12, 1.1, 0.12), SLATE)
+        loop k in [0..4):
+            x = (-21.0 + f64(k) * 14.0)
+            add_cylinder(vs, v3(x, -6, (HALF_Z - 3.0) * s), 1.6, 5.0, vec4(0.62, 0.62, 0.6, 1), 12)
+    # the blocks
+    loop b in blocks:
+        c = (b.lo + b.hi) * 0.5
+        size = b.hi - b.lo
+        if b.rise != 0:
+            # a ramp: a sloped slab (a box turned about its middle), its sides filled below
+            l = f64(max(size.x, size.z))
+            ang = atan2(f64(size.y), l)
+            slab_len = sqrt(l * l + f64(size.y * size.y))
+            t = mat4()
+            if b.rise == 1: t = translation(c) * rotation_z(ang)
+            else if b.rise == 2: t = translation(c) * rotation_z(-ang)
+            else if b.rise == 3: t = translation(c) * rotation_x(-ang)
+            else: t = translation(c) * rotation_x(ang)
+            sz = v3(slab_len, 0.3, f64(size.z))
+            if b.rise >= 3: sz = v3(f64(size.x), 0.3, slab_len)
+            add_box(vs, vec3(0, -0.15, 0), sz, DECK, t)
+            continue
+        col = IVORY
+        if b.look == 1: col = vec4(0.36, 0.47, 0.52, 1)
+        if b.look == 4: col = vec4(0.7, 0.68, 0.64, 1)
+        add_box(vs, c, size, col)
+        if b.look == 2:
+            # the platform's floor and the glowing line round its top
+            add_box(vs, c + vec3(0, size.y * 0.5 + 0.01, 0), vec3(size.x - 0.3, 0.02, size.z - 0.3), DECK)
+            add_box(gl, c + vec3(0, size.y * 0.5 - 0.15, 0), size + vec3(0.04, -size.y + 0.08, 0.04), TEAL)
+        if b.look == 0 or b.look == 1:
+            # a cap, a little wider, and a glowing seam under it
+            add_box(vs, c + vec3(0, size.y * 0.5, 0), vec3(size.x + 0.12, 0.12, size.z + 0.12), lighten(col, 0.08))
+            add_box(gl, c + vec3(0, size.y * 0.5 - 0.1, 0), vec3(size.x + 0.02, 0.05, size.z + 0.02), TEAL)
+        if b.look == 4: add_box(am, c + vec3(0, size.y * 0.5 - 0.25, 0), vec3(size.x + 0.02, 0.1, size.z + 0.02), AMBER)
+    # the relay tower: a mast, a dish and a beacon
+    add_box(vs, v3(0, 9.4, 0), v3(1.6, 0.8, 1.6), SLATE)
+    add_cylinder(vs, v3(0, 9.8, 0), 0.25, 4.0, IVORY, 10)
+    add_cylinder(vs, v3(0, 11.5, 0), 0.4, 0.9, IVORY, 20, 1.9)
+    add_sphere(gl, v3(0, 14.0, 0), 0.32, TEAL, 10, 6)
+    loop k in [0..4):
+        add_box(gl, v3(0, 3.0 + f64(k) * 1.6, 0), v3(2.44, 0.08, 2.44), TEAL)
+    # the bays' floors: amber rings where raiders arrive
+    loop gp in gates:
+        loop k in [0..16):
+            a = TAU * f64(k) / 16.0
+            add_box(am, vec3(0, 0, 0), v3(0.5, 0.04, 0.12), AMBER, translation(gp + v3(cos(a) * 1.8, 0.02, sin(a) * 1.8)) * rotation_y(-a - PI / 2.0))
+    world_mesh = custom_mesh(vs)
+    glow_mesh = custom_mesh(gl)
+    amber_mesh = custom_mesh(am)
+    sea_mesh = plane_mesh(3000.0)
+    # far off: islands of rock, and a tall spire with a beam of light into the sky
+    fr: Vertex3D[]
+    seed_random(11)
+    loop k in [0..9):
+        a = random(0.0, TAU)
+        r = random(220.0, 420.0)
+        rs = random(25.0, 60.0)
+        t = translation(v3(cos(a) * r, -10, sin(a) * r)) * scaling(v3(rs * random(1.0, 2.2), rs * random(0.5, 1.1), rs))
+        add_sphere(fr, vec3(0, 0, 0), 1.0, vec4(0.32, 0.38, 0.36, 1), 7, 5, t)
+    spire = v3(-170, -8, -300)
+    loop k in [0..6):
+        w = 26.0 - f64(k) * 4.0
+        add_box(fr, spire + v3(0, 20.0 + f64(k) * 28.0, 0), v3(w, 28, w * 0.8), vec4(0.62, 0.64, 0.66, 1), rotation_y(0.3))
+    far_mesh = custom_mesh(fr)
+    bm: Vertex3D[]
+    add_box(bm, spire + v3(0, 600, 0), v3(3, 1000, 3), vec4(0.6, 1.0, 1.0, 1))
+    beam_mesh = custom_mesh(bm)
+    seed_random(time_ns())
+    # the raiders, the shield around a warden, the weapons
+    sh: Vertex3D[]
+    add_sphere(sh, vec3(0, 0, 0), 1.0, vec4(1, 1, 1, 1), 14, 8)
+    shield_mesh = custom_mesh(sh)
+    loop k in [0..3):
+        bv: Vertex3D[]
+        gv: Vertex3D[]
+        lv: Vertex3D[]
+        make_foe(k, bv, gv, lv)
+        foe_body.push(custom_mesh(bv))
+        foe_glow.push(custom_mesh(gv))
+        foe_leg.push(custom_mesh(lv))
+    rv: Vertex3D[]
+    rg: Vertex3D[]
+    make_rifle(rv, rg)
+    rifle_mesh = custom_mesh(rv)
+    rifle_glow = custom_mesh(rg)
+    cv: Vertex3D[]
+    cg: Vertex3D[]
+    make_caster(cv, cg)
+    caster_mesh = custom_mesh(cv)
+    caster_glow = custom_mesh(cg)
+    nv: Vertex3D[]
+    add_sphere(nv, vec3(0, 0, 0), 0.11, vec4(0.3, 0.35, 0.3, 1), 8, 5)
+    add_box(nv, vec3(0, 0.1, 0), vec3(0.06, 0.06, 0.06), SLATE)
+    nade_mesh = custom_mesh(nv)
+
+# Raiders, facing -z, feet at 0. A leg hangs from its hip at 0 (drawn swinging, twice).
+make_foe = (k: int, b: mut Vertex3D[], g: mut Vertex3D[], leg: mut Vertex3D[]):
+    dark = vec4(0.16, 0.17, 0.2, 1)
+    if k == 0:
+        # skitter: squat and orange, a glowing tank on its back
+        orange = vec4(0.86, 0.45, 0.18, 1)
+        add_box(b, vec3(0, 0.75, 0), vec3(0.7, 0.5, 0.5), orange)
+        add_box(b, vec3(0, 0.98, 0.05), vec3(0.56, 0.2, 0.46), darken(orange, 0.25))
+        add_box(b, vec3(0, 1.06, -0.17), vec3(0.32, 0.22, 0.28), dark)
+        add_box(b, vec3(-0.43, 0.76, -0.14), vec3(0.12, 0.12, 0.46), dark)
+        add_box(b, vec3(0.43, 0.76, -0.14), vec3(0.12, 0.12, 0.46), dark)
+        add_box(b, vec3(0.3, 0.74, -0.46), vec3(0.12, 0.14, 0.42), vec4(0.3, 0.3, 0.34, 1))
+        add_box(g, vec3(0, 1.08, -0.32), vec3(0.22, 0.05, 0.02), AMBER)
+        add_cylinder(g, vec3(0, 0.55, 0.32), 0.15, 0.55, vec4(1.0, 0.7, 0.3, 1), 8)
+        add_box(leg, vec3(0, -0.25, 0), vec3(0.16, 0.5, 0.2), dark)
+        add_box(leg, vec3(0, -0.47, -0.06), vec3(0.2, 0.06, 0.3), dark)
+    else if k == 1:
+        # warden: tall and dark, ivory shoulders, a glowing stripe and visor
+        add_box(b, vec3(0, 1.05, 0), vec3(0.5, 0.25, 0.35), dark)
+        add_box(b, vec3(0, 1.5, 0), vec3(0.72, 0.65, 0.45), dark)
+        add_box(b, vec3(0, 1.55, -0.2), vec3(0.58, 0.45, 0.1), vec4(0.5, 0.16, 0.14, 1))
+        add_box(b, vec3(-0.5, 1.76, 0), vec3(0.34, 0.24, 0.5), IVORY)
+        add_box(b, vec3(0.5, 1.76, 0), vec3(0.34, 0.24, 0.5), IVORY)
+        add_box(b, vec3(0, 2.02, -0.06), vec3(0.28, 0.3, 0.36), dark)
+        add_box(b, vec3(-0.5, 1.35, -0.15), vec3(0.14, 0.5, 0.14), dark)
+        add_box(b, vec3(0.5, 1.35, -0.15), vec3(0.14, 0.5, 0.14), dark)
+        add_box(b, vec3(0.36, 1.25, -0.5), vec3(0.14, 0.16, 0.6), IVORY)
+        add_box(g, vec3(0, 1.55, -0.26), vec3(0.06, 0.38, 0.02), AMBER)
+        add_box(g, vec3(0, 2.06, -0.25), vec3(0.22, 0.05, 0.02), AMBER)
+        add_box(g, vec3(0.36, 1.25, -0.81), vec3(0.08, 0.08, 0.02), AMBER)
+        add_box(leg, vec3(0, -0.48, 0), vec3(0.22, 0.98, 0.26), dark)
+        add_box(leg, vec3(0, -0.95, -0.08), vec3(0.24, 0.08, 0.38), dark)
+    else:
+        # lobber: a hulk with a mortar on its shoulder and a glowing chamber
+        coral = vec4(0.78, 0.4, 0.24, 1)
+        add_box(b, vec3(0, 1.6, 0), vec3(1.5, 1.0, 1.1), vec4(0.24, 0.26, 0.3, 1))
+        add_box(b, vec3(0, 1.62, -0.6), vec3(1.3, 0.8, 0.12), coral)
+        add_box(b, vec3(0, 2.22, -0.45), vec3(0.42, 0.26, 0.36), dark)
+        add_box(b, vec3(-0.95, 1.3, -0.1), vec3(0.3, 0.9, 0.4), coral)
+        add_box(b, vec3(0.95, 1.3, -0.1), vec3(0.3, 0.9, 0.4), coral)
+        add_cylinder(b, vec3(0, 0, 0), 0.24, 1.1, dark, 10, 0.2, translation(v3(0.5, 2.0, 0.1)) * rotation_x(-0.6))
+        add_sphere(g, vec3(-0.45, 2.25, 0.25), 0.3, AMBER, 10, 6)
+        add_box(g, vec3(0, 2.24, -0.64), vec3(0.3, 0.05, 0.02), AMBER)
+        add_box(leg, vec3(0, -0.5, 0), vec3(0.42, 1.0, 0.5), dark)
+        add_box(leg, vec3(0, -0.96, -0.12), vec3(0.5, 0.1, 0.7), dark)
+
+# The weapons, in view space: x right, y up, looking along -z, the eye at 0.
+make_rifle = (v: mut Vertex3D[], g: mut Vertex3D[]):
+    olive = vec4(0.27, 0.3, 0.27, 1)
+    dark = vec4(0.12, 0.13, 0.14, 1)
+    glove = vec4(0.2, 0.22, 0.2, 1)
+    add_box(v, vec3(0, 0, -0.27), vec3(0.075, 0.095, 0.44), olive)
+    add_box(v, vec3(0, 0.012, -0.55), vec3(0.05, 0.05, 0.16), dark)
+    add_box(v, vec3(0, -0.085, -0.24), vec3(0.05, 0.12, 0.075), dark)
+    add_box(v, vec3(0, -0.02, -0.02), vec3(0.06, 0.08, 0.12), dark)
+    add_box(v, vec3(0, 0.063, -0.3), vec3(0.03, 0.03, 0.22), dark)
+    add_box(v, vec3(-0.01, -0.07, -0.4), vec3(0.1, 0.075, 0.11), glove)
+    add_box(v, vec3(0.01, -0.08, -0.08), vec3(0.085, 0.09, 0.1), glove)
+    add_box(v, vec3(0.02, -0.11, 0.1), vec3(0.09, 0.09, 0.24), glove)
+    add_box(g, vec3(0, 0.05, -0.1), vec3(0.05, 0.012, 0.045), TEAL)
+
+make_caster = (v: mut Vertex3D[], g: mut Vertex3D[]):
+    shell = vec4(0.84, 0.84, 0.82, 1)
+    dark = vec4(0.14, 0.15, 0.17, 1)
+    glove = vec4(0.2, 0.22, 0.2, 1)
+    add_sphere(v, vec3(0, 0, 0), 0.085, shell, 12, 8, translation(vec3(0, 0, -0.25)) * scaling(vec3(1.0, 0.85, 1.7)))
+    add_box(v, vec3(-0.045, 0.0, -0.47), vec3(0.025, 0.06, 0.18), shell)
+    add_box(v, vec3(0.045, 0.0, -0.47), vec3(0.025, 0.06, 0.18), shell)
+    add_box(v, vec3(0, -0.08, -0.16), vec3(0.04, 0.1, 0.05), dark)
+    add_box(v, vec3(0.01, -0.09, -0.12), vec3(0.085, 0.09, 0.1), glove)
+    add_box(v, vec3(0.02, -0.12, 0.06), vec3(0.09, 0.09, 0.24), glove)
+    add_sphere(g, vec3(0, 0, -0.5), 0.03, TEAL, 8, 5)
+    add_box(g, vec3(0, 0.07, -0.25), vec3(0.02, 0.012, 0.2), TEAL)
+
+# a box stretched from a to b (tracers, shell trails)
+beam = (a: vec3, b: vec3, w: f32) -> mat4:
+    d = b - a
+    l = length(d)
+    z = d * (1.0 / max(l, 0.0001))
+    x = cross(vec3(0, 1, 0), z)
+    if length(x) < 0.01: x = vec3(1, 0, 0)
+    x = normalize(x)
+    y = cross(z, x)
+    m = mat4()
+    m[0] = vec4(x * w, 0)
+    m[1] = vec4(y * w, 0)
+    m[2] = vec4(z * l, 0)
+    m[3] = vec4((a + b) * 0.5, 1)
+    m
+
+# ---------------- camera ----------------
+fov_setting = 0.43              # (settings: 0 to 1, a 75 to 110 degree view across)
+sensitivity = 0.5
+invert = false
+cam_pos = vec3(0, 3, 0)
+cam_look = vec3(0, 3, -1)
+
+fov_y = () -> f64:
+    across = radians(75.0 + 35.0 * fov_setting)
+    degrees(2.0 * atan(tan(across / 2.0) / (16.0 / 9.0)))
+
+draw_world = ():
+    if not meshes_made: make_meshes()
+    sky(vec3(0.16, 0.42, 0.82), vec3(0.72, 0.86, 0.95), vec3(0.22, 0.28, 0.3))
+    sun(vec3(0.6, 0.42, 0.4), vec3(1.25, 1.05, 0.82))
+    fog(vec3(0.7, 0.83, 0.92), 0.0016, 0.012)
+    shadows(true, 0.55, 26.0)
+    post_effects(0.55, 0.8, 0.25, 1.12)
+    camera3d(cam_pos, cam_look, fov_y(), 0.05, 1200.0)
+    draw_mesh(sea_mesh, translation(vec3(0, -4, 0)), vec4(0.1, 0.27, 0.34, 1), specular = 0.9, cast_shadow = false)
+    draw_mesh(far_mesh, cast_shadow = false)
+    draw_mesh(beam_mesh, color = vec4(0.6, 1.0, 1.0, 0.35), emissive = 2.0, cast_shadow = false)
+    draw_mesh(world_mesh, specular = 0.25)
+    draw_mesh(glow_mesh, emissive = 1.8, cast_shadow = false)
+    draw_mesh(amber_mesh, emissive = 1.2 + 0.5 * sin(elapsed() * 3.0), cast_shadow = false)
+    point_light(v3(0, 14, 0), vec3(0.3, 1.0, 0.95), 7.0, 1.0)
+    loop f in foes: draw_foe(f)
+    # raiders arriving: a column of light growing over the bay
+    loop w in warps:
+        k = f32(w.time / 1.6)
+        draw_mesh(cube, beam(w.pos, w.pos + vec3(0, 6, 0), 1.6 * k + 0.2), vec4(1.0, 0.65, 0.3, 0.3 + 0.3 * k), emissive = 2.5, cast_shadow = false)
+        point_light(w.pos + vec3(0, 1.5, 0), vec3(1.0, 0.6, 0.25), 6.0, 1.5 * f64(k))
+    # shots in flight
+    lit = 0
+    loop b in bolts:
+        col = vec4(1.0, 0.5, 0.25, 1)
+        if b.mine: col = vec4(0.35, 1.0, 0.95, 1)
+        if b.lob:
+            draw_mesh(ball, translation(b.pos) * scaling(vec3(0.5, 0.5, 0.5)), vec4(1.0, 0.6, 0.2, 1), emissive = 3.0, cast_shadow = false)
+            # where it will land: a ring that closes in
+            k = f32(clamp(b.life - 1.7, 0.0, 1.3) / 1.3)
+            draw_mesh(disc, translation(b.target + vec3(0, 0.05, 0)) * scaling(vec3(3.5 * (0.3 + 0.7 * k), 1, 3.5 * (0.3 + 0.7 * k))), vec4(1.0, 0.4, 0.2, 0.35), emissive = 1.5, cast_shadow = false)
+        else:
+            tail = b.pos - normalize(b.vel) * 0.7
+            # (the player's start at the weapon, though they fly from the eye)
+            draw_mesh(cube, beam(tail, b.pos, 0.09), col, emissive = 3.0, cast_shadow = false)
+        if lit < 5:
+            lit += 1
+            point_light(b.pos, col.xyz, 3.5, 1.2)
+    loop n in nades:
+        draw_mesh(nade_mesh, translation(n.pos) * rotation_x(n.age * 9.0))
+        if n.fuse >= 0.0 and int(n.fuse * 10.0) % 2 == 0: point_light(n.pos + vec3(0, 0.3, 0), vec3(1.0, 0.3, 0.2), 2.5, 1.5)
+    loop t in tracers: draw_mesh(cube, beam(t.a, t.b, 0.015), vec4(1.0, 0.9, 0.6, 1), emissive = 2.5, cast_shadow = false)
+    loop f in flashes: point_light(f.pos, f.color, f.radius, 2.5 * f.life / f.full)
+    if sparks.len() > 0:
+        inst: Instance3D[]
+        loop s in sparks:
+            k = f32(s.life / s.full)
+            inst.push(instance(translation(s.pos) * scaling(vec3(s.size, s.size, s.size) * (0.4 + 0.6 * k)), s.color))
+        draw_mesh_instanced(cube, inst, emissive = 2.0, cast_shadow = false)
+
+draw_foe = (f: Foe):
+    k = int(f.kind)
+    m = translation(f.body.pos) * rotation_y(f.yaw)
+    if f.dead >= 0.0:
+        fall = f64(clamp(f.dead / 0.5, 0.0, 1.0))
+        sink = max(0.0, f.dead - 1.8) * 0.8
+        m = translation(f.body.pos - v3(0, sink, 0)) * rotation_y(f.yaw) * rotation_x(f64(f.tip) * fall * 1.45)
+    else if f.flinch > 0.0: m = m * rotation_x(0.25)
+    else if f.mood == .panic: m = m * rotation_z(sin(f.gait * 3.0) * 0.12)
+    draw_mesh(foe_body[k], m, specular = 0.4)
+    glow = 1.8
+    if f.dead >= 0.0: glow = max(0.0, 1.8 - f.dead * 2.0)
+    if f.windup > 0.0: glow = 1.8 + (0.9 - f.windup) * 4.0
+    draw_mesh(foe_glow[k], m, emissive = glow, cast_shadow = false)
+    hip = [0.5, 1.0, 1.05][k]
+    apart = [0.2, 0.18, 0.45][k]
+    swing = sin(f.gait) * 0.6
+    if f.dead >= 0.0: swing = 0
+    draw_mesh(foe_leg[k], m * translation(v3(-apart, hip, 0)) * rotation_x(swing))
+    draw_mesh(foe_leg[k], m * translation(v3(apart, hip, 0)) * rotation_x(-swing))
+    # a warden's shield, showing when hit (and flaring when it breaks or returns)
+    if f.kind == .warden and f.shield_flash > 0.0 and f.dead < 0.0:
+        a = f32(f.shield_flash / 0.4) * 0.5
+        draw_mesh(shield_mesh, translation(f.body.pos + vec3(0, 1.2, 0)) * rotation_y(f.yaw) * scaling(vec3(0.7, 1.25, 0.6)), vec4(1.0, 0.7, 0.3, a), emissive = 1.5, cast_shadow = false)
+
+# the weapon in hand: swaying with the walk, kicking with each shot, dipping to reload or swap
+draw_weapon = ():
+    if not you.alive: return
+    bob = you.walked * PI / 1.8
+    move = f64(length(flat(you.body.vel))) / RUN
+    off = v3(0.12 + cos(bob) * 0.006 * move, -0.125 + abs(sin(bob)) * 0.008 * move, -0.3 + you.kick * 3.0)
+    tilt = you.kick * 4.0
+    dip = 0.0
+    if swap_time > 0.0: dip = sin(PI * swap_time / 0.3) * 0.9
+    if held == 0 and guns[0].reload > 0.0: dip = sin(PI * guns[0].reload / RIFLE_RELOAD) * 0.6
+    if throw_time > 0.0: dip = max(dip, sin(PI * throw_time / 0.45) * 0.5)
+    thrust = 0.0
+    if melee_time > 0.5: thrust = sin(PI * (0.8 - melee_time) / 0.3)
+    off += v3(-0.08 * thrust, -0.1 * dip, -0.25 * thrust)
+    view = inverse(look_at(cam_pos, cam_look, vec3(0, 1, 0)))
+    m = view * translation(off) * rotation_x(tilt - dip * 0.8) * rotation_z(dip * 0.5 + thrust * 0.4)
+    g = guns[held]
+    if held == 0:
+        draw_mesh(rifle_mesh, m, specular = 0.5, in_front = true)
+        draw_mesh(rifle_glow, m, emissive = 1.5, in_front = true)
+    else:
+        draw_mesh(caster_mesh, m, specular = 0.7, in_front = true)
+        draw_mesh(caster_glow, m, vec4(1.0, f32(1.0 - g.heat * 0.7), f32(1.0 - g.heat * 0.8), 1), emissive = 1.5 + 2.0 * g.heat, in_front = true)
+    if g.flash > 0.0:
+        col = vec4(1.0, 0.8, 0.45, 1)
+        if held == 1: col = vec4(0.4, 1.0, 0.95, 1)
+        draw_mesh(cube, m * translation(vec3(0, 0.01, -0.66)) * rotation_z(random(0.0, 1.5)) * scaling(vec3(0.09, 0.09, 0.02)), col, emissive = 4.0, in_front = true)
+        point_light(gun_muzzle(), col.xyz, 6.0, 1.5)
+
+# where the camera is: the eye, shaken a little by blasts and hits
+place_camera = ():
+    s = you.shake * you.shake * 0.02
+    yaw = you.yaw + sin(elapsed() * 37.0) * s
+    pitch = you.pitch + you.kick + cos(elapsed() * 29.0) * s
+    cam_pos = eye()
+    if not you.alive:
+        # fallen: the view sinks and tips
+        k = min(over_time, 1.0)
+        cam_pos = you.body.pos + v3(0, EYE - 1.3 * k, 0)
+        pitch -= 0.5 * k
+    # (14 m ahead: the shadows are sharpest round that point)
+    cam_look = cam_pos + look_dir(yaw, pitch) * 14.0
+
+# ---------------- heads-up display ----------------
+const HUD = vec4(0.55, 0.95, 1.0, 1)
+
+draw_hud = ():
+    # the shield, and health in segments under it
+    sx = 440.0
+    sw = 400.0
+    k = you.shield / SHIELD
+    col = HUD
+    if k < 0.25 and you.shield < SHIELD: col = mix(vec4(1, 0.25, 0.2, 1), HUD, f32(0.5 + 0.5 * sin(elapsed() * 12.0)))
+    rect(sx - 3.0, 23.0, sw + 6.0, 20.0, rgba(0, 0.1, 0.15, 0.45))
+    rect_outline(sx - 3.0, 23.0, sw + 6.0, 20.0, 1.5, with_alpha(HUD, 0.6))
+    rect(sx, 26.0, sw * k, 14.0, with_alpha(col, 0.85))
+    if you.calm >= RECHARGE_WAIT and you.shield < SHIELD: rect(sx + sw * k - 6.0, 26.0, 6.0, 14.0, WHITE)
+    loop i in [0..8):
+        full = you.health >= HEALTH * f64(i + 1) / 8.0 - 0.5
+        c = rgba(0.6, 1.0, 0.7, 0.85)
+        if you.health < HEALTH * 0.34: c = rgba(1.0, 0.35, 0.3, 0.9)
+        if not full: c = rgba(1, 1, 1, 0.15)
+        rect(sx + f64(i) * (sw / 8.0) + 2.0, 48.0, sw / 8.0 - 4.0, 6.0, c)
+    # score, wave, raiders left
+    text("{score}", vec2(f32(1250.0 - text_width("{score}", 38.0)), 18), 38, WHITE)
+    left = pending.len() + count_alive()
+    for_wave = "WAVE {wave}"
+    if between > 0.0 and wave > 0: for_wave = "NEXT WAVE IN {int(ceil(between))}"
+    else if wave > 0: for_wave = "{for_wave}   {left} LEFT"
+    if wave == 0: for_wave = "GET READY"
+    text(for_wave, vec2(f32(1250.0 - text_width(for_wave, 20.0)), 62), 20, with_alpha(HUD, 0.85))
+    # grenades
+    loop i in [0..4):
+        c = with_alpha(HUD, 0.85)
+        if i >= grenades: c = rgba(1, 1, 1, 0.15)
+        x = 40.0 + f64(i) * 22.0
+        triangle(vec2(f32(x), 22), vec2(f32(x - 8.0), 34), vec2(f32(x), 46), c)
+        triangle(vec2(f32(x), 22), vec2(f32(x + 8.0), 34), vec2(f32(x), 46), c)
+    # the weapon: rounds or heat
+    g = guns[held]
+    other = guns[1 - held]
+    text(g.name, vec2(f32(1250.0 - text_width(g.name, 24.0)), 600), 24, with_alpha(HUD, 0.9))
+    text(other.name, vec2(f32(1250.0 - text_width(other.name, 16.0)), 632), 16, rgba(1, 1, 1, 0.4))
+    if held == 0:
+        t = "{g.ammo}"
+        text(t, vec2(f32(1250.0 - text_width(t, 46.0)), 650), 46, WHITE)
+        loop i in [0..RIFLE_MAG):
+            c = with_alpha(HUD, 0.85)
+            if i >= g.ammo: c = rgba(1, 1, 1, 0.12)
+            rect(1150.0 - f64(i % 18) * 7.0, 662.0 + f64(i / 18) * 14.0, 4.0, 10.0, c)
+    else:
+        rect(1080.0, 670.0, 170.0, 12.0, rgba(1, 1, 1, 0.15))
+        hc = mix(HUD, vec4(1, 0.35, 0.25, 1), f32(g.heat))
+        rect(1080.0, 670.0, 170.0 * g.heat, 12.0, hc)
+    # the reticle: red over a raider in range; a hit marker on hits
+    mid = vec2(640, 360)
+    over_foe = false
+    if you.alive:
+        look_hit = ray_foes(eye(), aim(), ray_world(eye(), aim(), 60), 0.05)
+        over_foe = look_hit.0 >= 0
+    rc = with_alpha(HUD, 0.85)
+    if over_foe: rc = rgba(1.0, 0.3, 0.25, 0.95)
+    if held == 0:
+        r = 14.0 + g.bloom * 500.0
+        ring(mid, r, 1.5, rc)
+        loop i in [0..4):
+            a = f64(i) * PI / 2.0
+            line(mid + from_angle(a) * f32(r - 4.0), mid + from_angle(a) * f32(r + 6.0), 2, rc)
+        circle(mid, 1.6, rc)
+    else:
+        loop i in [0..3):
+            a = f64(i) * TAU / 3.0 - PI / 2.0
+            line(mid + from_angle(a) * 8, mid + from_angle(a) * 18, 2.5, rc)
+    if hit_mark > 0.0 or kill_mark > 0.0:
+        s = 9.0
+        mc = rgba(1, 1, 1, 0.9)
+        if kill_mark > 0.0:
+            s = 14.0
+            mc = rgba(1.0, 0.4, 0.3, 1)
+        loop i in [0..4):
+            a = PI / 4.0 + f64(i) * PI / 2.0
+            line(mid + from_angle(a) * f32(s), mid + from_angle(a) * f32(s + 8.0), 2.5, mc)
+    if held == 0 and g.reload > 0.0: text_centered("RELOADING", vec2(640, 420), 18, with_alpha(HUD, 0.8))
+    else if held == 0 and g.ammo == 0: text_centered("RELOAD", vec2(640, 420), 18, rgba(1, 0.4, 0.3, 0.9))
+    if held == 1 and g.vent > 0.0: text_centered("OVERHEATED", vec2(640, 420), 18, rgba(1, 0.45, 0.3, 0.9))
+    # where hits come from: red arcs around the middle
+    loop h in hurt_from:
+        d = flat(h.0 - you.body.pos)
+        a = wrap(yaw_of(d) - you.yaw)
+        sa = -PI / 2.0 - a
+        arc(mid, 90.0, 6.0, sa - 0.3, sa + 0.3, rgba(1, 0.25, 0.2, f32(0.8 * (1.0 - h.1 / 1.2))))
+    draw_tracker()
+    # popups: wave news in the middle, the rest over the tracker
+    y = 520.0
+    loop p in popups:
+        al = f32(clamp(2.5 - p.age, 0.0, 1.0))
+        if p.big: text_centered(p.text, vec2(640, f32(220.0 - min(p.age, 0.3) * 30.0)), 40, with_alpha(HUD, al))
+        else:
+            text(p.text, vec2(40, f32(y)), 20, rgba(1, 0.9, 0.6, al))
+            y -= 26.0
+    # shield down: the edges of the view go red
+    if you.shield <= 0.0 and you.alive:
+        al = f32(0.25 + 0.15 * sin(elapsed() * 8.0))
+        v = visible_rect()
+        rect_gradient(f64(v.x), f64(v.y), f64(v.z), 90.0, rgba(0.8, 0.05, 0.05, al), rgba(0.8, 0.05, 0.05, 0))
+        rect_gradient(f64(v.x), f64(v.y + v.w) - 90.0, f64(v.z), 90.0, rgba(0.8, 0.05, 0.05, 0), rgba(0.8, 0.05, 0.05, al))
+
+# The motion tracker: raiders within 25 m that move fast or fire, as seen from above, ahead up.
+draw_tracker = ():
+    c = vec2(110, 610)
+    r = 75.0
+    circle(c, r, rgba(0, 0.12, 0.16, 0.45))
+    ring(c, r, 1.5, with_alpha(HUD, 0.5))
+    ring(c, r * 0.5, 1, with_alpha(HUD, 0.2))
+    line(c - vec2(f32(r), 0), c + vec2(f32(r), 0), 1, with_alpha(HUD, 0.15))
+    line(c - vec2(0, f32(r)), c + vec2(0, f32(r)), 1, with_alpha(HUD, 0.15))
+    pulse = fract(elapsed() * 0.8)
+    ring(c, r * pulse, 1.5, with_alpha(HUD, f32(0.3 * (1.0 - pulse))))
+    triangle(c + vec2(0, -6), c + vec2(-4, 4), c + vec2(4, 4), with_alpha(HUD, 0.9))
+    loop f in foes:
+        if not alive(f) or f.blip > 0.6: continue
+        d = flat(f.body.pos - you.body.pos)
+        l = f64(length(d))
+        if l > 25.0: continue
+        rel = wrap(yaw_of(d) - you.yaw)
+        p = c + vec2(f32(-sin(rel) * l / 25.0 * r), f32(-cos(rel) * l / 25.0 * r))
+        a = f32(1.0 - f.blip / 0.6)
+        size = 5.0
+        if f.kind == .lobber: size = 7.0
+        circle(p, size, rgba(1.0, 0.3, 0.25, a))
+
+# ---------------- a balance run, without a window ----------------
+# BREAKWATER_TEST="runs react error": each run fought by the autopilot until it falls (or wave
+# 30), then what happened
+when TARGET != "wasm":
+    if let spec = env("BREAKWATER_TEST"):
+        words = split(spec, " ")
+        n_runs = to_int(words[0]) ?? 10
+        if words.len() > 1: bot_react = to_float(words[1]) ?? 0.35
+        if words.len() > 2: bot_error = to_float(words[2]) ?? 0.02
+        quiet = true
+        build_platform()
+        build_paths()
+        waves_sum = 0.0
+        loop r in [0..n_runs):
+            seed_random(1000 + r)
+            new_run()
+            loop not over and wave < 30 and run_time < 1800.0:
+                step(autopilot(STEP), STEP)
+            if not over:
+                loop f in foes:
+                    if alive(f): print("  left: {f.kind} at {f.body.pos} ({f.mood}, cell walkable {walkable[cell_of(f.body.pos)]}); player at {you.body.pos}")
+            pct = 0.0
+            if shots > 0: pct = f64(hits) / f64(shots) * 100.0
+            print("run {r}: wave {wave}, {int(run_time)} s, score {score}, kills {kills}, accuracy {int(pct)}%, killed by {cause}; damage from skitters {int(damage_by[0])}, wardens {int(damage_by[1])}, lobbers {int(damage_by[2])}")
+            waves_sum += f64(wave)
+        print("mean wave {waves_sum / f64(n_runs):.1}")
+        exit(0)
+
+# ---------------- settings and records ----------------
+struct Settings:
+    music = 0.5
+    sound = 0.8
+    sensitivity = 0.5
+    invert = false
+    fov = 0.43
+    fullscreen = false
+
+settings = Settings()
+best = 0
+best_wave = 0
+runs = 0
+
+save_records = (): save_data("best", "score {best}\nwave {best_wave}\nruns {runs}")
+save_settings = (): save_data("settings", "music {settings.music}\nsound {settings.sound}\nsensitivity {settings.sensitivity}\ninvert {settings.invert}\nfov {settings.fov}\nfullscreen {settings.fullscreen}")
+
+load_saved = ():
+    if let t = load_data("settings"):
+        loop line in lines(t):
+            w = split(line, " ")
+            if w.len() < 2: continue
+            v = clamp(to_float(w[1]) ?? 0.5, 0.0, 1.0)
+            if w[0] == "music": settings.music = v
+            else if w[0] == "sound": settings.sound = v
+            else if w[0] == "sensitivity": settings.sensitivity = v
+            else if w[0] == "fov": settings.fov = v
+            else if w[0] == "invert": settings.invert = w[1] == "true"
+            else if w[0] == "fullscreen": settings.fullscreen = w[1] == "true"
+    if let t = load_data("best"):
+        loop line in lines(t):
+            w = split(line, " ")
+            if w.len() < 2: continue
+            if w[0] == "score": best = max(to_int(w[1]) ?? 0, 0)
+            else if w[0] == "wave": best_wave = max(to_int(w[1]) ?? 0, 0)
+            else if w[0] == "runs": runs = max(to_int(w[1]) ?? 0, 0)
+
+apply_settings = ():
+    sound_volume = settings.sound
+    sensitivity = settings.sensitivity
+    invert = settings.invert
+    fov_setting = settings.fov
+
+# ---------------- playing ----------------
+action("Forward", [.key(.w), .key(.up), .stick(1, -1)])
+action("Back", [.key(.s), .key(.down), .stick(1, 1)])
+action("Left", [.key(.a), .key(.left), .stick(0, -1)])
+action("Right", [.key(.d), .key(.right), .stick(0, 1)])
+action("Jump", [.key(.space), .button(.a)])
+action("Fire", [.mouse(.left), .stick(5, 1)])
+action("Grenade", [.key(.g), .mouse(.right), .stick(4, 1)])
+action("Melee", [.key(.f), .key(.v), .mouse(.middle), .button(.b), .button(.rb)])
+action("Reload", [.key(.r), .button(.x)])
+action("Swap weapons", [.key(.q), .key(.tab), .button(.y)])
+action("Pause", [.key(.escape), .key(.p), .button(.start)])
+
+enum Screen: title, play, paused, over, settings, controls
+
+screen = Screen.title
+settings_back = Screen.title
+new_best = false
+acc = 0.0
+had_lock = false
+music_id = -1
+demo = false                    # (BREAKWATER_DEMO=seconds: the autopilot plays, that far in)
+pending_controls = Controls(vec2(0, 0))
+
+# the frame's input: looking turns at once; presses wait for the next step
+read_input = (dt: f64):
+    if is_mouse_locked():
+        d = mouse_delta()
+        s = 0.0022 * pow(3.0, sensitivity * 2.0 - 1.0)
+        you.yaw -= f64(d.x) * s
+        if invert: you.pitch += f64(d.y) * s
+        else: you.pitch -= f64(d.y) * s
+    # the right stick: a curve for fine aim, slower over a raider
+    rs = right_stick()
+    turn = vec2(f32(f64(rs.x) * abs(f64(rs.x))), f32(f64(rs.y) * abs(f64(rs.y))))
+    slow = 1.0
+    if length(rs) > 0.0:
+        h = ray_foes(eye(), aim(), ray_world(eye(), aim(), 60), 0.35)
+        if h.0 >= 0: slow = 0.55
+    ps = 3.6 * pow(2.0, sensitivity * 2.0 - 1.0) * slow
+    you.yaw -= f64(turn.x) * ps * dt
+    if invert: you.pitch += f64(turn.y) * ps * 0.7 * dt
+    else: you.pitch -= f64(turn.y) * ps * 0.7 * dt
+    you.pitch = clamp(you.pitch, -1.45, 1.45)
+    you.yaw = wrap(you.yaw)
+    c = pending_controls
+    c.move = vec2(f32(action_axis("Left", "Right")), f32(action_axis("Back", "Forward")))
+    if length(c.move) > 1.0: c.move = normalize(c.move)
+    c.fire = action_down("Fire")
+    c.jump = c.jump or action_pressed("Jump")
+    c.grenade = c.grenade or action_pressed("Grenade")
+    c.melee = c.melee or action_pressed("Melee")
+    c.reload = c.reload or action_pressed("Reload")
+    c.swap = c.swap or action_pressed("Swap weapons") or mouse_wheel() != 0.0
+    pending_controls = c
+
+simulate = (dt: f64, auto: bool):
+    acc += min(dt, 0.1)
+    loop acc >= STEP:
+        acc -= STEP
+        c = Controls(vec2(0, 0))
+        if auto: c = autopilot(STEP)
+        else:
+            c = pending_controls
+            pending_controls = Controls(c.move, fire = c.fire)
+        step(c, STEP)
+
+start = ():
+    new_run()
+    acc = 0
+    pending_controls = Controls(vec2(0, 0))
+    screen = .play
+    had_lock = false
+    mouse_lock(true)
+
+finish = ():
+    runs += 1
+    new_best = score > best
+    if new_best: best = score
+    best_wave = max(best_wave, wave)
+    save_records()
+    screen = .over
+    mouse_lock(false)
+
+# behind the title: raiders wandering the platform, the camera going round it
+title_scene = ():
+    new_run()
+    you.alive = false
+    you.health = 0
+    loop i in [0..6):
+        kind = Kind.skitter
+        if i % 3 == 1: kind = .warden
+        if i == 5: kind = .lobber
+        spawn(kind, cell_pos(cover_cells[random_int(0, cover_cells.len())]))
+    over = true
+
+update = (dt: f64):
+    if music_id < 0 and not quiet: music_id = play(theme, settings.music, looping = true)
+    m = settings.music
+    if screen == .play and between <= 0.0: m *= 0.45
+    set_volume(music_id, m)
+    if screen == .play:
+        # (a browser lets go of the mouse on Escape: that pauses)
+        if is_mouse_locked(): had_lock = true
+        else if had_lock:
+            screen = .paused
+            return
+        if demo: had_lock = false
+        if action_pressed("Pause"):
+            screen = .paused
+            mouse_lock(false)
+            return
+        if not is_mouse_locked(): mouse_lock(true)
+        if not demo: read_input(dt)
+        simulate(dt, demo)
+        place_camera()
+        if over and over_time > 2.2: finish()
+    else if screen == .over:
+        simulate(dt, false)
+        place_camera()
+    else if screen == .paused or settings_back == .paused: place_camera()
+    else:
+        simulate(dt, false)
+        t = elapsed() * 0.06
+        cam_pos = v3(sin(t) * 34.0, 13.0, cos(t) * 26.0)
+        cam_look = v3(0, 3, 0)
+
+draw = ():
+    draw_world()
+    if screen == .play or screen == .paused or screen == .over:
+        draw_weapon()
+        if screen == .play: draw_hud()
+    if screen == .title: draw_title()
+    else if screen == .paused: draw_pause()
+    else if screen == .over: draw_over()
+    else if screen == .settings: draw_settings()
+    else if screen == .controls: draw_controls()
+
+dim = (a: f32):
+    v = visible_rect()
+    rect(f64(v.x), f64(v.y), f64(v.z), f64(v.w), rgba(0.02, 0.04, 0.08, a))
+
+side_panel = ():
+    v = visible_rect()
+    c = rgba(0.02, 0.05, 0.08, 0.75)
+    rect(f64(v.x), f64(v.y), 520.0 - f64(v.x), f64(v.w), c)
+    quad_gradient(vec2(520, v.y), vec2(760, v.y), vec2(760, v.y + v.w), vec2(520, v.y + v.w), c, with_alpha(c, 0), with_alpha(c, 0), c)
+
+draw_title = ():
+    side_panel()
+    text_centered("B R E A K W A T E R", vec2(300, 170), 54, WHITE)
+    text_centered("hold the relay.  wave after wave.", vec2(300, 228), 24, HUD)
+    ui_begin("title", vec2(300, 330))
+    if ui_button("Play"): start()
+    if ui_button("Settings"):
+        settings_back = .title
+        screen = .settings
+    when TARGET != "wasm":
+        if ui_button("Quit"): quit()
+    ui_end()
+    if best > 0: text_centered("best {best}   (wave {best_wave})", vec2(300, 590), 22, with_alpha(HUD, 0.9))
+    text_centered("move: W A S D    jump: Space    fire: left button", vec2(300, 640), 17, rgba(1, 1, 1, 0.55))
+    text_centered("swap: Q    reload: R    grenade: G    melee: F", vec2(300, 666), 17, rgba(1, 1, 1, 0.55))
+
+draw_pause = ():
+    dim(0.55)
+    text_centered("Paused", vec2(640, 200), 60, WHITE)
+    ui_begin("pause", vec2(640, 310))
+    if ui_button("Resume") or ui_back() or (action_pressed("Pause") and ui_ready()):
+        screen = .play
+        had_lock = false
+        mouse_lock(true)
+    if ui_button("Restart"): start()
+    if ui_button("Settings"):
+        settings_back = .paused
+        screen = .settings
+    if ui_button("Leave to the title"):
+        title_scene()
+        screen = .title
+    ui_end()
+
+clock = (t: f64) -> str:
+    sec = int(t) % 60
+    if sec < 10: return "{int(t) / 60}:0{sec}"
+    "{int(t) / 60}:{sec}"
+
+draw_over = ():
+    dim(0.5)
+    text_centered("{score}", vec2(640, 160), 90, WHITE)
+    if new_best: text_centered("a new best!", vec2(640, 232), 30, HUD)
+    else: text_centered("best {best}", vec2(640, 232), 26, rgba(1, 1, 1, 0.6))
+    a = 0
+    if shots > 0: a = hits * 100 / shots
+    text_centered("held to wave {wave}     {kills} raiders     {a}% accuracy     {clock(run_time)}", vec2(640, 285), 24, rgba(1, 1, 1, 0.8))
+    text_centered("taken down by {cause}", vec2(640, 320), 20, rgba(1, 1, 1, 0.45))
+    ui_begin("over", vec2(640, 400))
+    if ui_button("Again"): start()
+    if ui_button("Title") or ui_back():
+        title_scene()
+        screen = .title
+    ui_end()
+
+draw_settings = ():
+    if settings_back == .title: side_panel()
+    else: dim(0.7)
+    x = 300.0
+    if settings_back != .title: x = 640.0
+    text_centered("Settings", vec2(f32(x), 130), 60, WHITE)
+    ui_begin("settings", vec2(f32(x), 230))
+    was = settings
+    settings.music = ui_slider("Music", settings.music)
+    settings.sound = ui_slider("Sounds", settings.sound)
+    settings.sensitivity = ui_slider("Look speed", settings.sensitivity, 0.05)
+    settings.fov = ui_slider("Field of view", settings.fov, 0.05)
+    settings.invert = ui_switch("Invert look", settings.invert)
+    when TARGET != "wasm":
+        settings.fullscreen = ui_switch("Fullscreen", settings.fullscreen)
+    if ui_button("Controls"): screen = .controls
+    back = ui_button("Back") or ui_back()
+    ui_end()
+    apply_settings()
+    if settings.sound != was.sound: sfx(snd_click, 1.0)
+    if settings.fullscreen != was.fullscreen: set_fullscreen(settings.fullscreen)
+    if back:
+        save_settings()
+        screen = settings_back
+
+draw_controls = ():
+    dim(0.8)
+    text_centered("Controls", vec2(640, 100), 60, WHITE)
+    ui_begin("controls", vec2(640, 190))
+    ui_controls()
+    back = ui_button("Back") or ui_back()
+    ui_end()
+    if back: screen = .settings
+
+load_saved()
+apply_settings()
+if settings.fullscreen: set_fullscreen(true)
+build_platform()
+build_paths()
+title_scene()
+when TARGET != "wasm":
+    if let d = env("BREAKWATER_DEMO"):
+        start()
+        demo = true
+        quiet = true
+        loop k in [0..int((to_float(d) ?? 0.0) / STEP)): step(autopilot(STEP), STEP)

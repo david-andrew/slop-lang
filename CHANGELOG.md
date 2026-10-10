@@ -16,6 +16,12 @@
 - **JPEG**: `load_jpeg`, and `load_image`/`load_texture` read JPEG as well as PNG (baseline and
   progressive, any color sampling, grayscale, CMYK).
 - 3D draws the camera cannot see are left out (meshes know their bounding sphere).
+- **Point lights** in 3D: `point_light(pos, color, radius)` for a frame (muzzle flashes, glowing
+  shots, lamps); up to 8 light a frame, the ones nearest the camera.
+- One mesh from many shapes: `add_box`, `add_cylinder` and `add_sphere` add a shape's vertices
+  to an array (placed by a transform, in a color) for `custom_mesh`: a level or a robot drawn in
+  one call. `draw_mesh(..., in_front = true)` draws over everything else (a first-person
+  weapon that would poke into walls).
 - Cameras for 3D: `orbit_camera` (drag to turn, the wheel to zoom) and `fly_camera` (WASD and
   the mouse), with gamepad sticks too; `camera3d(cam)` uses one.
 - **Debugging on Windows**: `sloppy build` writes a PDB beside the program, and programs have

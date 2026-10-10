@@ -582,7 +582,8 @@ fog = (color: vec3, density: f64 = 0.01, height_falloff: f64 = 0.05)
 shadows = (on: bool, strength: f64 = 0.8, area: f64 = 30.0)
 post_effects = (bloom: f64 = 0.6, threshold: f64 = 0.7, vignette: f64 = 0.35, saturation: f64 = 1.0, tint: vec3 = vec3(1, 1, 1))    # bloom + color grading for the whole frame (2D and 3D)
 no_post_effects = ()
-draw_mesh = (m: Mesh, transform: mat4 = mat4(), color: vec4 = vec4(1, 1, 1, 1), texture: Texture = Texture(0, 0, 0), emissive: f64 = 0.0, specular: f64 = 0.3, cast_shadow: bool = true)
+point_light = (pos: vec3, color: vec3, radius: f64 = 6.0, intensity: f64 = 1.0)    # a light at a point for this frame (muzzle flashes, glowing shots, lamps): it reaches radius meters, fading out on the way. Up to 8 light a frame (the ones nearest the camera); they cast no shadows.
+draw_mesh = (m: Mesh, transform: mat4 = mat4(), color: vec4 = vec4(1, 1, 1, 1), texture: Texture = Texture(0, 0, 0), emissive: f64 = 0.0, specular: f64 = 0.3, cast_shadow: bool = true, in_front: bool = false)    # in_front = true: drawn after everything else and over it, casting no shadow (a first-person weapon, which would otherwise poke into walls the player stands against)
 draw_mesh_instanced = (m: Mesh, instances: Instance3D[], color: vec4 = vec4(1, 1, 1, 1), emissive: f64 = 0.0, specular: f64 = 0.2, cast_shadow: bool = true, wind: f64 = 0.0)    # many copies of a mesh in one draw call (crowds, forests, particles...)
 draw_custom = (render: () -> void, transparent: bool = false, additive: bool = false)    # draw with your own shader inside the 3D pass; `render` runs with depth testing on. Use scene_view_proj(), scene_camera(), scene_sun(), scene_shadow_vp(), scene_shadow_map()... transparent = true: run after the sky with alpha blending on and depth writes off; additive = true: like transparent, but colors add up (glows, beams, light shafts)
 scene_view_proj = () -> mat4
@@ -599,6 +600,9 @@ scene_shadow_strength = () -> f32
 instance = (transform: mat4, color: vec4 = vec4(1, 1, 1, 1)) -> Instance3D
 transform = (pos: vec3, rot_y: f64 = 0.0, scale: f64 = 1.0) -> mat4    # transform helpers
 cube_mesh = (size: f64 = 1.0) -> Mesh
+add_box = (vs: mut Vertex3D[], center: vec3, size: vec3, color: vec4 = vec4(1, 1, 1, 1), transform: mat4 = mat4())    # a box: center, and its size along x, y and z
+add_cylinder = (vs: mut Vertex3D[], base: vec3, radius: f64, height: f64, color: vec4 = vec4(1, 1, 1, 1), segments: int = 16, top_radius: f64 = -1.0, transform: mat4 = mat4())    # a cylinder standing on base (a cone when top_radius is 0)
+add_sphere = (vs: mut Vertex3D[], center: vec3, radius: f64, color: vec4 = vec4(1, 1, 1, 1), segments: int = 16, rings: int = 8, transform: mat4 = mat4())    # a sphere (segments around, rings from top to bottom: few of each give a faceted look)
 sphere_mesh = (radius: f64 = 0.5, segments: int = 32, rings: int = 16) -> Mesh
 terrain_mesh = (size: f64, divisions: int, height: (f64, f64) -> f64, color: (f64, f64, f64) -> vec4) -> Mesh    # a flat grid in the XZ plane; `height` gives the terrain elevation at (x, z)
 plane_mesh = (size: f64 = 10.0) -> Mesh
