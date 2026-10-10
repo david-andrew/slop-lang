@@ -100,7 +100,7 @@ tiles (examples/tiles.jo), JSON (parse_json/to_json), base64. Missing:
 - Assets: JPEG, glTF 2.0 meshes (skinning later), Tiled's external tilesets (.tsj; embedded
   ones work).
 - 2D: slopes and one-way platforms in tilemaps, tweening, camera follow/shake helpers.
-- 3D: free/orbit camera controllers, frustum culling, skyboxes.
+- 3D: done: orbit and fly cameras (lib/game/camera3d.jo). Left: frustum culling, skyboxes.
 - Debug panels (ui.jo has menus).
 - Networking (UDP; WebSocket/WebRTC on the web) — later.
 

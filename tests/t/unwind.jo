@@ -48,6 +48,12 @@ walk = () -> str:
 f3 = (n: int) -> str:
     xs = [n, n + 1]
     "{walk()} ({xs[0] + xs[1]})"
-f2 = (n: int) -> str: f3(n * 2)
-f1 = (n: int) -> str: f2(n + 1)
+# (calling themselves, though never here, keeps them functions of their own in release builds,
+# which put small functions in their callers)
+f2 = (n: int) -> str:
+    if n < 0: return f2(n + 1)
+    f3(n * 2)
+f1 = (n: int) -> str:
+    if n < 0: return f1(n + 1)
+    f2(n + 1)
 print(f1(5))

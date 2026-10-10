@@ -413,6 +413,34 @@ melody_loop = (notes: str, bpm: f64 = 120.0, wave: Wave = .triangle, volume: f64
 load_wav = (file: u8[]) -> Sound    # a WAV file's sound: integer samples of 8, 16, 24 or 32 bits or floats of 32 or 64, any number of channels (the first two are used; mono plays on both), any rate (resampled to MIX_RATE). Other files are an error that says what they are.
 ```
 
+### camera3d.jo
+
+Cameras that the player moves (3D): an orbit camera, around a point (to look at a model, a  
+board, a level from above), and a fly camera (to move through a scene). Each is a value the  
+game keeps: update it with the frame's input, then make it the camera.  
+
+```gdscript
+cam = orbit_camera(vec3(0, 1, 0), 12.0)
+update = (dt: f64): update(cam, dt)
+draw = ():
+    camera3d(cam)
+    draw_mesh(...)
+```
+
+```gdscript
+struct OrbitCamera    # Around target, at distance: dragging with the left or right mouse button (or the right stick) turns it, the wheel (or the left stick up and down) brings it closer or further.
+orbit_camera = (target: vec3 = vec3(0, 0, 0), distance: f64 = 10.0, yaw: f64 = 0.0, pitch: f64 = 0.4) -> OrbitCamera
+update = (c: mut OrbitCamera, dt: f64)
+position = (c: OrbitCamera) -> vec3    # where the camera is
+camera3d = (c: OrbitCamera, fov_degrees: f64 = 60.0, near: f64 = 0.1, far: f64 = 500.0)
+struct FlyCamera    # Through the scene: W A S D (or the arrows, or the left stick) move, Space and Q go up and down, Shift is faster; the mouse looks around while the right button is held, or always when the mouse is locked (mouse_lock()), as does the right stick.
+fly_camera = (pos: vec3, yaw: f64 = 0.0, pitch: f64 = 0.0) -> FlyCamera
+forward = (c: FlyCamera) -> vec3    # the way it looks (a unit vector), and its right
+right = (c: FlyCamera) -> vec3
+update = (c: mut FlyCamera, dt: f64)
+camera3d = (c: FlyCamera, fov_degrees: f64 = 60.0, near: f64 = 0.1, far: f64 = 500.0)
+```
+
 ### dl.jo
 
 Loading system shared libraries (GPU drivers) from a fully static executable.  

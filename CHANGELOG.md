@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Cameras for 3D: `orbit_camera` (drag to turn, the wheel to zoom) and `fly_camera` (WASD and
+  the mouse), with gamepad sticks too; `camera3d(cam)` uses one.
 - **Debugging on Windows**: `sloppy build` writes a PDB beside the program, and programs have
   unwind tables, so Visual Studio, WinDbg and RemedyBG show Sloppy functions, lines and call
   stacks (break at a function or a line, step through the source).

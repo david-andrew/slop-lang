@@ -1,4 +1,4 @@
-# 3D scene: terrain, instanced trees, shadows, sky, fog and bloom.
+# 3D scene: terrain, instanced trees, shadows, sky, fog and bloom, seen by an orbit camera.
 hill = (x: f64, z: f64) -> f64: 2.5 * sin(x * 0.15) * cos(z * 0.12) + 0.8 * sin(x * 0.5 + z * 0.3)
 ground_color = (x: f64, y: f64, z: f64) -> vec4:
     lerp(rgb(0.35, 0.55, 0.25), rgb(0.75, 0.7, 0.5), f32(clamp((y + 2.0) / 5.0, 0.0, 1.0)))
@@ -18,8 +18,13 @@ loop i in [0..300):
     trees.push(instance(transform(vec3(f32(x), f32(y), f32(z)), 0.0, s), rgb(0.45, 0.3, 0.2)))
     crowns.push(instance(transform(vec3(f32(x), f32(y + 1.0 * s), f32(z)), random(0.0, 6.0), s), rgb(0.2, f32(random(0.45, 0.6)), 0.25)))
 t = 0.0
+# (drag to turn around the scene, the wheel to come closer; left alone, it circles slowly)
+cam = orbit_camera(vec3(0, 1, 0), 24.0, 0.0, 0.38)
 
-update = (dt: f64): t += dt
+update = (dt: f64):
+    t += dt
+    if not mouse_down(.left) and not mouse_down(.right): cam.yaw += 0.15 * dt
+    update(cam, dt)
 
 draw = ():
     clear(BLACK)
@@ -27,8 +32,7 @@ draw = ():
     sky(vec3(0.2, 0.4, 0.8), vec3(0.85, 0.75, 0.65))
     fog(vec3(0.85, 0.78, 0.7), 0.012)
     post_effects(0.5, 0.75, 0.3)
-    a = t * 0.15
-    camera3d(vec3(f32(cos(a) * 22.0), 9, f32(sin(a) * 22.0)), vec3(0, 1, 0))
+    camera3d(cam)
     draw_mesh(terrain)
     draw_mesh_instanced(trunk, trees)
     draw_mesh_instanced(crown, crowns, wind = 0.05)
