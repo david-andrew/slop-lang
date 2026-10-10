@@ -589,6 +589,9 @@ files; `from ... import` picks names (a long list can go in parentheses over sev
 `from 'physics.jo' import _helper` reach them deliberately. A module's own functions with an
 imported function's name are overloads of it; any other clash is an error (rename with `as`).
 `use` and imports are not transitive: a file sees the names of the modules it brings in itself.
+A variable brought in by `use` (or the library's, like `ui_style`) is changed by assigning to
+it, at the top level as in a function: `volume = 0.5` after `use 'audio_settings.jo'` sets that
+module's `volume`, not a new one.
 
 The core standard library (strings, arrays, maps, math, vectors, files, numeric arrays, and
 the game/graphics/audio API) is always available without importing.

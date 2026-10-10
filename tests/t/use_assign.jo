@@ -1,0 +1,14 @@
+# requires: sloppy
+# at the top level, assigning to a variable that a used module has changes that variable (as
+# in a function), rather than making a new one beside it
+use 'mods/settings.jo'
+
+volume = 0.9
+names.push("b")
+print("{get_volume()} {name_count()}")
+louder = ():
+    volume = 1.0
+louder()
+print("{get_volume()} {volume}")
+ui_style = UiStyle(size = 40.0)
+print("{ui_style.size}")
