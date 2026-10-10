@@ -98,8 +98,9 @@ tiles (examples/tiles.jo), JSON (parse_json/to_json), base64. Missing:
 - Done: TrueType fonts (load_font, set_font; text is UTF-8). Left: OpenType fonts with CFF
   outlines (.otf), kerning, characters beyond the ones made up front (made when first drawn).
 - Assets: done: JPEG (baseline and progressive; within 3 of libjpeg-turbo's decoding, fuzzed
-  with damaged files). Left: glTF 2.0 meshes (skinning later), Tiled's external tilesets (.tsj;
-  embedded ones work).
+  with damaged files), glTF 2.0 models (.glb/.gltf: meshes, nodes, base color, textures, vertex
+  colors; checked on Khronos' sample models). Left: glTF skins and animations, PBR materials
+  (metal, roughness, normal maps), Tiled's external tilesets (.tsj; embedded ones work).
 - 2D: slopes and one-way platforms in tilemaps, tweening, camera follow/shake helpers.
 - 3D: done: orbit and fly cameras (lib/game/camera3d.jo). Left: frustum culling, skyboxes.
 - Debug panels (ui.jo has menus).

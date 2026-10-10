@@ -1,0 +1,38 @@
+# requires: sloppy
+# glTF: a .gltf with data: URIs (nodes' translation and scale, an indexed triangle with flat
+# normals made, a material with a texture) and a .glb (a matrix node, a triangle strip with
+# quantized texture coordinates and vertex colors, a buffer given by name); their errors; and
+# damaged files: an error or a model, never a crash (data/make_gltf.py makes the files)
+show = (r: ModelData | ModelError):
+    if r is ModelError:
+        print("error: {r.message}")
+        return
+    d = r as ModelData
+    print("{d.meshes.len()} meshes, {d.images.len()} images, box {d.min} .. {d.max}")
+    loop m in d.meshes:
+        print("  {m.vertices.len()} vertices, {m.indices.len()} indices, color {m.color}, image {m.image}, emissive {m.emissive}")
+        print("  moved to {m.transform[3].xyz}, scaled {m.transform[0].x}")
+        loop v in m.vertices: print("    {v.pos} {v.normal} {v.uv} {v.color}")
+    loop i in 0.. and img in d.images: print("  image {img.width}x{img.height}, smooth {d.smooth[i]}, {img.get(0, 0)} {img.get(1, 1)}")
+
+tri = embed("data/tri.gltf")
+strip = embed("data/strip.glb")
+more = embed("data/more.bin")
+show(read_gltf(tri))
+show(read_gltf(strip, {"more.bin": more}))
+show(read_gltf(strip))
+old = "{{\"asset\": {{\"version\": \"1.0\"}} }}"
+show(read_gltf(bytes(old)))
+show(read_gltf(bytes("not json")))
+text = str_from_bytes(tri)
+show(read_gltf(bytes(replace(text, "\"scene\": 0,", "\"extensionsRequired\": [\"EXT_meshopt_compression\"],"))))
+seed_random(4)
+loop round in [0..80):
+    f = strip
+    if random() < 0.5: f = tri
+    loop j in [0..random_int(1, 6)):
+        p = random_int(0, f.len())
+        f[p] = u8(random_int(0, 256))
+    if random() < 0.2: f.truncate(random_int(0, f.len()))
+    r = read_gltf(f, {"more.bin": more})
+print("damaged files survived")

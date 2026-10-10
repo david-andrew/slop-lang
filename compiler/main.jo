@@ -364,7 +364,10 @@ compile = (path: str, out0: str) -> str:
     if ra_stat: eprint("regalloc: spill cost {ra_spill_cost}, save cost {ra_save_cost} (int) {ra_save_x} (float), of {ra_total} weighted accesses\n")
     if timing:
         eprint("check {(t1 - t0) * 1000.0:.1} ms, lower+codegen {(t2 - t1) * 1000.0:.1} ms, write {(t3 - t2) * 1000.0:.1} ms; {lfuncs.len()} functions, {nodes.len()} nodes, {size} bytes of code")
-    if not ok: return ""
+    if not ok:
+        # (a patch for sloppy watch tells its own trouble)
+        if not watch_build or watch_first: eprint("error: cannot write {out} (a directory there, or no permission?)")
+        return ""
     out
 
 open_in_browser = (path: str) -> bool:

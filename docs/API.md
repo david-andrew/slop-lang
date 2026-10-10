@@ -779,6 +779,38 @@ glFramebufferRenderbuffer = (target: u32, attachment: u32, rbtarget: u32, rb: u3
 glCheckFramebufferStatus = (target: u32) -> u32
 ```
 
+### gltf.jo
+
+3D models from glTF 2.0 files (.glb, or .gltf with its .bin and images), the format Blender  
+and most tools export: meshes, with their materials' base color (a factor and a texture, PNG  
+or JPEG), vertex colors and emissive light, placed by the scene's nodes.  
+
+```gdscript
+ship = load_model(embed("ship.glb"))
+draw = ():
+    camera3d(...)
+    draw_model(ship, translation(pos) * rotation_y(angle))
+```
+
+A .gltf names its other files: give them by those names, as `files` (or put them in the .gltf  
+as data: URIs). Not read: skins and animations, morph targets, compressed meshes (Draco,  
+meshopt), sparse accessors; materials beyond the base color (metal, roughness, normal maps).  
+
+```gdscript
+struct ModelPart
+struct Model
+struct ModelError
+struct MeshData    # A model's data before it goes to the GPU (read_gltf): the vertices (in each part's own space) for collision, or to change them, and the images of its textures.
+struct ModelData
+model = (d: ModelData) -> Model    # the model on the GPU: a mesh and a texture for each part
+draw_model = (m: Model, transform: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), cast_shadow: bool = true)    # draw each part (see draw_mesh), the model placed by transform and its colors times tint
+model_size = (m: Model) -> vec3    # the model's size (the box around it) and its middle
+model_center = (m: Model) -> vec3
+load_model = (file: u8[], files: {str: u8[]} = {}) -> Model    # load_gltf, or a panic with what is wrong
+load_gltf = (file: u8[], files: {str: u8[]} = {}) -> Model | ModelError    # a .glb (binary glTF) or .gltf (its JSON) file, on the GPU; files: the ones it names, by name
+read_gltf = (file: u8[], files: {str: u8[]} = {}) -> ModelData | ModelError    # the same, its data only (see ModelData)
+```
+
 ### gpu.jo
 
 GPU programs written in Sloppy: meshes, shaders and uniform binding.  

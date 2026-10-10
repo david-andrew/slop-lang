@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **3D models**: `load_model` reads glTF 2.0 (.glb, or .gltf with its files): meshes placed by
+  the scene's nodes, base colors, PNG and JPEG textures, vertex colors; `draw_model` draws one.
+  `read_gltf` gives the model's data without the GPU (for collision, or to change it).
 - **JPEG**: `load_jpeg`, and `load_image`/`load_texture` read JPEG as well as PNG (baseline and
   progressive, any color sampling, grayscale, CMYK).
 - Cameras for 3D: `orbit_camera` (drag to turn, the wheel to zoom) and `fly_camera` (WASD and

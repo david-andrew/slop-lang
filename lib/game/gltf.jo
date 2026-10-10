@@ -1,0 +1,396 @@
+# 3D models from glTF 2.0 files (.glb, or .gltf with its .bin and images), the format Blender
+# and most tools export: meshes, with their materials' base color (a factor and a texture, PNG
+# or JPEG), vertex colors and emissive light, placed by the scene's nodes.
+#
+#   ship = load_model(embed("ship.glb"))
+#   draw = ():
+#       camera3d(...)
+#       draw_model(ship, translation(pos) * rotation_y(angle))
+#
+# A .gltf names its other files: give them by those names, as `files` (or put them in the .gltf
+# as data: URIs). Not read: skins and animations, morph targets, compressed meshes (Draco,
+# meshopt), sparse accessors; materials beyond the base color (metal, roughness, normal maps).
+
+struct ModelPart:
+    mesh: Mesh
+    transform: mat4             # where the scene's nodes put it, in the model
+    color: vec4                 # the material's base color (times the vertices' colors)
+    texture: Texture            # its base color texture (Texture(0, 0, 0): none)
+    emissive: f64               # how much it glows (from the material's emissive color)
+
+struct Model:
+    parts: ModelPart[]
+    min: vec3                   # the corners of a box around it
+    max: vec3
+
+struct ModelError:
+    message: str
+
+# A model's data before it goes to the GPU (read_gltf): the vertices (in each part's own space)
+# for collision, or to change them, and the images of its textures.
+struct MeshData:
+    vertices: Vertex3D[]
+    indices: u32[]              # (none: the vertices are the triangles)
+    transform: mat4
+    color: vec4
+    image: int                  # its texture's image in ModelData.images (-1: none)
+    emissive: f64
+
+struct ModelData:
+    meshes: MeshData[]
+    images: Image[]
+    smooth: bool[]              # (per image: filtered, or nearest pixels)
+    min: vec3
+    max: vec3
+
+# the model on the GPU: a mesh and a texture for each part
+model = (d: ModelData) -> Model:
+    texs: Texture[]
+    loop i in 0.. and img in d.images:
+        t = texture(img, d.smooth[i])
+        set_repeat(t, true)
+        texs.push(t)
+    m = Model([], d.min, d.max)
+    loop md in d.meshes:
+        tex = Texture(0, 0, 0)
+        if md.image >= 0: tex = texs[md.image]
+        m.parts.push(ModelPart(mesh(md.vertices, md.indices), md.transform, md.color, tex, md.emissive))
+    m
+
+# draw each part (see draw_mesh), the model placed by transform and its colors times tint
+draw_model = (m: Model, transform: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), cast_shadow: bool = true):
+    loop p in m.parts: draw_mesh(p.mesh, transform * p.transform, p.color * tint, p.texture, p.emissive, 0.3, cast_shadow)
+
+# the model's size (the box around it) and its middle
+model_size = (m: Model) -> vec3: m.max - m.min
+model_center = (m: Model) -> vec3: (m.min + m.max) * 0.5
+
+# load_gltf, or a panic with what is wrong
+load_model = (file: u8[], files: {str: u8[]} = {}) -> Model:
+    r = load_gltf(file, files)
+    if r is ModelError: panic("load_model: {r.message}")
+    r as Model
+
+# a .glb (binary glTF) or .gltf (its JSON) file, on the GPU; files: the ones it names, by name
+load_gltf = (file: u8[], files: {str: u8[]} = {}) -> Model | ModelError:
+    d = read_gltf(file, files)
+    if d is ModelError: return d
+    model(d as ModelData)
+
+# the same, its data only (see ModelData)
+read_gltf = (file: u8[], files: {str: u8[]} = {}) -> ModelData | ModelError:
+    json = ""
+    bin: u8[]
+    if file.len() >= 12 and file[0] == 'g' and file[1] == 'l' and file[2] == 'T' and file[3] == 'F':
+        # GLB: a header, then chunks (JSON, then BIN)
+        if __gt_u32(file, 4) != 2: return ModelError("only glTF 2.0 is read")
+        o = 12
+        loop o + 8 <= file.len():
+            n = __gt_u32(file, o)
+            kind = __gt_u32(file, o + 4)
+            if o + 8 + n > file.len(): return ModelError("the .glb file is cut short")
+            if kind == 0x4E4F534A: json = str_from_bytes(file[o + 8..o + 8 + n))
+            else if kind == 0x004E4942: bin = file[o + 8..o + 8 + n)
+            o += 8 + ((n + 3) & ~3)
+    else: json = str_from_bytes(file)
+    pj = parse_json(json)
+    if pj is JsonError: return ModelError("not a glTF file: {pj.message} (line {pj.line})")
+    doc: Json? = pj as Json
+    if (as_str(get(get(doc, "asset"), "version")) ?? "") != "2.0": return ModelError("not glTF 2.0")
+    loop e in as_list(get(doc, "extensionsRequired")):
+        x = as_str(e) ?? ""
+        if x != "KHR_mesh_quantization" and x != "KHR_materials_unlit" and x != "KHR_texture_transform":
+            return ModelError("it needs {x}, which is not read")
+    # the buffers: the GLB's own, data: URIs, or files given
+    bufs: u8[][]
+    loop b in as_list(get(doc, "buffers")):
+        bj: Json? = b
+        uri = as_str(get(bj, "uri"))
+        if uri == none: bufs.push(bin)
+        else if let d = __gt_uri(uri!, files): bufs.push(d)
+        else: return ModelError("its buffer '{uri!}' was not given (pass it in files)")
+    # the textures' images (read when a material uses them): where in m.images
+    textures = fill(-1, as_list(get(doc, "textures")).len())
+    m = ModelData([], [], [], vec3(1e30, 1e30, 1e30), vec3(-1e30, -1e30, -1e30))
+    # the scene's nodes, from the roots down
+    roots: int[]
+    scene = as_int(get(doc, "scene")) ?? 0
+    sc: Json? = at(get(doc, "scenes"), scene)
+    if sc != none:
+        loop n in as_list(get(sc, "nodes")): roots.push(as_int(n) ?? -1)
+    else:
+        # (no scene: every node that is no node's child)
+        nn = as_list(get(doc, "nodes")).len()
+        child = fill(false, nn)
+        loop n in as_list(get(doc, "nodes")):
+            nj: Json? = n
+            loop c in as_list(get(nj, "children")):
+                k = as_int(c) ?? -1
+                if k >= 0 and k < nn: child[k] = true
+        loop i in [0..nn):
+            if not child[i]: roots.push(i)
+    stack: (int, mat4, int)[]                    # (node, its parent's transform, depth)
+    # (pushed last first: the model's parts come in the file's order)
+    loop i in [0..roots.len()): stack.push((roots[roots.len() - 1 - i], mat4(), 0))
+    loop stack.len() > 0:
+        top = stack.pop()
+        node: Json? = at(get(doc, "nodes"), top.0)
+        if node == none or top.2 > 64: return ModelError("a node that is not there, or nodes in a loop")
+        xf = top.1 * __gt_node_matrix(node)
+        if let mi = as_int(get(node, "mesh")):
+            mj: Json? = at(get(doc, "meshes"), mi)
+            if mj == none: return ModelError("node {top.0} names mesh {mi}, which is not there")
+            loop prim in as_list(get(mj, "primitives")):
+                if let e = __gt_primitive(doc, prim, bufs, files, textures, xf, m): return e
+        kids = as_list(get(node, "children"))
+        loop i in [0..kids.len()): stack.push((as_int(kids[kids.len() - 1 - i]) ?? -1, xf, top.2 + 1))
+    if m.meshes.len() == 0:
+        m.min = vec3(0, 0, 0)
+        m.max = vec3(0, 0, 0)
+    m
+
+# a node's own transform: its matrix, or translation * rotation * scale
+__gt_node_matrix = (node: Json?) -> mat4:
+    mat = as_list(get(node, "matrix"))
+    if mat.len() == 16:
+        r = mat4()
+        loop c in [0..4): r[c] = vec4(__gt_f(mat[4 * c]), __gt_f(mat[4 * c + 1]), __gt_f(mat[4 * c + 2]), __gt_f(mat[4 * c + 3]))
+        return r
+    t = as_list(get(node, "translation"))
+    q = as_list(get(node, "rotation"))
+    s = as_list(get(node, "scale"))
+    r = mat4()
+    if t.len() == 3: r = translation(vec3(__gt_f(t[0]), __gt_f(t[1]), __gt_f(t[2])))
+    if q.len() == 4: r = r * quat_to_mat4(vec4(__gt_f(q[0]), __gt_f(q[1]), __gt_f(q[2]), __gt_f(q[3])))
+    if s.len() == 3: r = r * scaling(vec3(__gt_f(s[0]), __gt_f(s[1]), __gt_f(s[2])))
+    r
+
+__gt_f = (j: Json) -> f32:
+    x: Json? = j
+    f32(as_num(x) ?? 0.0)
+
+__gt_u32 = (b: u8[], i: int) -> int: int(b[i]) | (int(b[i + 1]) << 8) | (int(b[i + 2]) << 16) | (int(b[i + 3]) << 24)
+
+# a data: URI's bytes, or a file given by name
+__gt_uri = (uri: str, files: {str: u8[]}) -> u8[]?:
+    if starts_with(uri, "data:"):
+        c = find(uri, ";base64,")
+        if c < 0: return none
+        return base64_decode(uri[c + 8..])
+    if let d = files.get(uri): return d
+    # (by its name alone, and with %20 for spaces)
+    name = replace(uri, "%20", " ")
+    s = rfind(name, "/")
+    if s >= 0: name = name[s + 1..]
+    files.get(name)
+
+# accessor a's values as floats, n per element (normalized integers in [0, 1] or [-1, 1]); none if
+# it is not there, or does not fit its buffer
+__gt_floats = (doc: Json?, bufs: u8[][], a: int, n: int) -> f32[]?:
+    acc: Json? = at(get(doc, "accessors"), a)
+    if acc == none or get(acc, "sparse") != none: return none
+    ct = as_int(get(acc, "componentType")) ?? 0
+    count = as_int(get(acc, "count")) ?? 0
+    norm = as_bool(get(acc, "normalized")) ?? false
+    tn = __gt_type_n(as_str(get(acc, "type")) ?? "")
+    if tn < n: return none
+    cs = __gt_csize(ct)
+    if cs == 0: return none
+    out = fill(f32(0), count * n)
+    if get(acc, "bufferView") == none: return out
+    view: Json? = at(get(doc, "bufferViews"), as_int(get(acc, "bufferView")) ?? -1)
+    bi = as_int(get(view, "buffer")) ?? -1
+    if view == none or bi < 0 or bi >= bufs.len(): return none
+    buf = bufs[bi]
+    start = (as_int(get(view, "byteOffset")) ?? 0) + (as_int(get(acc, "byteOffset")) ?? 0)
+    vlen = as_int(get(view, "byteLength")) ?? 0
+    stride = as_int(get(view, "byteStride")) ?? (cs * tn)
+    if count > 0 and ((as_int(get(acc, "byteOffset")) ?? 0) + (count - 1) * stride + cs * tn > vlen or (as_int(get(view, "byteOffset")) ?? 0) + vlen > buf.len() or start < 0): return none
+    p = data(buf) + start
+    loop i in [0..count):
+        e = p + i * stride
+        loop k in [0..n):
+            q = e + k * cs
+            v = f32(0)
+            if ct == 5126: v = (q as *f32)[0]
+            else if ct == 5121:
+                v = f32(int(q[0]))
+                if norm: v = v / 255.0
+            else if ct == 5123:
+                v = f32(int((q as *u16)[0]))
+                if norm: v = v / 65535.0
+            else if ct == 5120:
+                v = f32(int((q as *i8)[0]))
+                if norm: v = __gt_snorm(v / 127.0)
+            else if ct == 5122:
+                v = f32(int((q as *i16)[0]))
+                if norm: v = __gt_snorm(v / 32767.0)
+            else if ct == 5125: v = f32(int((q as *u32)[0]))
+            out[i * n + k] = v
+    out
+
+# accessor a's integers (indices)
+__gt_ints = (doc: Json?, bufs: u8[][], a: int) -> u32[]?:
+    acc: Json? = at(get(doc, "accessors"), a)
+    if acc == none or get(acc, "sparse") != none: return none
+    ct = as_int(get(acc, "componentType")) ?? 0
+    count = as_int(get(acc, "count")) ?? 0
+    cs = __gt_csize(ct)
+    if ct != 5121 and ct != 5123 and ct != 5125: return none
+    view: Json? = at(get(doc, "bufferViews"), as_int(get(acc, "bufferView")) ?? -1)
+    bi = as_int(get(view, "buffer")) ?? -1
+    if view == none or bi < 0 or bi >= bufs.len(): return none
+    buf = bufs[bi]
+    start = (as_int(get(view, "byteOffset")) ?? 0) + (as_int(get(acc, "byteOffset")) ?? 0)
+    vlen = as_int(get(view, "byteLength")) ?? 0
+    stride = as_int(get(view, "byteStride")) ?? cs
+    if count > 0 and ((as_int(get(acc, "byteOffset")) ?? 0) + (count - 1) * stride + cs > vlen or (as_int(get(view, "byteOffset")) ?? 0) + vlen > buf.len() or start < 0): return none
+    out = fill(u32(0), count)
+    p = data(buf) + start
+    loop i in [0..count):
+        q = p + i * stride
+        if ct == 5121: out[i] = u32(int(q[0]))
+        else if ct == 5123: out[i] = u32(int((q as *u16)[0]))
+        else: out[i] = (q as *u32)[0]
+    out
+
+__gt_snorm = (v: f32) -> f32:
+    if v < -1.0: return -1.0
+    v
+
+__gt_csize = (ct: int) -> int:
+    if ct == 5120 or ct == 5121: return 1
+    if ct == 5122 or ct == 5123: return 2
+    if ct == 5125 or ct == 5126: return 4
+    0
+
+__gt_type_n = (t: str) -> int:
+    if t == "SCALAR": return 1
+    if t == "VEC2": return 2
+    if t == "VEC3": return 3
+    if t == "VEC4": return 4
+    if t == "MAT4": return 16
+    0
+
+# one primitive of a mesh: its vertices (flat normals if it has none), its material; added to m
+__gt_primitive = (doc: Json?, prim0: Json, bufs: u8[][], files: {str: u8[]}, textures: mut int[], xf: mat4, m: mut ModelData) -> ModelError?:
+    prim: Json? = prim0
+    mode = as_int(get(prim, "mode")) ?? 4
+    if mode < 4: return none                      # points and lines: not drawn
+    attrs = get(prim, "attributes")
+    pa = as_int(get(attrs, "POSITION"))
+    if pa == none: return none
+    if get(get(prim, "extensions"), "KHR_draco_mesh_compression") != none: return ModelError("its meshes are compressed (Draco), which is not read")
+    if get(at(get(doc, "accessors"), pa!), "sparse") != none: return ModelError("its positions are a sparse accessor, which is not read")
+    pos = __gt_floats(doc, bufs, pa!, 3) ?? []
+    nv = pos.len() / 3
+    if nv == 0: return ModelError("a mesh's positions do not fit its buffer")
+    nrm: f32[]
+    if let na = as_int(get(attrs, "NORMAL")): nrm = __gt_floats(doc, bufs, na, 3) ?? []
+    uv: f32[]
+    if let ua = as_int(get(attrs, "TEXCOORD_0")): uv = __gt_floats(doc, bufs, ua, 2) ?? []
+    col: f32[]
+    cn = 4
+    if let ca = as_int(get(attrs, "COLOR_0")):
+        acc: Json? = at(get(doc, "accessors"), ca)
+        if (as_str(get(acc, "type")) ?? "") == "VEC3": cn = 3
+        col = __gt_floats(doc, bufs, ca, cn) ?? []
+    idx: u32[]
+    if let ia = as_int(get(prim, "indices")):
+        idx = __gt_ints(doc, bufs, ia) ?? []
+        if idx.len() == 0: return ModelError("a mesh's indices do not fit its buffer")
+    else:
+        loop i in [0..nv): idx.push(u32(i))
+    # (strips and fans: as triangles)
+    if mode == 5:
+        t: u32[]
+        loop i in [2..idx.len()):
+            if i % 2 == 0: t = t + [idx[i - 2], idx[i - 1], idx[i]]
+            else: t = t + [idx[i - 1], idx[i - 2], idx[i]]
+        idx = t
+    else if mode == 6:
+        t: u32[]
+        loop i in [2..idx.len()): t = t + [idx[0], idx[i - 1], idx[i]]
+        idx = t
+    loop i in idx:
+        if int(i) >= nv: return ModelError("a mesh's indices go past its vertices")
+    vs: Vertex3D[]
+    loop i in [0..nv):
+        p = vec3(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2])
+        n = vec3(0, 1, 0)
+        if nrm.len() == nv * 3: n = vec3(nrm[3 * i], nrm[3 * i + 1], nrm[3 * i + 2])
+        t = vec2(0, 0)
+        if uv.len() == nv * 2: t = vec2(uv[2 * i], uv[2 * i + 1])
+        c = vec4(1, 1, 1, 1)
+        if col.len() == nv * cn:
+            al = f32(1)
+            if cn == 4: al = col[cn * i + 3]
+            c = vec4(col[cn * i], col[cn * i + 1], col[cn * i + 2], al)
+        vs.push(Vertex3D(p, n, t, c))
+        wp = (xf * vec4(p, 1)).xyz
+        m.min = min(m.min, wp)
+        m.max = max(m.max, wp)
+    if nrm.len() != nv * 3:
+        # (no normals: each triangle's own, as glTF says)
+        flat: Vertex3D[]
+        k = 0
+        loop k + 2 < idx.len():
+            a = vs[int(idx[k])]
+            b = vs[int(idx[k + 1])]
+            c = vs[int(idx[k + 2])]
+            fnorm = normalize(cross(b.pos - a.pos, c.pos - a.pos))
+            a.normal = fnorm
+            b.normal = fnorm
+            c.normal = fnorm
+            flat.push(a)
+            flat.push(b)
+            flat.push(c)
+            k += 3
+        vs = flat
+        idx = []
+    # the material
+    color = vec4(1, 1, 1, 1)
+    image = -1
+    emissive = 0.0
+    if let mi = as_int(get(prim, "material")):
+        mat: Json? = at(get(doc, "materials"), mi)
+        pbr = get(mat, "pbrMetallicRoughness")
+        bc = as_list(get(pbr, "baseColorFactor"))
+        if bc.len() == 4: color = vec4(__gt_f(bc[0]), __gt_f(bc[1]), __gt_f(bc[2]), __gt_f(bc[3]))
+        ef = as_list(get(mat, "emissiveFactor"))
+        if ef.len() == 3: emissive = f64(max(__gt_f(ef[0]), max(__gt_f(ef[1]), __gt_f(ef[2]))))
+        if let ti = as_int(get(get(pbr, "baseColorTexture"), "index")):
+            if ti >= 0 and ti < textures.len():
+                if textures[ti] < 0:
+                    if let e = __gt_image(doc, ti, bufs, files, m): return e
+                    textures[ti] = m.images.len() - 1
+                image = textures[ti]
+    m.meshes.push(MeshData(vs, idx, xf, color, image, emissive))
+    none
+
+# texture ti's image (PNG or JPEG: in a buffer view, a data: URI or a file given), added to m
+__gt_image = (doc: Json?, ti: int, bufs: u8[][], files: {str: u8[]}, m: mut ModelData) -> ModelError?:
+    tj: Json? = at(get(doc, "textures"), ti)
+    src = as_int(get(tj, "source")) ?? -1
+    img: Json? = at(get(doc, "images"), src)
+    if img == none: return ModelError("texture {ti} has no image")
+    bytes: u8[]
+    if let uri = as_str(get(img, "uri")):
+        if let d = __gt_uri(uri, files): bytes = d
+        else: return ModelError("its image '{uri}' was not given (pass it in files)")
+    else:
+        view: Json? = at(get(doc, "bufferViews"), as_int(get(img, "bufferView")) ?? -1)
+        bi = as_int(get(view, "buffer")) ?? -1
+        o = as_int(get(view, "byteOffset")) ?? 0
+        n = as_int(get(view, "byteLength")) ?? 0
+        if view == none or bi < 0 or bi >= bufs.len() or o < 0 or o + n > bufs[bi].len(): return ModelError("image {src} does not fit its buffer")
+        bytes = bufs[bi][o..o + n)
+    pic = load_jpeg(bytes) ?? load_png(bytes)
+    if pic == none: return ModelError("image {src} is not a PNG or JPEG this can read")
+    # (nearest pixels if the sampler says so)
+    smooth = true
+    if let si = as_int(get(tj, "sampler")):
+        if (as_int(get(at(get(doc, "samplers"), si), "magFilter")) ?? 9729) == 9728: smooth = false
+    m.images.push(pic!)
+    m.smooth.push(smooth)
+    none
