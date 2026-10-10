@@ -21,6 +21,26 @@ LINKS = {"docs/TUTORIAL.md": "tutorial.html", "TUTORIAL.md": "tutorial.html",
          "API.md": "api.html", "docs/REPORT.md": "report.html", "REPORT.md": "report.html", "README.md": "start.html",
          "../README.md": "start.html"}
 
+# a table row's cells, as GitHub splits them: at each | that is not escaped (\|, which stands
+# for a | in the cell, code included)
+def table_cells(line):
+    cells, cur, k = [], "", 0
+    t = line.strip()
+    if t.startswith("|"): t = t[1:]
+    if t.endswith("|") and not t.endswith("\\|"): t = t[:-1]
+    while k < len(t):
+        if t[k] == "\\" and k + 1 < len(t) and t[k + 1] == "|":
+            cur += "|"
+            k += 2
+            continue
+        if t[k] == "|":
+            cells.append(cur.strip())
+            cur = ""
+        else: cur += t[k]
+        k += 1
+    cells.append(cur.strip())
+    return cells
+
 def inline(t):
     # code spans first (their contents are literal)
     parts = re.split(r"(`[^`]+`)", t)
@@ -57,10 +77,10 @@ def markdown(src):
     def flush():
         nonlocal para
         if para:
-            text = ""
-            for k, l in enumerate(para):
-                # (two trailing spaces: a line break)
-                text += inline(l.rstrip()) + ("<br>" if l.endswith("  ") and k < len(para) - 1 else " ")
+            # (the lines as one text: code spans and emphasis may go on to the next line; two
+            # trailing spaces: a line break, \x01 until then)
+            text = "\n".join(l.rstrip() + ("\x01" if l.endswith("  ") and k < len(para) - 1 else "") for k, l in enumerate(para))
+            text = inline(text).replace("\x01\n", "<br>").replace("\n", " ")
             out.append("<p>" + text.strip() + "</p>")
             para = []
 
@@ -135,7 +155,7 @@ def markdown(src):
             flush()
             rows = []
             while i < len(lines) and lines[i].startswith("|"):
-                rows.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
+                rows.append(table_cells(lines[i]))
                 i += 1
             head, body = rows[0], [r for r in rows[1:] if not all(re.match(r"^:?-+:?$", c) for c in r)]
             t = "<table><thead><tr>" + "".join(f"<th>{inline(c)}</th>" for c in head) + "</tr></thead><tbody>"

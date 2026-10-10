@@ -103,6 +103,14 @@ tiles (examples/tiles.jo), JSON (parse_json/to_json), base64. Missing:
   (metal, roughness, normal maps), Tiled's external tilesets (.tsj; embedded ones work).
 - 2D: slopes and one-way platforms in tilemaps, tweening, camera follow/shake helpers.
 - 3D: done: orbit and fly cameras (lib/game/camera3d.jo). Left: frustum culling, skyboxes.
+- Input:
+  - Players remapping controls: a game names its actions ("jump", "fire", "move" as an axis)
+    and asks for them (`action_pressed("jump")`, `action_axis("move")`), never raw keys. A
+    drop-in settings screen (ui.jo) rebinds an action by pressing the new key or button, and
+    the bindings are saved with save_data. The defaults are given by the game.
+  - Several gamepads and joysticks: each controller by number (`gamepad_down(1, .a)`), its
+    connection and disconnection, any number of buttons and axes for non-standard devices
+    (flight sticks, wheels), and local multiplayer that binds actions per player.
 - Debug panels (ui.jo has menus).
 - Networking (UDP; WebSocket/WebRTC on the web) — later.
 
