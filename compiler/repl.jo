@@ -5,9 +5,10 @@
 # and compiles just what is new (declarations, statements, the library functions they need for
 # the first time) to machine code that calls the session's functions and uses its globals where
 # they already are, and sends it there to run. So variables and functions persist, and code runs
-# at full speed. An input is first compiled in a copy of this process (fork): if it has errors,
-# the compiler's state is as it was. It then runs in a copy of the session: if it panics, the
-# session is as it was.
+# at full speed. Before an input is compiled, a copy of this process's memory is taken
+# (lib/std/snapshot.jo): if it has errors, the copy is put back, and the compiler is as it was.
+# The session runs it the same way (on Linux: in a copy of itself, fork): if it panics or
+# crashes, the session is as it was.
 
 use 'util.jo'
 use 'lex.jo'
@@ -34,8 +35,11 @@ lf_abs: int[]                           # function (lfunc) -> its address in the
 ro_segs: (int, int, int)[]              # read-only data: (from, to) offsets and their address
 ro_shipped = 0
 repl_inited: {int: bool} = {}           # library globals initialized in the session
-repl_to = -1                            # pipes to and from the session
+repl_to = -1                            # pipes to and from the session (Windows: handles)
 repl_from = -1
+repl_pid = -1                           # (Windows: the session's process handle)
+repl_exe = ""                           # (Windows: the session's program, deleted at the end)
+repl_jbuf: *u8 = null                   # where an error in an input goes (repl_try)
 
 # the session's main: __repl_main in the input module
 repl_set_main = ():
@@ -48,9 +52,19 @@ repl_set_main = ():
 
 repl_start = () -> str:
     src = "__repl_main = (): __repl_serve({REPL_REGION}, {REPL_REGION_SIZE})\n"
-    path = "/tmp/sloppy-cache/repl-{syscall(39)}.bin"
-    mkdir("/tmp/sloppy-cache")
-    main_src = "/tmp/sloppy-cache/<input>"
+    cache = "/tmp/sloppy-cache"
+    when TARGET == "windows":
+        cache = os_path(temp_dir()) + "/sloppy-cache"
+    mkdir(cache)
+    me = 0
+    when TARGET == "windows":
+        me = int(GetCurrentProcessId())
+    else:
+        me = syscall(39)
+    path = "{cache}/repl-{me}.bin"
+    when TARGET == "windows":
+        path = "{cache}/repl-{me}.exe"
+    main_src = "{cache}/<input>"
     ide_texts[main_src] = src
     repl_image = true
     bss_reserve = REPL_DATA_RESERVE
@@ -60,9 +74,7 @@ repl_start = () -> str:
     loop i in 0.. and m in modules:
         if m.is_main: repl_mainm = i
     # (inputs `use` files relative to the current directory)
-    cwd = fill(u8(0), 4096)
-    n = syscall(79, data(cwd), 4096)
-    if n > 0: modules[repl_mainm].dir = str_from_bytes(cwd[..n - 1))
+    modules[repl_mainm].dir = cwd()
     loop i in [0..lfuncs.len()):
         a = 0
         if i < fn_addr.len() and fn_addr[i] >= 0: a = img_text_addr + fn_addr[i]
@@ -71,42 +83,107 @@ repl_start = () -> str:
     ro_shipped = rodata.len()
     loop g in global_ids:
         if modules[int(globals[g].mod)].is_prelude and global_off.get(g) != none: repl_inited[g] = true
-    # start it, with its end of two pipes as fds 3 and 4
-    a: i32[] = [-1, -1]
-    b: i32[] = [-1, -1]
-    syscall(293, data(a), 0)
-    syscall(293, data(b), 0)
-    pid = syscall(57)
-    if pid == 0:
-        syscall(33, int(a[0]), 3)
-        syscall(33, int(b[1]), 4)
-        exec(path, [path])
-        syscall(60, 127)
-    syscall(3, int(a[0]))
-    syscall(3, int(b[1]))
-    repl_to = int(a[1])
-    repl_from = int(b[0])
-    if repl_wait_reply() != 0: return "the session program did not start"
-    delete_file(path)
+    when TARGET == "windows":
+        # start it with two pipes, their handles in SLOPPY_REPL_PIPES
+        sa = fill(0, 3)
+        sa[0] = 24
+        sa[2] = 1                                     # inheritable
+        to_r: *u8[] = [null]
+        to_w: *u8[] = [null]
+        from_r: *u8[] = [null]
+        from_w: *u8[] = [null]
+        CreatePipe(data(to_r), data(to_w), data(sa) as *u8, 0)
+        CreatePipe(data(from_r), data(from_w), data(sa) as *u8, 0)
+        SetHandleInformation(to_w[0], 1, 0)           # (this side's ends stay here)
+        SetHandleInformation(from_r[0], 1, 0)
+        name = __wide("SLOPPY_REPL_PIPES")
+        val = __wide("{to_r[0] as int},{from_w[0] as int}")
+        SetEnvironmentVariableW(data(name), data(val))
+        wcmd = __wide(__w32_cmdline([path]))
+        wexe = __wide(path)
+        si = fill(0, 13)
+        si[0] = 104
+        pi = fill(0, 3)
+        ok = CreateProcessW(data(wexe), data(wcmd), null, null, 1, 0, null, null, data(si) as *u8, data(pi) as *u8) != 0
+        SetEnvironmentVariableW(data(name), null)
+        CloseHandle(to_r[0])
+        CloseHandle(from_w[0])
+        if not ok: return "could not start the session program"
+        CloseHandle(pi[1] as *u8)
+        repl_pid = pi[0]
+        repl_to = to_w[0] as int
+        repl_from = from_r[0] as int
+        repl_exe = path
+        if repl_wait_reply() != 0: return "the session program did not start"
+    else:
+        # start it, with its end of two pipes as fds 3 and 4
+        a: i32[] = [-1, -1]
+        b: i32[] = [-1, -1]
+        syscall(293, data(a), 0)
+        syscall(293, data(b), 0)
+        pid = syscall(57)
+        if pid == 0:
+            syscall(33, int(a[0]), 3)
+            syscall(33, int(b[1]), 4)
+            exec(path, [path])
+            syscall(60, 127)
+        syscall(3, int(a[0]))
+        syscall(3, int(b[1]))
+        repl_to = int(a[1])
+        repl_from = int(b[0])
+        if repl_wait_reply() != 0: return "the session program did not start"
+        delete_file(path)
+    repl_jbuf = __alloc(64)
     ""
+
+repl_write = (p: *u8, n: int):
+    when TARGET == "windows":
+        k: u32[] = [0]
+        off = 0
+        loop off < n:
+            if WriteFile(repl_to as *u8, p + off, u32(min(n - off, 1 << 30)), data(k), null) == 0: return
+            off += int(k[0])
+    else:
+        __write_fd(repl_to, p, n)
 
 repl_send = (op: int, addr: int, bytes: u8[]):
     h = [op, addr, bytes.len()]
-    __write_fd(repl_to, data(h) as *u8, 24)
-    if bytes.len() > 0: __write_fd(repl_to, data(bytes), bytes.len())
+    repl_write(data(h) as *u8, 24)
+    if bytes.len() > 0: repl_write(data(bytes), bytes.len())
 
 # the session's reply to a run (-1: it is gone)
 repl_wait_reply = () -> int:
     w = [0]
     got = 0
     loop got < 8:
-        r = syscall(0, repl_from, (data(w) as *u8) + got, 8 - got)
-        if r <= 0: return -1
+        r = 0
+        when TARGET == "windows":
+            k: u32[] = [0]
+            if ReadFile(repl_from as *u8, (data(w) as *u8) + got, u32(8 - got), data(k), null) != 0: r = int(k[0])
+        else:
+            r = syscall(0, repl_from, (data(w) as *u8) + got, 8 - got)
+        if r <= 0:
+            when TARGET == "windows":
+                # (gone: exit() in an input ends the prompt with its status)
+                WaitForSingleObject(repl_pid as *u8, u32(0xFFFFFFFF))
+                code: u32[] = [0]
+                GetExitCodeProcess(repl_pid as *u8, data(code))
+                c = int(code[0])
+                if c != 101 and c < 256: return 512 + c
+            return -1
         got += r
-    # (reap the processes the session left behind)
-    st = [0]
-    loop syscall(61, -1, data(st), 1, 0) > 0: pass
+    when TARGET != "windows":
+        # (reap the processes the session left behind)
+        st = [0]
+        loop syscall(61, -1, data(st), 1, 0) > 0: pass
     w[0]
+
+# the end of the session (Windows: then its program can be deleted)
+repl_end = ():
+    repl_send(3, 0, [])
+    when TARGET == "windows":
+        if repl_pid >= 0: WaitForSingleObject(repl_pid as *u8, u32(5000))
+        if len(repl_exe) > 0: delete_file(repl_exe)
 
 # ---- compiling an input ----
 
@@ -249,37 +326,44 @@ repl_ro_addr = (off: int) -> int:
     ice("read-only data at {off} has no place")
     0
 
-struct ReplCheck:
+struct ReplTry:
     ok: bool
     show: bool
     expr_at: int
     type: str
+    out: ReplOut
 
-# compile an input in a copy of this process (errors are printed there); what it found
-repl_check = (text: str) -> ReplCheck:
-    fds: i32[] = [-1, -1]
-    syscall(293, data(fds), 0)
-    pid = syscall(57)
-    if pid == 0:
-        syscall(3, int(fds[0]))
-        o = repl_compile(text, repl_inputs)
-        w = [1, 0, o.expr_at, len(o.type)]
-        if o.show: w[1] = 1
-        syscall(1, int(fds[1]), data(w), 32)
-        if len(o.type) > 0: syscall(1, int(fds[1]), data(o.type), len(o.type))
-        syscall(231, 0)
-    syscall(3, int(fds[1]))
-    w = [0, 0, 0, 0]
-    got = syscall(0, int(fds[0]), data(w), 32)
-    t = ""
-    if got == 32 and w[3] > 0:
-        tb = fill(u8(0), w[3])
-        if syscall(0, int(fds[0]), data(tb), w[3]) == w[3]: t = str_from_bytes(tb)
-    syscall(3, int(fds[0]))
-    st = [0]
-    syscall(61, pid, data(st), 0, 0)
-    if got != 32 or w[0] != 1: return ReplCheck(false, false, 0, "")
-    ReplCheck(true, w[1] == 1, w[2], t)
+# compile text as the next input. What it adds stays (ready to send) with keep 1 if it compiles,
+# with keep 2 if it compiles and shows no value; else (and after errors, which it tells) the
+# compiler is as it was: its memory is put back as it was (lib/std/snapshot.jo).
+repl_try = (text: str, keep: int) -> ReplTry:
+    t = ReplTry()
+    when not BOOTSTRAP:
+        lo, n = __image_data()
+        s = __snap_take(lo, lo + n)
+        box = __os_raw_pages(4096) as *int          # (what it found: kept when memory is put back)
+        if __setjmp(repl_jbuf) == 0:
+            __repl_jmp = repl_jbuf
+            o = repl_compile(text, repl_inputs)
+            __repl_jmp = null
+            if keep == 1 or keep == 2 and not o.show:
+                __snap_drop(s)
+                __os_raw_free(box as *u8, 4096)
+                return ReplTry(true, o.show, o.expr_at, o.type, o)
+            box[0] = 1
+            if o.show: box[1] = 1
+            box[2] = o.expr_at
+            box[3] = __snap_keep(o.type) as int
+        __repl_jmp = null
+        __snap_restore(s)
+        __snap_drop(s)
+        if box[0] == 1:
+            t.ok = true
+            t.show = box[1] == 1
+            t.expr_at = box[2]
+            t.type = __snap_unkeep(box[3] as *u8)
+        __os_raw_free(box as *u8, 4096)
+    t
 
 # where the code of a line ends (before a comment)
 repl_code_end = (s: str) -> int:
@@ -295,10 +379,9 @@ repl_code_end = (s: str) -> int:
         i += 1
     len(s)
 
-# run an input: compile (checked first), send, run; false if the session ended
-repl_run = (text0: str) -> bool:
-    text = text0
-    c = repl_check(text)
+# run an input: compile, send, run; false if the session ended
+repl_run = (text: str) -> bool:
+    c = repl_try(text, 2)
     if not c.ok: return true
     if c.show:
         # show the value: the last expression becomes __repl_show(expression)
@@ -306,18 +389,22 @@ repl_run = (text0: str) -> bool:
         last = e[c.expr_at..]
         code_end = repl_code_end(last)
         shown = e[..c.expr_at) + "__repl_show(" + trim_end(last[..code_end)) + ")\n"
-        c2 = repl_check(shown)
-        if c2.ok: text = shown
-    o = repl_compile(text, repl_inputs)
+        c = repl_try(shown, 1)
+        if not c.ok: c = repl_try(text, 1)
+        if not c.ok: return true
+    o = c.out
     repl_inputs += 1
     repl_send(1, o.addr, o.code)
-    repl_send(2, o.addr + o.entry, [])
+    # (with the end of the globals: what the session copies before running it, on Windows)
+    h = [2, o.addr + o.entry, img_data_addr + data_size + 8]
+    repl_write(data(h) as *u8, 24)
     r = repl_wait_reply()
     if r < 0:
         eprint("the session ended")
         return false
     if r >= 512:
         if r - 512 == 101: return true          # a panic (it said why)
+        repl_end()
         exit(r - 512)                          # exit() in the input
     if r == 256 + 2: eprint("interrupted; the session is as it was before this input")
     else if r >= 256: eprint("crashed (signal {r - 256}); the session is as it was before this input")
@@ -329,33 +416,61 @@ repl_tty = false
 repl_history: str[]
 repl_hist_path = ""
 __termios_saved: u8[]
+repl_mode_saved = -1                    # (Windows: the console's input mode)
 
 repl_raw = (on: bool):
     if not repl_tty: return
-    if on:
-        t = fill(u8(0), 64)
-        syscall(16, 0, 0x5401, data(t))         # TCGETS
-        __termios_saved = t
-        r = t
-        lflag = int(r[12]) | (int(r[13]) << 8)
-        lflag = lflag & ~(0x2 | 0x8 | 0x1)      # ICANON, ECHO, ISIG
-        r[12] = u8(lflag & 255)
-        r[13] = u8((lflag >> 8) & 255)
-        iflag = int(r[0]) | (int(r[1]) << 8)
-        iflag = iflag & ~(0x100 | 0x400)        # ICRNL, IXON
-        r[0] = u8(iflag & 255)
-        r[1] = u8((iflag >> 8) & 255)
-        r[17 + 6] = 1                           # VMIN
-        r[17 + 5] = 0                           # VTIME
-        syscall(16, 0, 0x5402, data(r))         # TCSETS
-    else if __termios_saved.len() > 0: syscall(16, 0, 0x5402, data(__termios_saved))
+    when TARGET == "windows":
+        # (keys as the terminal sequences Linux has: ESC [ A for up...; ctrl-c a key, not a signal)
+        hin = GetStdHandle(u32(0xFFFFFFF6))
+        if on:
+            m: u32[] = [0]
+            GetConsoleMode(hin, data(m))
+            repl_mode_saved = int(m[0])
+            SetConsoleMode(hin, u32((repl_mode_saved & ~(0x1 | 0x2 | 0x4)) | 0x200))   # PROCESSED, LINE, ECHO off; VIRTUAL_TERMINAL_INPUT
+        else if repl_mode_saved >= 0: SetConsoleMode(hin, u32(repl_mode_saved))
+    else:
+        if on:
+            t = fill(u8(0), 64)
+            syscall(16, 0, 0x5401, data(t))         # TCGETS
+            __termios_saved = t
+            r = t
+            lflag = int(r[12]) | (int(r[13]) << 8)
+            lflag = lflag & ~(0x2 | 0x8 | 0x1)      # ICANON, ECHO, ISIG
+            r[12] = u8(lflag & 255)
+            r[13] = u8((lflag >> 8) & 255)
+            iflag = int(r[0]) | (int(r[1]) << 8)
+            iflag = iflag & ~(0x100 | 0x400)        # ICRNL, IXON
+            r[0] = u8(iflag & 255)
+            r[1] = u8((iflag >> 8) & 255)
+            r[17 + 6] = 1                           # VMIN
+            r[17 + 5] = 0                           # VTIME
+            syscall(16, 0, 0x5402, data(r))         # TCSETS
+        else if __termios_saved.len() > 0: syscall(16, 0, 0x5402, data(__termios_saved))
 
 repl_out = (s: str): __write_fd(1, data(s), len(s))
 
+repl_pending: u8[]                      # (Windows: the rest of a character read, in UTF-8)
+
 repl_getc = () -> int:
-    b = [0]
-    if syscall(0, 0, data(b), 1) != 1: return -1
-    b[0] & 255
+    when TARGET == "windows":
+        if repl_tty:
+            if repl_pending.len() == 0:
+                # (the console gives UTF-16: a character, two units for one past U+FFFF)
+                w: u16[] = [0, 0]
+                k: u32[] = [0]
+                hin = GetStdHandle(u32(0xFFFFFFF6))
+                if ReadConsoleW(hin, data(w), 1, data(k), null) == 0 or k[0] == 0: return -1
+                c = int(w[0])
+                if c >= 0xD800 and c < 0xDC00:
+                    if ReadConsoleW(hin, data(w) + 1, 1, data(k), null) != 0 and k[0] == 1: c = 0x10000 + ((c - 0xD800) << 10) + (int(w[1]) - 0xDC00)
+                repl_pending = bytes(chr(c))
+            c = int(repl_pending[0])
+            repl_pending.remove(0)
+            return c
+    b: u8[] = [0]
+    if __read_fd(0, data(b), 1) != 1: return -1
+    int(b[0])
 
 # display width of a line's bytes (UTF-8: one column per character)
 repl_cols = (s: str, n: int) -> int:
@@ -479,37 +594,31 @@ repl_plain = () -> str?:
     none
 
 # names that could go at the end of text (what is typed of the name being completed is dropped):
-# the checker, in a copy of this process, at a placeholder name (as the language server does)
+# the checker, at a placeholder name (as the language server does), then the compiler's memory
+# put back as it was
 repl_completions = (text: str) -> str[]:
     a = len(text)
     loop a > 0 and (is_alnum(text[a - 1]) or text[a - 1] >= 0x80): a -= 1
     probe = text[..a) + "__sloppy_complete__\n"
-    fds: i32[] = [-1, -1]
-    syscall(293, data(fds), 0)
-    pid = syscall(57)
-    if pid == 0:
-        syscall(3, int(fds[0]))
-        # (errors and the like go nowhere)
-        nul = syscall(2, data("/dev/null\0"), 1, 0)
-        syscall(33, nul, 2)
+    got = ""
+    when not BOOTSTRAP:
+        lo, n = __image_data()
+        s = __snap_take(lo, lo + n)
         ide_on = true
-        ide_fd = int(fds[1])
+        ide_fd = -1
+        ide_out = ""
         ide_sentinel = intern("__sloppy_complete__")
-        repl_compile(probe, repl_inputs)
-        syscall(231, 0)
-    syscall(3, int(fds[1]))
-    got: u8[]
-    buf = fill(u8(0), 65536)
-    loop true:
-        r = syscall(0, int(fds[0]), data(buf), 65536)
-        if r <= 0: break
-        loop k in [0..r): got.push(buf[k])
-    syscall(3, int(fds[0]))
-    st = [0]
-    syscall(61, pid, data(st), 0, 0)
+        if __setjmp(repl_jbuf) == 0:
+            __repl_jmp = repl_jbuf
+            repl_compile(probe, repl_inputs)
+        __repl_jmp = null
+        k = __snap_keep(ide_out)
+        __snap_restore(s)
+        __snap_drop(s)
+        got = __snap_unkeep(k)
     prefix = text[a..]
     out: str[]
-    loop l in split(str_from_bytes(got), "\n"):
+    loop l in split(got, "\n"):
         if not starts_with(l, "C\t"): continue
         e = find_byte(l, '\t', 2)
         if e < 0: e = len(l)
@@ -597,6 +706,8 @@ repl_read = () -> str?:
 
 repl_load_history = ():
     home = env("HOME") ?? ""
+    when TARGET == "windows":
+        if len(home) == 0: home = os_path(env("USERPROFILE") ?? "")
     if len(home) == 0: return
     repl_hist_path = "{home}/.sloppy_history"
     if let h = read_file(repl_hist_path):
@@ -624,15 +735,26 @@ replaces it. If an input panics or crashes, everything is as it was before it.
 "
 
 repl_main = ():
-    t = fill(u8(0), 64)
-    repl_tty = syscall(16, 0, 0x5401, data(t)) == 0
-    # (ctrl-c stops what an input is running, not the prompt)
-    act = [1, 0, 0, 0]                             # struct sigaction: SIG_IGN
-    syscall(13, 2, data(act), 0, 8)                # rt_sigaction(SIGINT)
+    when TARGET == "windows":
+        m: u32[] = [0]
+        repl_tty = GetConsoleMode(GetStdHandle(u32(0xFFFFFFF6)), data(m)) != 0
+        # (the prompt's line: drawn with terminal sequences)
+        hout = GetStdHandle(u32(0xFFFFFFF5))
+        if repl_tty and GetConsoleMode(hout, data(m)) != 0: SetConsoleMode(hout, m[0] | u32(0x4 | 0x1))   # VIRTUAL_TERMINAL_PROCESSING
+    else:
+        t = fill(u8(0), 64)
+        repl_tty = syscall(16, 0, 0x5401, data(t)) == 0
+        # (ctrl-c stops what an input is running, not the prompt)
+        act = [1, 0, 0, 0]                             # struct sigaction: SIG_IGN
+        syscall(13, 2, data(act), 0, 8)                # rt_sigaction(SIGINT)
     why = repl_start()
     if len(why) > 0:
         eprint("sloppy: {why}")
         exit(1)
+    when TARGET == "windows":
+        # (ctrl-c stops what an input is running, not the prompt; set after the session started,
+        # which would have this too)
+        SetConsoleCtrlHandler(null, 1)
     if repl_tty:
         repl_out("Sloppy (type an expression or a statement; a line ending with ':' starts a block, an empty line ends it; ctrl-d quits)\n")
         repl_load_history()
@@ -649,12 +771,20 @@ repl_main = ():
             repl_out(repl_help)
             continue
         if starts_with(t1, ":type ") or starts_with(t1, ":t "):
-            c = repl_check(trim(t1[find_byte(t1, ' ') + 1..]) + "\n")
+            c = repl_try(trim(t1[find_byte(t1, ' ') + 1..]) + "\n", 0)
             if c.ok:
                 if c.show: repl_out(c.type + "\n")
                 else: repl_out("void\n")
             continue
         if not repl_run(text): break
     repl_save_history()
-    repl_send(3, 0, [])
+    repl_end()
     exit(0)
+
+when TARGET == "windows":
+    @lib("kernel32.dll")
+    extern SetConsoleMode = (h: *u8, mode: u32) -> i32
+    @lib("kernel32.dll")
+    extern ReadConsoleW = (h: *u8, buf: *u16, n: u32, got: *u32, ctl: *u8) -> i32
+    @lib("kernel32.dll")
+    extern SetConsoleCtrlHandler = (f: *u8, add: i32) -> i32

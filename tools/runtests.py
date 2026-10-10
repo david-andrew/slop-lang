@@ -154,8 +154,7 @@ if compiler != "sloppy0" and target == "native":
             print(f"FAIL {name}: expected an error containing {want!r}\n{r.stderr}")
             failed += 1
     # the interactive prompt: tests/repl/*.in typed at `sloppy` (stdout and stderr) against .out
-    # (not on Windows yet)
-    for t in [] if on_windows else sorted(glob.glob(os.path.join(root, "tests", "repl", "*.in"))):
+    for t in sorted(glob.glob(os.path.join(root, "tests", "repl", "*.in"))):
         name = "repl/" + os.path.basename(t)[:-3]
         if pattern not in name: continue
         exp_path = t[:-3] + ".out"

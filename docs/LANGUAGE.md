@@ -59,8 +59,8 @@ as you enter them, and the value of an expression at the end of an input is show
 A line ending with `:` starts a block and an empty line ends it. Names stay declared, and
 declaring one again replaces it (code entered before keeps the old one). Each input is compiled
 to machine code that runs in a session process, so it runs as fast as a program does. If an
-input has errors, or panics, or crashes, or is stopped with ctrl-c, the session is exactly as it
-was before it. `:type expr` shows an expression's type, tab completes names (including fields
+input has errors, or panics, or crashes, or is stopped with ctrl-c, the program is exactly as it
+was before it (what it did outside the program, like writing a file, stays done). `:type expr` shows an expression's type, tab completes names (including fields
 after a `.`), up and down recall earlier lines, and ctrl-d or `exit` leaves. Input can also be
 piped in (`sloppy < script.txt`).
 
@@ -780,7 +780,7 @@ sloppy update             install the latest release (when this is not it)
 
 On Windows, `sloppy` is `sloppy.exe` and programs are Windows executables (`sloppy build game.jo`
 writes `game.exe`); `sloppy build --target windows` makes them on Linux too, and `--target linux`
-Linux ones on Windows. The interactive prompt is Linux-only for now.
+Linux ones on Windows.
 
 **Reloading while it runs.** `sloppy watch game.jo` runs the game and keeps watching the files it
 is built from. Each time one is saved the game is rebuilt and the running game takes the new

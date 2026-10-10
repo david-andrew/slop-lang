@@ -383,11 +383,7 @@ main = ():
             return
     # no file: the interactive prompt
     if a.len() < 2 or a[1] == "repl":
-        when TARGET == "windows":
-            eprint("sloppy: the interactive prompt is not on Windows yet (run a file: sloppy file.jo)")
-            exit(2)
-        else:
-            repl_main()
+        repl_main()
         return
     if a[1] == "build":
         if a.len() < 3: usage()

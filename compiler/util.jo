@@ -128,12 +128,18 @@ source_line = (p: int) -> str:
     loop b < len(src) and src[b] != '\n': b += 1
     src[a..b)
 
+# the end of compiling: the process ends (in the interactive prompt, back to it: repl.jo)
+stop = (code: int):
+    when not BOOTSTRAP:
+        __repl_unwind()
+    exit(code)
+
 # p < 0: no source position
 fatal = (p: int, msg: str):
     if ide_on: ide_fatal(p, msg)
     if p < 0:
         eprint("error: {msg}")
-        exit(1)
+        stop(1)
     eprint("{pos_str(p)}: error: {msg}")
     line = source_line(p)
     if len(line) > 0:
@@ -143,7 +149,7 @@ fatal = (p: int, msg: str):
             if i < len(line) and line[i] == '\t': caret += "\t"
             else: caret += " "
         eprint("    {line}\n    {caret}^")
-    exit(1)
+    stop(1)
 
 warn = (p: int, msg: str):
     if ide_on: ide_warn(p, msg)
@@ -151,7 +157,7 @@ warn = (p: int, msg: str):
 
 ice = (msg: str):
     eprint("internal compiler error: {msg}")
-    exit(2)
+    stop(2)
 
 # append src to out with one copy (compiler code must stay compilable by the C bootstrap,
 # which lacks the `extend` intrinsic)

@@ -67,7 +67,19 @@ __os_pages = (size: int) -> *u8:
         p = __wasm_grow(pages)
         if p < 0: __out_of_memory()
         return (p * 65536) as *u8
-    else when TARGET == "windows":
+    else:
+        p = __os_raw_pages(size)
+        __os_list_add(p, size)
+        return p
+
+__os_free_pages = (p: *u8, size: int):
+    when TARGET != "wasm":
+        if __os_list_remove(p): return
+        __os_raw_free(p, size)
+
+# (pages not in the list below)
+__os_raw_pages = (size: int) -> *u8:
+    when TARGET == "windows":
         return __w32_pages(size)
     else:
         p = syscall(9, 0, size, 3, 0x22, -1, 0)
@@ -76,11 +88,64 @@ __os_pages = (size: int) -> *u8:
         if size >= 2 << 20: syscall(28, p, size, 14)
         return p as *u8
 
-__os_free_pages = (p: *u8, size: int):
+__os_raw_free = (p: *u8, size: int):
     when TARGET == "windows":
         __w32_free_pages(p)
     else when TARGET == "linux":
         syscall(11, p, size)
+
+# The memory a native program has from the system is listed, so that all of it can be copied
+# and put back (lib/std/snapshot.jo): [count, capacity, then the address and size of each]. While
+# a copy is held (__os_hold > 0), pages given back stay, their size negated: putting the copy
+# back may need them.
+__os_list: *int = null
+__os_hold = 0
+__os_list_lock = 0
+
+__os_list_add = (p: *u8, size: int):
+    lk = &__os_list_lock
+    loop __atomic_cas(lk, 0, 1) != 0: pass
+    l = __os_list
+    if l == null or l[0] == l[1]:
+        cap = 1024
+        if l != null: cap = l[1] * 2
+        nl = __os_raw_pages(16 + cap * 16) as *int
+        nl[1] = cap
+        if l != null:
+            nl[0] = l[0]
+            mem_copy((nl + 2) as *u8, (l + 2) as *u8, l[0] * 16)
+            # (a held copy may still name the old list: it stays then)
+            if __os_hold == 0: __os_raw_free(l as *u8, 16 + l[1] * 16)
+        __os_list = nl
+        l = nl
+    n = l[0]
+    l[2 + 2 * n] = p as int
+    l[3 + 2 * n] = size
+    l[0] = n + 1
+    __atomic_cas(lk, 1, 0)
+
+# take p off the list; false if it is kept instead (a copy is held)
+__os_list_remove = (p: *u8) -> bool:
+    lk = &__os_list_lock
+    loop __atomic_cas(lk, 0, 1) != 0: pass
+    l = __os_list
+    kept = false
+    if l != null:
+        i = 0
+        loop i < l[0]:
+            if l[2 + 2 * i] == p as int:
+                if __os_hold > 0:
+                    if l[3 + 2 * i] > 0: l[3 + 2 * i] = -l[3 + 2 * i]
+                    kept = true
+                else:
+                    n = l[0] - 1
+                    l[2 + 2 * i] = l[2 + 2 * n]
+                    l[3 + 2 * i] = l[3 + 2 * n]
+                    l[0] = n
+                break
+            i += 1
+    __atomic_cas(lk, 1, 0)
+    kept
 
 __out_of_memory = ():
     __write_err("fatal: out of memory\n")
@@ -205,11 +270,15 @@ __grow_big = (p: *u8, used: int, size: int) -> *u8:
     total = (size + 16 + 65535) & ~65535
     if total <= h[0]: return p
     when TARGET == "linux":
-        q = syscall(25, h, h[0], total, 1, 0)
-        if q < 0 and q > -4096: __out_of_memory()
-        if total >= 2 << 20: syscall(28, q, total, 14)       # MADV_HUGEPAGE
-        (q as *int)[0] = total
-        return (q as *u8) + 16
+        # (not while a copy of memory is held: the old pages must stay where they are)
+        if __os_hold == 0:
+            q = syscall(25, h, h[0], total, 1, 0)
+            if q < 0 and q > -4096: __out_of_memory()
+            if total >= 2 << 20: syscall(28, q, total, 14)       # MADV_HUGEPAGE
+            __os_list_remove(h as *u8)
+            __os_list_add(q as *u8, total)
+            (q as *int)[0] = total
+            return (q as *u8) + 16
     r = __alloc_raw(size)
     mem_copy(r, p, used)
     __free(p)
@@ -302,6 +371,8 @@ __panic = (msg: str):
     __write_err("\n")
     when not BOOTSTRAP:
         __backtrace()
+        # (the interactive prompt: back to it, lib/std/repl.jo)
+        __repl_unwind()
     # (under sloppy watch, a game pauses instead: lib/std/watch.jo)
     when WATCH:
         __watch_panic(msg)

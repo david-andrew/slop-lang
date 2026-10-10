@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **The interactive prompt on Windows** (`sloppy` with no file), as on Linux: an input that has
+  errors, panics, crashes or is stopped with ctrl-c leaves everything as it was before it.
 - **Music that plays while it decodes**: `load_music` and `play_music` (Ogg Vorbis), for long
   tracks: no wait when they load, and little memory (`load_ogg` still decodes a sound whole).
 - **Fonts**: `load_font` reads TrueType fonts (.ttf, .ttc) into sharp text at any size;

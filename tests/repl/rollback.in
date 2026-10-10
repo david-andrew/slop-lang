@@ -1,0 +1,29 @@
+count = 0
+items = ["a"]
+big = fill(0, 1000000)
+fail = ():
+    count = 100
+    items.push("b")
+    big[0] = 7
+    more = fill(1, 3000000)
+    xs: int[]
+    xs[more.len()]
+
+fail()
+count
+items
+big[0]
+crash = ():
+    count = 5
+    p: *int = null
+    p[0] = 1
+
+crash()
+count
+deep = (n: int) -> int: deep(n + 1) + 1
+deep(0)
+count = count + 1
+count
+1 / (count - 1)
+items.push("c")
+items

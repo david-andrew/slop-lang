@@ -83,10 +83,15 @@ ide_esc = (s: str) -> str:
 
 ide_emit = (line: str): ide_lines.push(line)
 
+ide_out = ""                    # (ide_fd < 0: what is flushed goes here)
+
 ide_flush = ():
     s = join(ide_lines, "\n")
     ide_lines = []
     if len(s) == 0: return
+    if ide_fd < 0:
+        ide_out += s + "\n"
+        return
     __write_fd(ide_fd, data(s), len(s))
     __write_fd(ide_fd, data("\n"), 1)
 
@@ -595,7 +600,7 @@ ide_fatal = (p: int, msg: str):
     ide_emit("E\t{ps}\t{ide_esc(msg)}\t{sk}")
     if ide_sentinel == 0: ide_finish()
     else: ide_flush()
-    exit(0)
+    stop(0)
 
 ide_warn = (p: int, msg: str): ide_emit("W\t{ide_pos_str(p)}\t{ide_esc(msg)}")
 
@@ -636,7 +641,7 @@ ide_complete_names = ():
         seen[nm] = true
         ide_emit("C\t{it.name}\t{IK_FN}\tbuiltin")
     ide_flush()
-    exit(0)
+    stop(0)
 
 # what `from m import ` can bring in: m's names (its private ones too)
 ide_complete_module = (m: int):
@@ -651,7 +656,7 @@ ide_complete_module = (m: int):
         kd = ide_sym_detail(s)
         ide_emit("C\t{ide_esc(nms)}\t{kd.0}\t{ide_esc(kd.1)}")
     ide_flush()
-    exit(0)
+    stop(0)
 
 ide_complete_types = ():
     loop nm in type_names():
@@ -661,7 +666,7 @@ ide_complete_types = ():
         kd = ide_sym_detail(s)
         ide_emit("C\t{ide_esc(name_of(nm))}\t{kd.0}\t{ide_esc(kd.1)}")
     ide_flush()
-    exit(0)
+    stop(0)
 
 # the members of a value of type t0: fields, then functions taking it first (x.f() is f(x))
 ide_complete_members = (t0: int):
@@ -676,12 +681,12 @@ ide_complete_members = (t0: int):
             kd = ide_sym_detail(s)
             ide_emit("C\t{ide_esc(nms)}\t{kd.0}\t{ide_esc(kd.1)}")
         ide_flush()
-        exit(0)
+        stop(0)
     if k == .typeval:
         tt = prune(int(types[t].elem))
         if tt != 0 and types[tt].kind == .enum_: ide_complete_variants(tt)
         ide_flush()
-        exit(0)
+        stop(0)
     st = t
     if k == .ptr: st = prune(int(types[t].elem))
     if types[st].kind == .struct_:
@@ -716,7 +721,7 @@ ide_complete_members = (t0: int):
         loop it in intrinsics:
             if it.arr: ide_emit("C\t{it.name}\t{IK_FN}\tbuiltin")
     ide_flush()
-    exit(0)
+    stop(0)
 
 ide_complete_variants = (et: int):
     t = prune(et)
@@ -727,4 +732,4 @@ ide_complete_variants = (et: int):
             vi = int(structs[si].variants) + v
             ide_emit("C\t{ide_esc(name_of(int(variants[vi].name)))}\t{IK_VARIANT}\t{ide_esc(type_str(t))}")
     ide_flush()
-    exit(0)
+    stop(0)

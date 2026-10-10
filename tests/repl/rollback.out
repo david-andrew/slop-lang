@@ -1,0 +1,10 @@
+panic: <input>:7: index 3000000 out of bounds (length 0)
+0
+["a"]
+0
+panic: crashed: memory access at 0x0 (a bad pointer, in code using raw pointers or C?)
+0
+panic: stack overflow (a function calls itself without end, or too deeply?)
+1
+panic: <input>:1: division by zero
+["a", "c"]

@@ -108,8 +108,6 @@ On Windows (10 or 11, x64; into `%LOCALAPPDATA%\sloppy`, added to your PATH), in
 irm https://sloppy-lang.org/install.ps1 | iex
 ```
 
-(On Windows, the interactive prompt is not there yet; everything else is.)
-
 Or try it in the browser: [the playground](https://sloppy-lang.org/playground/). Then
 [make a game](docs/TUTORIAL.md): a small platformer, built step by step; then
 [an arcade game](docs/TUTORIAL_REBOUND.md), a small version of Rebound.

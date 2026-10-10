@@ -54,9 +54,11 @@ The compiler is a batch program: most state is global and lives for one compile.
 - **Target settings** (`target_wasm`, `target_windows`, `ptr_size`): set once by `setup_target`
   (`main.jo`) for building, checking and the language server alike.
 
-The language server, the prompt and `sloppy watch` check in a fresh process each time (fork on
-Linux; on Windows the language server starts `sloppy lsp --child`), so global state never has
-to be reset.
+The language server and `sloppy watch` check in a fresh process each time (fork on Linux; on
+Windows the language server starts `sloppy lsp --child`), so global state never has to be
+reset. The prompt compiles each input in its own process, after taking a copy of its memory
+(`lib/std/snapshot.jo`): an error (`fatal`, through `stop`) jumps back to the prompt, which puts
+the copy back.
 
 ## Tests
 

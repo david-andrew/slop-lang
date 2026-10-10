@@ -77,7 +77,9 @@ Left:
 - b. Done (0.3.1): `sloppy watch` on Windows (each build in a process of its own given the link
   map; the program's pipes passed as handles; files watched by their write times). Left: a
   panic in reloaded code names the wrong function in its backtrace.
-- c. The interactive prompt on Windows (S, on b's machinery).
+- c. Done: the interactive prompt on Windows. Without fork, a program's memory is copied before
+  an input and put back if it fails (lib/std/snapshot.jo): in the compiler (errors) and, on
+  Windows, in the session (panics, crashes, ctrl-c).
 - d. Debugging (M): unwind tables (.pdata/.xdata) so Windows' tools can walk the stack, then
   CodeView/PDB line info for Visual Studio, WinDbg and RemedyBG.
 - Code signing is out of reach for now; document what SmartScreen shows and how to get past it.
