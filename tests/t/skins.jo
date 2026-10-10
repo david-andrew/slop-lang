@@ -1,0 +1,33 @@
+# requires: sloppy
+# glTF skins and animations (data/arm.gltf, from data/make_gltf.py): the nodes and their parents
+# (a matrix taken apart), the skin's joints, vertices' joints and weights, the box round the
+# skin as it rests; poses: an animation between keys and in steps, looped or held, blended,
+# turned, and where a node is in each
+arm = () -> ModelData:
+    r = read_gltf(embed("data/arm.gltf"))
+    if r is ModelError: panic(r.message)
+    r as ModelData
+d = arm()
+loop n in d.nodes: print("{n.name} parent {n.parent} t {n.t} r {n.r} s {n.s}")
+print("order {d.order}")
+loop s in d.skins: print("joints {s.joints}, elbow unbound by {s.inverse_bind[1][3]}")
+loop md in d.meshes: print("skin {md.skin} node {md.node} moved {md.transform[3].xyz} joints {md.joints} weights {md.weights}")
+print("box {d.min} .. {d.max}")
+loop a in d.animations: print("{a.name}: {a.length} s, {a.channels.len()} channels")
+# (a model of the data, without the GPU)
+m = Model([], d.min, d.max, d.nodes, d.order, d.skins, d.animations)
+bend = find_animation(m, "Bend")
+elbow = find_node(m, "Elbow")
+print("bend {bend}, none {find_animation(m, "Wave")}, elbow {elbow}, root {find_node(m, "rig:Root")}, none {find_node(m, "Hand")}")
+tip = (p: Pose) -> vec3: (node_transform(m, p, elbow) * vec4(0, 1, 0, 1)).xyz
+show = (what: str, p: Pose): print("{what}: root at {p.t[1]}, elbow turned {p.r[elbow]}, its tip at {tip(p)}")
+show("rest", rest_pose(m))
+show("0.5", pose_at(m, bend, 0.5))
+show("1.0", pose_at(m, bend, 1.0, false))
+show("1.25 looped", pose_at(m, bend, 1.25))
+show("9 held", pose_at(m, bend, 9.0, false))
+show("halfway from rest", blend_poses(rest_pose(m), pose_at(m, bend, 1.0, false), 0.5))
+p = rest_pose(m)
+turn_node(m, p, elbow, vec3(0, 1, 0), PI / 2.0)
+show("turned round y", p)
+show("no such animation", pose_at(m, 7, 0.5))

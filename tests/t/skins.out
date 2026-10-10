@@ -1,0 +1,18 @@
+ parent -1 t vec3(9.0, 9.0, 9.0) r vec4(0.0, 0.0, 0.0, 1.0) s vec3(1.0, 1.0, 1.0)
+rig:Root parent 3 t vec3(0.0, 0.0, 0.0) r vec4(0.0, 0.0, 0.0, 1.0) s vec3(1.0, 1.0, 1.0)
+rig:Elbow parent 1 t vec3(0.0, 1.0, 0.0) r vec4(0.0, 0.0, 0.0, 1.0) s vec3(1.0, 1.0, 1.0)
+Turn parent -1 t vec3(0.0, 0.0, 0.0) r vec4(0.0, 0.7071068, 0.0, 0.7071068) s vec3(2.0, 2.0, 2.0)
+order [0, 3, 1, 2]
+joints [1, 2], elbow unbound by vec4(0.0, -1.0, 0.0, 1.0)
+skin 0 node 0 moved vec3(0.0, 0.0, 0.0) joints [vec4(0.0, 0.0, 0.0, 0.0), vec4(1.0, 0.0, 0.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0)] weights [vec4(1.0, 0.0, 0.0, 0.0), vec4(1.0, 0.0, 0.0, 0.0), vec4(0.5, 0.5, 0.0, 0.0)]
+box vec3(-2.3841858e-7, 0.0, -2.0000002) .. vec3(0.0, 4.0, 0.0)
+Bend: 1.0 s, 2 channels
+bend 0, none -1, elbow 2, root 1, none -1
+rest: root at vec3(0.0, 0.0, 0.0), elbow turned vec4(0.0, 0.0, 0.0, 1.0), its tip at vec3(0.0, 4.0, 0.0)
+0.5: root at vec3(0.0, 0.0, 0.0), elbow turned vec4(0.0, 0.0, 0.38268343, 0.9238795), its tip at vec3(1.6858739e-7, 3.4142137, 1.4142137)
+1.0: root at vec3(2.0, 0.0, 0.0), elbow turned vec4(0.0, 0.0, 0.7071068, 0.7071068), its tip at vec3(-2.3841855e-7, 1.9999998, -2.0)
+1.25 looped: root at vec3(0.0, 0.0, 0.0), elbow turned vec4(0.0, 0.0, 0.18736555, 0.9822902), its tip at vec3(8.776061e-8, 3.8595767, 0.7361894)
+9 held: root at vec3(2.0, 0.0, 0.0), elbow turned vec4(0.0, 0.0, 0.7071068, 0.7071068), its tip at vec3(-2.3841855e-7, 1.9999998, -2.0)
+halfway from rest: root at vec3(1.0, 0.0, 0.0), elbow turned vec4(0.0, 0.0, 0.38268346, 0.9238795), its tip at vec3(-6.9831174e-8, 3.4142134, -0.58578646)
+turned round y: root at vec3(0.0, 0.0, 0.0), elbow turned vec4(0.0, 0.7071068, 0.0, 0.7071068), its tip at vec3(0.0, 4.0, 0.0)
+no such animation: root at vec3(0.0, 0.0, 0.0), elbow turned vec4(0.0, 0.0, 0.0, 1.0), its tip at vec3(0.0, 4.0, 0.0)

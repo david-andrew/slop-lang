@@ -8,6 +8,16 @@ struct Vertex3D:
     uv: vec2
     color: vec4
 
+# a vertex of a skinned mesh: also the 4 joints that bend it (their places in the skin, as
+# numbers) and how much each does
+struct SkinVertex3D:
+    pos: vec3
+    normal: vec3
+    uv: vec2
+    color: vec4
+    joints: vec4
+    weights: vec4
+
 struct Instance3D:
     model: mat4
     color: vec4
@@ -36,6 +46,7 @@ struct LitParams:
     lights: vec4[8]             # point lights: position and radius
     light_colors: vec4[8]
     light_count: f32
+    bones: vec4[192]            # skinned meshes: each joint's matrix, its first three rows
 
 struct LitOut:
     pos: vec4
@@ -59,6 +70,23 @@ lit_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> LitOut:
     w = inst.model * vec4(p, 1)
     n = (inst.model * vec4(v.normal, 0)).xyz
     LitOut(u.view_proj * w, w.xyz, n, v.uv, v.color * u.color * inst.color, u.shadow_vp * w)
+
+# (a skinned vertex: bent by its joints, then placed by the model matrix)
+lit_vs_skin = (v: SkinVertex3D, u: LitParams) -> LitOut:
+    j = v.joints
+    k = v.weights
+    a = i32(j.x) * 3
+    b = i32(j.y) * 3
+    c = i32(j.z) * 3
+    d = i32(j.w) * 3
+    r0 = u.bones[a] * k.x + u.bones[b] * k.y + u.bones[c] * k.z + u.bones[d] * k.w
+    r1 = u.bones[a + 1] * k.x + u.bones[b + 1] * k.y + u.bones[c + 1] * k.z + u.bones[d + 1] * k.w
+    r2 = u.bones[a + 2] * k.x + u.bones[b + 2] * k.y + u.bones[c + 2] * k.z + u.bones[d + 2] * k.w
+    p = vec4(v.pos, 1)
+    nv = vec4(v.normal, 0)
+    w = u.model * vec4(dot(r0, p), dot(r1, p), dot(r2, p), 1)
+    n = (u.model * vec4(dot(r0, nv), dot(r1, nv), dot(r2, nv), 0)).xyz
+    LitOut(u.view_proj * w, w.xyz, n, v.uv, v.color * u.color, u.shadow_vp * w)
 
 shadow_factor = (u: LitParams, sp: vec4, ndl: f32) -> f32:
     if u.shadow_strength <= 0.0: return 1.0
@@ -114,6 +142,18 @@ struct _ShadowOut:
 
 _shadow_vs = (v: Vertex3D, u: LitParams) -> _ShadowOut: _ShadowOut(u.shadow_vp * (u.model * vec4(v.pos, 1)))
 _shadow_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> _ShadowOut: _ShadowOut(u.shadow_vp * (inst.model * vec4(v.pos, 1)))
+_shadow_vs_skin = (v: SkinVertex3D, u: LitParams) -> _ShadowOut:
+    j = v.joints
+    k = v.weights
+    a = i32(j.x) * 3
+    b = i32(j.y) * 3
+    c = i32(j.z) * 3
+    d = i32(j.w) * 3
+    r0 = u.bones[a] * k.x + u.bones[b] * k.y + u.bones[c] * k.z + u.bones[d] * k.w
+    r1 = u.bones[a + 1] * k.x + u.bones[b + 1] * k.y + u.bones[c + 1] * k.z + u.bones[d + 1] * k.w
+    r2 = u.bones[a + 2] * k.x + u.bones[b + 2] * k.y + u.bones[c + 2] * k.z + u.bones[d + 2] * k.w
+    p = vec4(v.pos, 1)
+    _ShadowOut(u.shadow_vp * (u.model * vec4(dot(r0, p), dot(r1, p), dot(r2, p), 1)))
 _shadow_fs = (i: _ShadowOut, u: LitParams) -> vec4: vec4(1, 1, 1, 1)
 
 # ---------------- sky ----------------
@@ -207,10 +247,13 @@ struct Draw3D:
     custom: () -> void
     has_custom: bool
     front: bool = false
+    bones: vec4[] = []          # (skinned: the joints' rows for LitParams.bones)
 
 __3d_ready = false
 __lit: Shader
 __lit_inst: Shader
+__lit_skin: Shader
+__shadow_sh_skin: Shader
 __shadow_sh: Shader
 __shadow_sh_inst: Shader
 __sky_sh: Shader
@@ -263,6 +306,8 @@ __3d_init = ():
     __3d_ready = true
     __lit = make_shader(shader(lit_vs, lit_fs))
     __lit_inst = make_shader(shader(lit_vs_inst, lit_fs))
+    __lit_skin = make_shader(shader(lit_vs_skin, lit_fs))
+    __shadow_sh_skin = make_shader(shader(_shadow_vs_skin, _shadow_fs))
     __shadow_sh = make_shader(shader(_shadow_vs, _shadow_fs))
     __shadow_sh_inst = make_shader(shader(_shadow_vs_inst, _shadow_fs))
     __sky_sh = make_shader(shader(_sky_vs, _sky_fs))
@@ -338,6 +383,10 @@ __pick_lights = ():
 draw_mesh = (m: Mesh, transform: mat4 = mat4(), color: vec4 = vec4(1, 1, 1, 1), texture: Texture = Texture(0, 0, 0), emissive: f64 = 0.0, specular: f64 = 0.3, cast_shadow: bool = true, in_front: bool = false):
     __draws.push(Draw3D(m, transform, color, texture.id, f32(emissive), f32(specular), [], false, cast_shadow and not in_front, 0, __noop3d, false, in_front))
 
+# a skinned mesh (of SkinVertex3D), bent by bones (3 rows per joint: see draw_model)
+__draw_skinned = (m: Mesh, bones: vec4[], transform: mat4, color: vec4, texture: Texture, emissive: f64, specular: f64, cast_shadow: bool, in_front: bool):
+    __draws.push(Draw3D(m, transform, color, texture.id, f32(emissive), f32(specular), [], false, cast_shadow and not in_front, 0, __noop3d, false, in_front, bones))
+
 # many copies of a mesh in one draw call (crowds, forests, particles...)
 draw_mesh_instanced = (m: Mesh, instances: Instance3D[], color: vec4 = vec4(1, 1, 1, 1), emissive: f64 = 0.0, specular: f64 = 0.2, cast_shadow: bool = true, wind: f64 = 0.0):
     __draws.push(Draw3D(m, mat4(), color, 0, f32(emissive), f32(specular), instances, true, cast_shadow, f32(wind), __noop3d, false))
@@ -381,7 +430,15 @@ __params = (d: Draw3D, vp: mat4) -> LitParams:
         emissive = d.emissive, specular = d.specular, use_tex = f32(int(d.tex != 0)),
         shadow_strength = f32(__shadow_strength) * f32(int(__shadows)), time = f32(elapsed()), wind = d.wind,
         tex = Texture(d.tex, 1, 1), shadow_map = __shadow_rt.texture, lights = __light_pos,
-        light_colors = __light_col, light_count = __light_n)
+        light_colors = __light_col, light_count = __light_n, bones = __no_bones)
+
+# the params for a draw, and its shader (lit or shadow pass)
+__params_for = (d: Draw3D, vp: mat4) -> LitParams:
+    p = __params(d, vp)
+    loop k in [0..min(d.bones.len(), 192)): p.bones[k] = d.bones[k]
+    p
+
+__no_bones: vec4[192]
 
 __render3d = ():
     if __draws.len() == 0:
@@ -418,9 +475,10 @@ __render3d = ():
         loop mut d in __draws:
             if not d.shadow or d.has_custom: continue
             if not __in_view(d, sv): continue
-            p = __params(d, vp)
+            p = __params_for(d, vp)
             p.shadow_map = Texture(0, 1, 1)          # never sample the target being rendered
             if d.instanced: draw_instanced(__shadow_sh_inst, d.mesh, d.instances, p)
+            else if d.bones.len() > 0: draw(__shadow_sh_skin, d.mesh, p)
             else: draw(__shadow_sh, d.mesh, p)
         glColorMask(1, 1, 1, 1)
         __rebind_target()
@@ -443,8 +501,9 @@ __render3d = ():
             continue
         if d.color.w < 1.0 or d.front or not __in_view(d, view): continue
         __drawn3d += 1
-        p = __params(d, vp)
+        p = __params_for(d, vp)
         if d.instanced: draw_instanced(__lit_inst, d.mesh, d.instances, p)
+        else if d.bones.len() > 0: draw(__lit_skin, d.mesh, p)
         else: draw(__lit, d.mesh, p)
     if __sky_on:
         glDisable(GL_CULL_FACE)
@@ -466,8 +525,9 @@ __render3d = ():
             glDisable(GL_CULL_FACE)
             continue
         if not __in_view(d, view): continue
-        p = __params(d, vp)
+        p = __params_for(d, vp)
         if d.instanced: draw_instanced(__lit_inst, d.mesh, d.instances, p)
+        else if d.bones.len() > 0: draw(__lit_skin, d.mesh, p)
         else: draw(__lit, d.mesh, p)
     glDepthMask(1)
     # in front of everything: the depth so far is cleared first
@@ -481,7 +541,8 @@ __render3d = ():
             cleared = true
         if d.color.w < 1.0: glEnable(GL_BLEND)
         else: glDisable(GL_BLEND)
-        draw(__lit, d.mesh, __params(d, vp))
+        if d.bones.len() > 0: draw(__lit_skin, d.mesh, __params_for(d, vp))
+        else: draw(__lit, d.mesh, __params(d, vp))
     glDisable(GL_CULL_FACE)
     glDisable(GL_DEPTH_TEST)
     __apply_blend(__blend)

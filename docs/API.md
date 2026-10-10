@@ -481,7 +481,7 @@ reset_controls = ()    # every action back to its defaults
 input_name = (x: Input) -> str    # what an input is called, for showing it ("Space", "Pad A", "Left stick right")
 input_pressed = () -> Input?    # the input the player pressed first this frame (a key, a button, a click, a stick pushed most of the way), if any
 rebinding = () -> bool    # whether ui_controls is waiting for a new input (the game's own keys should wait too), or took one this frame
-ui_controls = (names: str[] = [], labels: str[] = [])    # a row per action (its name, and its inputs), in a menu (between ui_begin and ui_end), and a row to put the defaults back. Choosing an action waits for its new input: a key replaces its first key (or the mouse), a gamepad's button or stick its first gamepad input; Escape cancels. names: the actions shown (and what they are called), in order: all of them if none given
+ui_controls = (names: str[] = [], labels: str[] = [], rows: int = 0)    # a row per action (its name, and its inputs), in a menu (between ui_begin and ui_end), and a row to put the defaults back. Choosing an action waits for its new input: a key replaces its first key (or the mouse), a gamepad's button or stick its first gamepad input; Escape cancels. names: the actions shown (and what they are called), in order: all of them if none given. rows: how many are shown at once (0: as many as fit on the screen, with room for two items after); the list scrolls to the chosen one, and with the mouse wheel.
 ```
 
 ### dl.jo
@@ -563,11 +563,13 @@ pass) before any 2D drawing that follows them, so a HUD can be drawn on top.
 
 ```gdscript
 struct Vertex3D
+struct SkinVertex3D    # a vertex of a skinned mesh: also the 4 joints that bend it (their places in the skin, as numbers) and how much each does
 struct Instance3D
 struct LitParams
 struct LitOut
 lit_vs = (v: Vertex3D, u: LitParams) -> LitOut
 lit_vs_inst = (v: Vertex3D, inst: Instance3D, u: LitParams) -> LitOut
+lit_vs_skin = (v: SkinVertex3D, u: LitParams) -> LitOut    # (a skinned vertex: bent by its joints, then placed by the model matrix)
 shadow_factor = (u: LitParams, sp: vec4, ndl: f32) -> f32
 aces = (c: vec3) -> vec3
 lit_fs = (i: LitOut, u: LitParams) -> vec4
@@ -850,7 +852,8 @@ glCheckFramebufferStatus = (target: u32) -> u32
 
 3D models from glTF 2.0 files (.glb, or .gltf with its .bin and images), the format Blender  
 and most tools export: meshes, with their materials' base color (a factor and a texture, PNG  
-or JPEG), vertex colors and emissive light, placed by the scene's nodes.  
+or JPEG), vertex colors and emissive light, placed by the scene's nodes; skins (meshes bent  
+by a skeleton of nodes, up to 64 joints) and their animations.  
 
 ```gdscript
 ship = load_model(embed("ship.glb"))
@@ -859,18 +862,38 @@ draw = ():
     draw_model(ship, translation(pos) * rotation_y(angle))
 ```
 
+An animated model is drawn in a pose: an animation at a time, or two blended.  
+
+```gdscript
+run = find_animation(hero, "Run")
+draw_model(hero, transform(pos, facing), pose = pose_at(hero, run, elapsed()))
+```
+
 A .gltf names its other files: give them by those names, as `files` (or put them in the .gltf  
-as data: URIs). Not read: skins and animations, morph targets, compressed meshes (Draco,  
-meshopt), sparse accessors; materials beyond the base color (metal, roughness, normal maps).  
+as data: URIs). Not read: morph targets, compressed meshes (Draco, meshopt), sparse  
+accessors; materials beyond the base color (metal, roughness, normal maps).  
 
 ```gdscript
 struct ModelPart
+struct ModelNode    # a node of the model's scene: its name, its parent (-1: none), and where it rests, from its parent: a translation, a rotation (a quaternion) and a scale
+struct Skin    # the joints (nodes) that bend a skin's vertices, and the inverse of where each was when the mesh was bound to them
+struct AnimChannel    # keys moving one node: its translation (path 0), rotation (1) or scale (2) at the times given (3 values a key, 4 for rotations), in steps or blended between keys
+struct ModelAnimation
+struct Pose    # every node's translation, rotation and scale (by node, as in Model.nodes)
 struct Model
 struct ModelError
 struct MeshData    # A model's data before it goes to the GPU (read_gltf): the vertices (in each part's own space) for collision, or to change them, and the images of its textures.
 struct ModelData
 model = (d: ModelData) -> Model    # the model on the GPU: a mesh and a texture for each part
-draw_model = (m: Model, transform: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), cast_shadow: bool = true)    # draw each part (see draw_mesh), the model placed by transform and its colors times tint
+draw_model = (m: Model, transform: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), cast_shadow: bool = true, pose: Pose = Pose([], [], []), in_front: bool = false)    # Draw each part (see draw_mesh), the model placed by transform and its colors times tint. An animated model is drawn in the pose given (pose_at, blend_poses), or as it rests.
+rest_pose = (m: Model) -> Pose    # every node as it rests
+find_animation = (m: Model, name: str) -> int    # the animation with this name (-1: none)
+animation_length = (m: Model, anim: int) -> f64
+pose_at = (m: Model, anim: int, time: f64, looped: bool = true) -> Pose    # ModelAnimation anim at a time (seconds): looped, or held at its end. Nodes it does not move rest.
+blend_poses = (a: Pose, b: Pose, k: f64) -> Pose    # between two poses of the same model: k = 0 is a, 1 is b (to fade from one animation to the next)
+find_node = (m: Model, name: str) -> int    # the node with this name (or whose name ends ":name", as Mixamo's "mixamorig:Head"); -1: none
+node_transform = (m: Model, p: Pose, node: int) -> mat4    # where a node is in the model, posed (to hold something in a hand: transform * this)
+turn_node = (m: Model, p: mut Pose, node: int, axis: vec3, angle: f64)    # turn a node of a pose by angle (radians) round an axis in the model's space (a spine bent to aim up or down, a head turned to look)
 model_size = (m: Model) -> vec3    # the model's size (the box around it) and its middle
 model_center = (m: Model) -> vec3
 load_model = (file: u8[], files: {str: u8[]} = {}) -> Model    # load_gltf, or a panic with what is wrong

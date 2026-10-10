@@ -6,13 +6,18 @@
   `action_pressed("jump")`, `action_axis("left", "right")`...; `ui_controls()` in a menu lets the
   player rebind each action (press the new key or button), and the bindings are saved. Rebound
   has a Controls page. An array of shorthand values (`[.key(.space)]`) now takes its type from
-  the parameter it is passed to.
+  the parameter it is passed to. A long list of actions scrolls to fit the screen.
 - **Several gamepads**: up to eight, each by its number (`gamepad_down(1, .a)`, `left_stick(1)`,
   `gamepads()`); without a number, any of them. Flight sticks and wheels: `joystick_button` and
   `joystick_axis` give a device's own inputs.
 - **3D models**: `load_model` reads glTF 2.0 (.glb, or .gltf with its files): meshes placed by
   the scene's nodes, base colors, PNG and JPEG textures, vertex colors; `draw_model` draws one.
   `read_gltf` gives the model's data without the GPU (for collision, or to change it).
+- **Animated models**: glTF skins (up to 64 joints, bent on the GPU) and their animations.
+  `pose_at(model, find_animation(model, "Run"), time)` gives a pose, `blend_poses` fades from
+  one to another, `turn_node` bends a joint (a spine aiming up), `node_transform` says where a
+  joint is (to put a weapon in a hand); `draw_model(m, transform, pose = p)`. `draw_model` also
+  takes `in_front` (a first-person weapon model).
 - **JPEG**: `load_jpeg`, and `load_image`/`load_texture` read JPEG as well as PNG (baseline and
   progressive, any color sampling, grayscale, CMYK).
 - 3D draws the camera cannot see are left out (meshes know their bounding sphere).

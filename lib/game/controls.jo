@@ -30,6 +30,7 @@ __ctl_loaded = false
 __ctl_capture = -1                      # the action being rebound (ui_controls), or -1
 __ctl_capture_frame = -1
 __ctl_done_frame = -1                   # (the frame a rebinding ended: its key is used up)
+__ctl_scroll = 0                        # (ui_controls: the first row shown)
 
 # declare an action and its default inputs (once, before reading it: again, nothing changes); a
 # binding the player saved replaces the defaults
@@ -238,18 +239,48 @@ rebinding = () -> bool: __ctl_capture >= 0 or __ctl_done_frame == frame_number()
 # a row per action (its name, and its inputs), in a menu (between ui_begin and ui_end), and a row
 # to put the defaults back. Choosing an action waits for its new input: a key replaces its first
 # key (or the mouse), a gamepad's button or stick its first gamepad input; Escape cancels.
-# names: the actions shown (and what they are called), in order: all of them if none given
-ui_controls = (names: str[] = [], labels: str[] = []):
+# names: the actions shown (and what they are called), in order: all of them if none given.
+# rows: how many are shown at once (0: as many as fit on the screen, with room for two items
+# after); the list scrolls to the chosen one, and with the mouse wheel.
+ui_controls = (names: str[] = [], labels: str[] = [], rows: int = 0):
     shown = names
     if shown.len() == 0: shown = __ctl_names
     w = ui_style.width * 1.6
+    sp = ui_style.spacing
+    # (rows closer together than other items, in smaller text)
+    rs = sp * 0.72
+    size = ui_style.size
+    first_item = __ui_count
+    y0 = __ui_pos.y + f32(f64(first_item) * sp)
+    fit = rows
+    if fit <= 0:
+        v = visible_rect()
+        fit = int((f64(v.y + v.w) - f64(y0) - sp * 2.0) / rs)
+    fit = clamp(fit, 1, shown.len())
+    # (the rows shown: the chosen one among them)
+    if fit < shown.len():
+        f = __ui_focus - first_item
+        if f >= 0 and f < shown.len():
+            if f < __ctl_scroll: __ctl_scroll = f
+            if f >= __ctl_scroll + fit: __ctl_scroll = f - fit + 1
+        if mouse_wheel() < 0.0: __ctl_scroll += 1
+        if mouse_wheel() > 0.0: __ctl_scroll -= 1
+    __ctl_scroll = clamp(__ctl_scroll, 0, shown.len() - fit)
+    top = __ui_pos
+    ui_style.spacing = rs
+    ui_style.size = size * 0.8
     loop j in 0.. and n in shown:
         i = __ctl_get(n)
         label = n
         if j < labels.len(): label = labels[j]
+        # (rows scrolled away still count as items, far off the screen)
+        hidden = j < __ctl_scroll or j >= __ctl_scroll + fit
+        if hidden: __ui_pos = vec2(top.x, -100000)
+        else: __ui_pos = vec2(top.x, y0 - f32(f64(first_item + __ctl_scroll) * rs))
         r = __ui_item(w)
+        if hidden: continue
         c = r.1
-        over = abs(f64(mouse_pos().x - c.x)) < w / 2.0 and abs(f64(mouse_pos().y - c.y)) < ui_style.spacing / 2.0
+        over = abs(f64(mouse_pos().x - c.x)) < w / 2.0 and abs(f64(mouse_pos().y - c.y)) < rs / 2.0
         col = ui_style.color
         if r.2: col = ui_style.focus_color
         what = ""
@@ -273,6 +304,17 @@ ui_controls = (names: str[] = [], labels: str[] = []):
         text(label, vec2(f32(f64(c.x) - w / 2.0), f32(f64(c.y) - ui_style.size * 0.5)), ui_style.size, col)
         sz = ui_style.size * 0.7
         text(what, vec2(f32(f64(c.x) + w / 2.0 - text_width(what, sz)), f32(f64(c.y) - sz * 0.5)), sz, col)
+    ui_style.spacing = sp
+    ui_style.size = size
+    # (marks where more rows are, above and below)
+    mark = ui_style.color * vec4(1, 1, 1, 0.7)
+    x = top.x + f32(w / 2.0 + 30.0)
+    if __ctl_scroll > 0: triangle(vec2(x - 10, y0 + 6), vec2(x + 10, y0 + 6), vec2(x, y0 - 8), mark)
+    if __ctl_scroll + fit < shown.len():
+        yb = y0 + f32(f64(fit - 1) * rs)
+        triangle(vec2(x - 10, yb - 6), vec2(x + 10, yb - 6), vec2(x, yb + 8), mark)
+    # (the items after the list: just below the rows shown)
+    __ui_pos = vec2(top.x, y0 + f32(f64(fit - 1) * rs + sp * 1.05 - f64(first_item + shown.len()) * sp))
     if ui_button("Reset to defaults", __ctl_capture < 0): reset_controls()
 
 # (a new input for action i: in place of its first of the same kind, keyboard or gamepad)
