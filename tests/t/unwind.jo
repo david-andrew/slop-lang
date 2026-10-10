@@ -1,0 +1,53 @@
+# Windows walks the program's stack itself (RtlCaptureStackBackTrace, as debuggers and crash
+# dumps do), with the unwind tables the compiler writes (.pdata): each function's caller is
+# found. (On other targets: the same names, without the walk.)
+
+when TARGET == "windows":
+    @lib("kernel32.dll")
+    extern RtlCaptureStackBackTrace = (skip: u32, n: u32, out: *int, hash: *u32) -> u16
+
+# the names of the functions the return addresses are in (from the program's .sloppy section)
+names_at = (rets: int[]) -> str[]:
+    out: str[]
+    base = 0x400000 as *u8
+    pe = base + int(((base + 0x3C) as *u32)[0])
+    sects = pe + 24 + int(((pe + 20) as *u16)[0])
+    text = 0
+    info: *u8 = null
+    loop i in [0..int(((pe + 6) as *u16)[0])):
+        h = sects + i * 40
+        rva = int(((h + 12) as *u32)[0])
+        if h[0] == '.' and h[1] == 't': text = 0x400000 + rva
+        if h[0] == '.' and h[1] == 's' and h[2] == 'l': info = base + rva
+    n = int(((info + 4) as *u32)[0])
+    loop r in rets:
+        p = info + 8
+        loop k in [0..n):
+            start = text + int((p as *u32)[0])
+            len = int(((p + 4) as *u32)[0])
+            ln = int(((p + 8) as *u32)[0])
+            if r > start and r <= start + len:
+                b = fill(u8(0), ln)
+                mem_copy(data(b), p + 12, ln)
+                out.push(str_from_bytes(b))
+            p += 12 + ln
+    out
+
+walk = () -> str:
+    found = "walk f3 f2 f1"
+    when TARGET == "windows":
+        frames = fill(0, 32)
+        n = int(RtlCaptureStackBackTrace(u32(0), u32(32), data(frames), null))
+        names = names_at(frames[..n))
+        # (from walk: below it, the thunk that calls into Windows)
+        loop names.len() > 0 and names[0] != "walk": names.remove(0)
+        if names.len() > 4: names = names[..4)
+        found = join(names, " ")
+    found
+
+f3 = (n: int) -> str:
+    xs = [n, n + 1]
+    "{walk()} ({xs[0] + xs[1]})"
+f2 = (n: int) -> str: f3(n * 2)
+f1 = (n: int) -> str: f2(n + 1)
+print(f1(5))

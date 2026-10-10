@@ -2222,10 +2222,13 @@ x64_function = ():
         if ci < call_pos.len() and call_pos[ci] == pos: ci += 1
     elf_syms.push((sym_name(ir.name), fn_start, code.len() - fn_start))
     fn_len[ir.fn_index] = code.len() - fn_start
-    if target_windows and ir.cabi:
-        pts: int[]
-        loop p in [0..ir.nparams): pts.push(vtype(p))
-        x64_cabi_adapter(ir.fn_index, pts)
+    if target_windows:
+        unwind_fns.push((fn_start, code.len(), UW_FRAME, frame_size))
+        if ir.cabi:
+            pts: int[]
+            loop p in [0..ir.nparams): pts.push(vtype(p))
+            a = x64_cabi_adapter(ir.fn_index, pts)
+            unwind_fns.push((a, code.len(), UW_ADAPTER, 160))
     if ra_stat:
         if ra_verbose:
             sp = 0
@@ -2330,6 +2333,7 @@ x64_entry_win = (inits: int[], main_lf: int) -> int:
     data_fix.push((code.len() - 4, 1, pe_iat_off(0)))
     b(0xCC)
     elf_syms.push(("_start", start, code.len() - start))
+    unwind_fns.push((start, code.len(), UW_ENTRY, 8))
     start
 
 # Windows calls a @cabi function (a window procedure...) with its own convention: an adapter
@@ -2338,10 +2342,11 @@ x64_entry_win = (inits: int[], main_lf: int) -> int:
 cabi_adapter: {int: int} = {}       # function -> its adapter's offset
 cabi_fix: (int, int)[]
 
-x64_cabi_adapter = (lf: int, ptypes: int[]):
+x64_cabi_adapter = (lf: int, ptypes: int[]) -> int:
     if ptypes.len() > 4: fatal(0, "a @cabi function called from C on Windows takes at most 4 parameters ({lfuncs[lf].name} takes {ptypes.len()})")
     loop code.len() % 16 != 0: b(0xCC)
-    cabi_adapter[lf] = code.len()
+    start = code.len()
+    cabi_adapter[lf] = start
     b(0x55)                                   # push rbp
     mov_rr(RBP, RSP)
     b(0x57)                                   # push rdi
@@ -2374,6 +2379,7 @@ x64_cabi_adapter = (lf: int, ptypes: int[]):
     b(0x5F)                                   # pop rdi
     b(0x5D)                                   # pop rbp
     b(0xC3)
+    start
 
 x64_entry = (inits: int[], main_lf: int) -> int:
     loop code.len() % 16 != 0: b(0xCC)

@@ -58,6 +58,88 @@ pe_idata = (rva: int) -> u8[]:
     put64(out, 0)
     out
 
+# (x64.jo) how to unwind each function's frame: (start, end, kind, the size the prologue takes
+# off rsp). A function: push rbp; mov rbp, rsp; sub rsp, n. An adapter (@cabi): that with push
+# rdi; push rsi before the sub. The entry: sub rsp, 8.
+const UW_FRAME = 0
+const UW_ADAPTER = 1
+const UW_ENTRY = 2
+unwind_fns: (int, int, int, int)[]
+
+# .pdata: how Windows (its debuggers, stack walks, exception dispatch) unwinds each function's
+# frame (x64.jo, unwind_fns): the RUNTIME_FUNCTION entries (start, end, UNWIND_INFO), by
+# address; then the UNWIND_INFOs, one per kind and size. rbp is the frame register (the
+# registers a function saves below it are not described: a debugger may show wrong values for
+# them in callers' frames).
+pe_unwind = (rva: int, text_rva: int) -> u8[]:
+    fns = unwind_fns
+    fns.sort_by((f: (int, int, int, int)): f.0)
+    infos: u8[]
+    info_at: {int: int} = {}
+    table: u8[]
+    base = rva + 12 * fns.len()
+    loop f in fns:
+        key = f.2 * (1 << 32) + f.3
+        off = info_at.get(key) ?? -1
+        if off < 0:
+            off = infos.len()
+            info_at[key] = off
+            pe_unwind_info(infos, f.2, f.3)
+        put32(table, text_rva + f.0)
+        put32(table, text_rva + f.1)
+        put32(table, base + off)
+    append_bytes(table, infos)
+    table
+
+# UNWIND_INFO: version 1, the prologue's size, the codes (by offset, last first), rbp as the
+# frame register (at rsp + 0 when set)
+pe_unwind_info = (out: mut u8[], kind: int, size: int):
+    codes: (int, int, int)[]                 # (offset in the prologue, op, info)
+    plen = 0
+    fp = true
+    if kind == UW_ENTRY:
+        codes.push((4, 2, size / 8 - 1))    # UWOP_ALLOC_SMALL
+        plen = 4
+        fp = false
+    else:
+        at = 4
+        plen = 4
+        if kind == UW_ADAPTER:
+            plen = 13
+        else if size > 0: plen = 11
+        if size > 0: codes.push((plen, -1, size))
+        if kind == UW_ADAPTER:
+            codes.push((6, 0, 6))            # UWOP_PUSH_NONVOL rsi
+            codes.push((5, 0, 7))            # rdi
+        codes.push((4, 3, 0))                # UWOP_SET_FPREG
+        codes.push((1, 0, 5))                # UWOP_PUSH_NONVOL rbp
+    slots: u8[]
+    loop c in codes:
+        if c.1 == -1:
+            # an allocation: small (8..128), large (to 512 KB - 8) or larger
+            if c.2 <= 128:
+                slots.push(u8(c.0))
+                slots.push(u8(2 | ((c.2 / 8 - 1) << 4)))
+            else if c.2 < 512 * 1024:
+                slots.push(u8(c.0))
+                slots.push(u8(1))
+                put16(slots, c.2 / 8)
+            else:
+                slots.push(u8(c.0))
+                slots.push(u8(1 | (1 << 4)))
+                put32(slots, c.2)
+        else:
+            slots.push(u8(c.0))
+            slots.push(u8(c.1 | (c.2 << 4)))
+    n = slots.len() / 2
+    out.push(1)
+    out.push(u8(plen))
+    out.push(u8(n))
+    if fp: out.push(5)                       # rbp, offset 0
+    else: out.push(0)
+    append_bytes(out, slots)
+    if n % 2 == 1: put16(out, 0)
+
 # where the sections go: (text rva, rodata rva, data rva, size of the import table)
 pe_layout = (text_len: int, ro_len: int) -> (int, int, int, int):
     text_rva = PE_SECT
@@ -121,7 +203,9 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
     idata = pe_idata(data_rva)
     data_vsize = idata_size + data_size + 8
     info_rva = data_rva + align_to(data_vsize, PE_SECT)
-    rsrc_rva = info_rva + align_to(max(info.len(), 1), PE_SECT)
+    pdata_rva = info_rva + align_to(max(info.len(), 1), PE_SECT)
+    pdata = pe_unwind(pdata_rva, text_rva)
+    rsrc_rva = pdata_rva + align_to(max(pdata.len(), 1), PE_SECT)
     rsrc: u8[]
     if icon.len() > 0: rsrc = pe_rsrc(rsrc_rva, icon)
     image_size = rsrc_rva + align_to(max(rsrc.len(), 1), PE_SECT)
@@ -130,14 +214,16 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
     ro_raw = align_to(max(ro.len(), 1), PE_FILE)
     data_raw = align_to(idata.len(), PE_FILE)
     info_raw = align_to(max(info.len(), 1), PE_FILE)
+    pdata_raw = align_to(max(pdata.len(), 1), PE_FILE)
     text_off = PE_HEADERS
     ro_off = text_off + text_raw
     data_off = ro_off + ro_raw
     info_off = data_off + data_raw
+    pdata_off = info_off + info_raw
     rsrc_raw = align_to(rsrc.len(), PE_FILE)
-    rsrc_off = info_off + info_raw
-    nsections = 4
-    if rsrc.len() > 0: nsections = 5
+    rsrc_off = pdata_off + pdata_raw
+    nsections = 5
+    if rsrc.len() > 0: nsections = 6
     out: u8[]
     out.reserve(rsrc_off + rsrc_raw)
     # DOS header: "MZ", and where the PE header is
@@ -159,7 +245,7 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
     out.push(1)                          # linker version
     out.push(0)
     put32(out, text_raw)                 # size of code
-    put32(out, ro_raw + data_raw + info_raw + rsrc_raw)   # initialized data
+    put32(out, ro_raw + data_raw + info_raw + pdata_raw + rsrc_raw)   # initialized data
     put32(out, data_vsize - idata_size)  # uninitialized data
     put32(out, text_rva + entry_off)     # entry point
     put32(out, text_rva)                 # base of code
@@ -193,6 +279,9 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
         else if i == 2 and rsrc.len() > 0:
             put32(out, rsrc_rva)         # resources
             put32(out, rsrc.len())
+        else if i == 3:
+            put32(out, pdata_rva)        # exceptions: the RUNTIME_FUNCTIONs
+            put32(out, 12 * unwind_fns.len())
         else if i == 12:
             put32(out, data_rva + idata_size - pe_iat_size())   # import address table
             put32(out, pe_iat_size())
@@ -202,6 +291,7 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
     pe_section(out, ".rdata", max(ro.len(), 1), ro_rva, ro_raw, ro_off, 0x40000040)
     pe_section(out, ".data", data_vsize, data_rva, data_raw, data_off, 0xC0000040)
     pe_section(out, ".sloppy", max(info.len(), 1), info_rva, info_raw, info_off, 0x40000040)
+    pe_section(out, ".pdata", max(pdata.len(), 1), pdata_rva, pdata_raw, pdata_off, 0x40000040)
     if rsrc.len() > 0: pe_section(out, ".rsrc", rsrc.len(), rsrc_rva, rsrc_raw, rsrc_off, 0x40000040)
     out.resize(text_off)
     append_bytes(out, text)
@@ -211,7 +301,9 @@ write_pe = (path: str, text: u8[], entry_off: int, ro: u8[], data_size: int, gui
     append_bytes(out, idata)
     out.resize(info_off)
     append_bytes(out, info)
-    out.resize(info_off + info_raw)
+    out.resize(pdata_off)
+    append_bytes(out, pdata)
+    out.resize(pdata_off + pdata_raw)
     append_bytes(out, rsrc)
     out.resize(rsrc_off + rsrc_raw)
     delete_file(path)
