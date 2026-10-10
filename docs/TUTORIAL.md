@@ -3,9 +3,9 @@
 This tutorial builds **Firefly**, a small platformer: a firefly hops across a dusky world,
 gathering lights and dodging thorns on the way to a lantern. Each step is a whole program that
 runs; on the website, "Run it in the playground" opens it in your browser, and with Sloppy
-installed `sloppy firefly.jo` runs it in a window. (For a complete game of another kind, see
-[Rebound](https://github.com/david-andrew/sloppy-lang/blob/master/examples/rebound/rebound.jo):
-an arcade game with menus, upgrades, settings and a saved best score, in one file.)
+installed `sloppy firefly.jo` runs it in a window. (The [second tutorial](TUTORIAL_REBOUND.md)
+builds an arcade game, a small version of
+[Rebound](https://github.com/david-andrew/sloppy-lang/blob/master/examples/rebound/rebound.jo).)
 
 ## 1. A window
 
@@ -603,6 +603,7 @@ Each is a single file with nothing to install: send it, or upload it. In the `bu
 `icon = "icon.png"` gives the Windows program and the web page an icon.
 
 From here:
+- [Make an arcade game](TUTORIAL_REBOUND.md): the second tutorial, a small version of Rebound.
 - [The language](language.html): everything Sloppy has, with examples.
 - [The library](api.html): drawing, sound, input, 3D, GPU programs and the rest.
 - `sloppy watch firefly.jo` keeps the game running while you edit it: save, and the change

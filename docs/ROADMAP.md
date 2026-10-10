@@ -42,8 +42,9 @@ quick to pick up and worth replaying. It plays itself behind its title; with a r
 the same autopilot measured the difficulty curve (0.45 s: about 80 s survived, 0.3 s: 3 to 5
 minutes). It runs on Linux, Windows and the web, on the website (sloppy-lang.org/rebound/) and in
 the playground (#example=rebound, with its icon: the playground carries examples' other files).
-The website has a tutorial (docs/TUTORIAL.md: Firefly, eight steps that each run, with links
-into the playground; the tests build every step).
+The website has two tutorials, each eight steps that run, with links into the playground (the
+tests build every step): docs/TUTORIAL.md (Firefly, a platformer) and docs/TUTORIAL_REBOUND.md
+(Little Rebound, a small version of Rebound). A 3D one could follow, built on dunes.
 
 Left: upload Rebound to itch.io (needs an account: the zip is `sloppy build --target wasm -o
 rebound.zip`), play it on real machines (people, not the autopilot, for the difficulty), and

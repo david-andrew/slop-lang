@@ -125,19 +125,21 @@ if compiler != "sloppy0" and target == "native":
         else:
             print(f"FAIL {name}\n{r.stdout}{r.stderr}")
             failed += 1
-    # the tutorial's programs (docs/TUTORIAL.md: code blocks starting "# step") must build
-    tut = open(os.path.join(root, "docs", "TUTORIAL.md"), encoding="utf-8").read()
-    for k, code in enumerate(re.findall(r"```gdscript\n(# step.*?)```", tut, re.S)):
-        name = f"tutorial/step{k + 1}"
-        if pattern not in name: continue
-        src = os.path.join(tmp, f"tutorial_step{k + 1}.jo")
-        open(src, "w", encoding="utf-8").write(code)
-        r = subprocess.run([sloppy, "build", src, "-o", os.path.join(tmp, "tutorial_step")], capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")), timeout=60)
-        if r.returncode == 0: passed += 1
-        else:
-            print(f"FAIL {name}: does not build\n{r.stderr}")
-            failed += 1
+    # the tutorials' programs (docs/TUTORIAL*.md: code blocks starting "# step") must build
+    for tf in sorted(glob.glob(os.path.join(root, "docs", "TUTORIAL*.md"))):
+        tname = os.path.basename(tf)[:-3].lower()
+        tut = open(tf, encoding="utf-8").read()
+        for k, code in enumerate(re.findall(r"```gdscript\n(# step.*?)```", tut, re.S)):
+            name = f"{tname}/step{k + 1}"
+            if pattern not in name: continue
+            src = os.path.join(tmp, f"{tname}_step{k + 1}.jo")
+            open(src, "w", encoding="utf-8").write(code)
+            r = subprocess.run([sloppy, "build", src, "-o", os.path.join(tmp, "tutorial_step")], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", env=dict(os.environ, SLOPPY_LIB=os.path.join(root, "lib")), timeout=60)
+            if r.returncode == 0: passed += 1
+            else:
+                print(f"FAIL {name}: does not build\n{r.stderr}")
+                failed += 1
     # programs the compiler must reject: tests/errors/*.jo start with `# error: <part of the message>`
     for t in sorted(glob.glob(os.path.join(root, "tests", "errors", "*.jo"))):
         name = "errors/" + os.path.basename(t)[:-3]
