@@ -1,0 +1,9 @@
+# requires: sloppy
+# a function literal in a call's arguments, in an if / loop / match header
+xs = [1, 5, 3]
+if xs.any((x): x > 4): print("some over 4")
+if not xs.any((x): x > 9): print("none over 9")
+loop x in xs.filter((x): x % 2 == 1): print(x)
+n = 0
+loop n < xs.map((x): x * 2).len(): n += 1
+print(n)

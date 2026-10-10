@@ -386,7 +386,15 @@ parse_string_token = (t: int) -> int:
     n
 
 # ---------------- expressions ----------------
+# (inside a call's parentheses `(x): ...` is a function again, in an if or loop header too:
+# `if xs.any((x): x > 2): ...`)
 parse_args = (call: int):
+    saved_h = p_header
+    p_header = false
+    parse_args_in(call)
+    p_header = saved_h
+
+parse_args_in = (call: int):
     args: int[]
     loop pk() != .rparen:
         pos = cur_pos()
