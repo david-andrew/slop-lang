@@ -49,9 +49,8 @@ tests build every step): docs/TUTORIAL.md (Firefly, a platformer) and docs/TUTOR
 Left: upload Rebound to itch.io (needs an account: the zip is `sloppy build --target wasm -o
 rebound.zip`), play it on real machines (people, not the autopilot, for the difficulty), and
 write down what was awkward. What the games showed so far: menus were missing (now
-lib/game/ui.jo), saving was missing (save_data), a game loop that draws its menus in draw()
-needs the key that opened a menu ignored for a frame (the games' `menu` helper; worth folding
-into ui.jo), and a top-level assignment to a used module's variable made a new one (fixed). A
+lib/game/ui.jo), saving was missing (save_data), the key that opens a menu must not also work
+it (ui.jo now ignores input in a menu's first frame; `ui_ready()` for a game's own keys), and a top-level assignment to a used module's variable made a new one (fixed). A
 local variable in a function with a global's name and type changes the global (as designed,
 but easy to trip over in a big file: a lint that flags it may be worth having). The larger
 jotw/botw-clone projects come after, as the 3D test.

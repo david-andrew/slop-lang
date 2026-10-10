@@ -13,6 +13,8 @@
 #
 # Up/down (arrows, W/S, d-pad, left stick) move between items, enter/space/A or a click choose,
 # left/right change sliders and switches; ui_back() is true when escape or B was pressed.
+# A menu ignores input in the frame it opens (the key that opened it is still pressed then);
+# ui_ready() says whether that frame is over, for a game's own keys in a menu.
 
 struct UiStyle:
     size: f64 = 34.0                        # text size of the items
@@ -26,6 +28,8 @@ struct UiStyle:
 ui_style = UiStyle()
 
 __ui_menu = ""
+__ui_open_frame = -1            # the frame the menu opened in
+__ui_drawn_frame = -10          # the last frame a menu was drawn in
 __ui_focus = 0
 __ui_count = 0                  # items so far in this frame's menu
 __ui_last_count = 0             # in the last frame's
@@ -42,10 +46,14 @@ __ui_ok = false
 # start a menu: items go in a column centered on x, from y down. A new name starts with the
 # first item chosen.
 ui_begin = (name: str, top_center: vec2):
-    if name != __ui_menu:
+    f = frame_number()
+    # (a different menu, or this one again after frames without it: it opens now)
+    if name != __ui_menu or __ui_drawn_frame < f - 1:
         __ui_menu = name
         __ui_focus = 0
         __ui_last_count = 0
+        __ui_open_frame = f
+    __ui_drawn_frame = f
     __ui_pos = top_center
     __ui_count = 0
     m = mouse_pos()
@@ -63,6 +71,10 @@ ui_begin = (name: str, top_center: vec2):
     __ui_stick_y = sy
     __ui_stick_x = sx
     __ui_ok = key_pressed(.enter) or key_pressed(.space) or gamepad_pressed(.a)
+    if not ui_ready():
+        __ui_nav = 0
+        __ui_side = 0
+        __ui_ok = false
     if __ui_last_count > 0 and __ui_nav != 0:
         __ui_focus = (__ui_focus + __ui_nav + __ui_last_count) % __ui_last_count
 
@@ -71,7 +83,10 @@ ui_end = ():
     if __ui_focus >= __ui_count and __ui_count > 0: __ui_focus = __ui_count - 1
 
 # escape or the B button: go back (close the menu)
-ui_back = () -> bool: key_pressed(.escape) or gamepad_pressed(.b)
+ui_back = () -> bool: ui_ready() and (key_pressed(.escape) or gamepad_pressed(.b))
+
+# false in the frame the menu opened in: input then belongs to whatever opened it
+ui_ready = () -> bool: frame_number() != __ui_open_frame
 
 # (the next item: its row, whether it has the focus, whether the mouse is on it)
 __ui_item = (w: f64) -> (int, vec2, bool):
@@ -99,7 +114,7 @@ ui_button = (label: str, enabled: bool = true) -> bool:
     over = abs(f64(mouse_pos().x - r.1.x)) < w / 2.0 and abs(f64(mouse_pos().y - r.1.y)) < ui_style.spacing / 2.0
     __ui_label(label, r.1, r.2, enabled)
     if not enabled: return false
-    (r.2 and __ui_ok) or (over and mouse_pressed(.left))
+    (r.2 and __ui_ok) or (over and mouse_pressed(.left) and ui_ready())
 
 # a value from 0 to 1, changed in steps of `step` (left/right, or dragging with the mouse)
 ui_slider = (label: str, value: f64, step: f64 = 0.1) -> f64:
@@ -113,7 +128,7 @@ ui_slider = (label: str, value: f64, step: f64 = 0.1) -> f64:
     bw = w / 2.0 - 10.0
     by = f64(c.y) - 4.0
     m = mouse_pos()
-    if mouse_down(.left) and f64(m.x) >= bx - 10.0 and f64(m.x) <= bx + bw + 10.0 and abs(f64(m.y - c.y)) < ui_style.spacing / 2.0:
+    if mouse_down(.left) and ui_ready() and f64(m.x) >= bx - 10.0 and f64(m.x) <= bx + bw + 10.0 and abs(f64(m.y - c.y)) < ui_style.spacing / 2.0:
         v = clamp((f64(m.x) - bx) / bw, 0.0, 1.0)
     col = ui_style.color
     if r.2: col = ui_style.focus_color
@@ -130,7 +145,7 @@ ui_switch = (label: str, on: bool) -> bool:
     c = r.1
     v = on
     over = abs(f64(mouse_pos().x - c.x)) < w / 2.0 and abs(f64(mouse_pos().y - c.y)) < ui_style.spacing / 2.0
-    if (r.2 and (__ui_ok or __ui_side != 0)) or (over and mouse_pressed(.left)): v = not v
+    if (r.2 and (__ui_ok or __ui_side != 0)) or (over and mouse_pressed(.left) and ui_ready()): v = not v
     col = ui_style.color
     if r.2: col = ui_style.focus_color
     text(label, vec2(f32(f64(c.x) - w / 2.0), f32(f64(c.y) - ui_style.size * 0.5)), ui_style.size, col)

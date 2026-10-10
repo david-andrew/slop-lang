@@ -872,7 +872,6 @@ struct Settings:
     fullscreen = false
 
 screen = Screen.title
-entered = 0                     # the frame the screen was entered in (its menu waits a frame)
 frame = 0
 settings_back = Screen.title    # where the settings screen returns to
 settings = Settings()
@@ -928,7 +927,6 @@ music = ():
 # ---------------- flow ----------------
 go = (s: Screen):
     screen = s
-    entered = frame
 
 start_run = ():
     new_run(time_ns(), false)
@@ -964,12 +962,6 @@ update = (dt: f64):
 dim = (a: f32 = 0.55):
     v = visible_rect()
     rect(f64(v.x), f64(v.y), f64(v.z), f64(v.w), rgba(0.0, 0.01, 0.03, a))
-
-# a menu that waits for the frame after its screen was entered (the key that opened it is
-# still down in that frame)
-menu = (name: str, at: vec2) -> bool:
-    ui_begin(name, at)
-    frame > entered
 
 # 12,345
 commas = (n: int) -> str:
@@ -1046,13 +1038,13 @@ draw_title = ():
     side_panel()
     text_centered("R E B O U N D", vec2(330, 170), 76, rgb(1, 1, 1))
     text_centered("catch the bolts.  send them back.", vec2(330, 240), 26, with_alpha(COL_PLAYER, 0.9))
-    on = menu("title", vec2(330, 350))
-    if ui_button("Play") and on: start_run()
-    if ui_button("Settings") and on:
+    ui_begin("title", vec2(330, 350))
+    if ui_button("Play"): start_run()
+    if ui_button("Settings"):
         settings_back = .title
         go(.settings)
     when TARGET != "wasm":
-        if ui_button("Quit") and on: quit()
+        if ui_button("Quit"): quit()
     ui_end()
     if best > 0: text_centered("best {commas(best)}    longest chain {best_chain}", vec2(330, 560), 24, rgba(1, 0.85, 0.5, 0.85))
     text_centered("left / right or the mouse turn the shield", vec2(330, 650), 18, rgba(1, 1, 1, 0.5))
@@ -1062,7 +1054,7 @@ draw_settings = ():
     if settings_back == .title: side_panel()
     else: dim(0.75)
     text_centered("Settings", vec2(330, 150), 64, rgb(1, 1, 1))
-    on = menu("settings", vec2(330, 290))
+    ui_begin("settings", vec2(330, 290))
     was = settings
     settings.music = ui_slider("Music", settings.music)
     settings.sound = ui_slider("Sounds", settings.sound)
@@ -1075,20 +1067,20 @@ draw_settings = ():
     if settings.sound != was.sound: play(snd_move, 0.8 * settings.sound)
     if settings.music != was.music: music()
     if settings.fullscreen != was.fullscreen: set_fullscreen(settings.fullscreen)
-    if back and on:
+    if back:
         save_settings()
         go(settings_back)
 
 draw_pause = ():
     dim()
     text_centered("Paused", vec2(640, 200), 64, rgb(1, 1, 1))
-    on = menu("pause", vec2(640, 320))
-    if (ui_button("Resume") or ui_back() or gamepad_pressed(.start) or key_pressed(.p)) and on: go(.play)
-    if ui_button("Start again") and on: start_run()
-    if ui_button("Settings") and on:
+    ui_begin("pause", vec2(640, 320))
+    if ui_button("Resume") or ui_back() or ((gamepad_pressed(.start) or key_pressed(.p)) and ui_ready()): go(.play)
+    if ui_button("Start again"): start_run()
+    if ui_button("Settings"):
         settings_back = .paused
         go(.settings)
-    if ui_button("Leave to the title") and on:
+    if ui_button("Leave to the title"):
         new_run(frame, true)
         go(.title)
     ui_end()
@@ -1145,9 +1137,9 @@ draw_over = ():
         if n == 1: parts.push(upgrades[i].name)
         else if n > 1: parts.push("{upgrades[i].name} x{n}")
     if parts.len() > 0: text_centered(join(parts, "   "), vec2(640, 385), 20, with_alpha(COL_PLAYER, 0.7 * a))
-    on = menu("over", vec2(640, 470))
-    if (ui_button("Again") or key_pressed(.r)) and on: start_run()
-    if ui_button("Title") and on:
+    ui_begin("over", vec2(640, 470))
+    if ui_button("Again") or (key_pressed(.r) and ui_ready()): start_run()
+    if ui_button("Title"):
         new_run(frame, true)
         go(.title)
     ui_end()

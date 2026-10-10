@@ -899,12 +899,15 @@ ui_end()
   
 Up/down (arrows, W/S, d-pad, left stick) move between items, enter/space/A or a click choose,  
 left/right change sliders and switches; ui_back() is true when escape or B was pressed.  
+A menu ignores input in the frame it opens (the key that opened it is still pressed then);  
+ui_ready() says whether that frame is over, for a game's own keys in a menu.  
 
 ```gdscript
 struct UiStyle
 ui_begin = (name: str, top_center: vec2)    # start a menu: items go in a column centered on x, from y down. A new name starts with the first item chosen.
 ui_end = ()
 ui_back = () -> bool    # escape or the B button: go back (close the menu)
+ui_ready = () -> bool    # false in the frame the menu opened in: input then belongs to whatever opened it
 ui_button = (label: str, enabled: bool = true) -> bool    # a button: true in the frame it is chosen
 ui_slider = (label: str, value: f64, step: f64 = 0.1) -> f64    # a value from 0 to 1, changed in steps of `step` (left/right, or dragging with the mouse)
 ui_switch = (label: str, on: bool) -> bool    # on or off (left/right, enter, or a click)
