@@ -1,0 +1,9 @@
+# requires: sloppy
+# several gamepads: each by its number, and without one "any pad" (buttons) or the stick pushed
+# furthest (state set by hand: no device in a test)
+__pad_test_set(2, .a, true, 0.5, 0.0)
+__pad_test_set(5, .x, true, 0.0, -0.9)
+print(gamepads(), gamepad_connected(), gamepad_connected(1), gamepad_connected(5), gamepad_connected(9))
+print(gamepad_down(.a), gamepad_down(2, .a), gamepad_down(5, .a), gamepad_down(.y), gamepad_down(5, .x))
+print(gamepad_axis(0), gamepad_axis(1), left_stick(2), left_stick(), right_stick(5))
+print(joystick_buttons(9), joystick_axis(2, 40), gamepad_name(3) == "")

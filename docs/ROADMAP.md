@@ -108,9 +108,9 @@ tiles (examples/tiles.jo), JSON (parse_json/to_json), base64. Missing:
     and asks for them (`action_pressed("jump")`, `action_axis("move")`), never raw keys. A
     drop-in settings screen (ui.jo) rebinds an action by pressing the new key or button, and
     the bindings are saved with save_data. The defaults are given by the game.
-  - Several gamepads and joysticks: each controller by number (`gamepad_down(1, .a)`), its
-    connection and disconnection, any number of buttons and axes for non-standard devices
-    (flight sticks, wheels), and local multiplayer that binds actions per player.
+  - Done: several gamepads and joysticks (up to eight, each by its number: `gamepad_down(1, .a)`,
+    `gamepads()`; a device's own buttons and axes: `joystick_button`, `joystick_axis`). Left:
+    non-XInput devices on Windows (DirectInput/Raw Input), and actions bound per player.
 - Debug panels (ui.jo has menus).
 - Networking (UDP; WebSocket/WebRTC on the web) — later.
 

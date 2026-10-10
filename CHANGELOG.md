@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Several gamepads**: up to eight, each by its number (`gamepad_down(1, .a)`, `left_stick(1)`,
+  `gamepads()`); without a number, any of them. Flight sticks and wheels: `joystick_button` and
+  `joystick_axis` give a device's own inputs.
 - **3D models**: `load_model` reads glTF 2.0 (.glb, or .gltf with its files): meshes placed by
   the scene's nodes, base colors, PNG and JPEG textures, vertex colors; `draw_model` draws one.
   `read_gltf` gives the model's data without the GPU (for collision, or to change it).

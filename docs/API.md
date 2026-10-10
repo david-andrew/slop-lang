@@ -588,26 +588,46 @@ load_font = (file: u8[], extra: str = "") -> Font    # a font from a TrueType fi
 
 ### gamepad.jo
 
-Gamepads: the first connected controller, with a standard layout (Xbox-style names).  
+Gamepads and joysticks: up to eight at once, each by its number, with a standard layout  
+(Xbox-style names), and every device's own buttons and axes as they are (flight sticks, wheels).  
 
 ```gdscript
-if gamepad_pressed(.a): jump()
-move = left_stick()                # vec2 in -1..1, y down, with a dead zone
+if gamepad_pressed(.a): jump()            # any gamepad
+move = left_stick()                        # vec2 in -1..1, y down, with a dead zone
+loop pad in gamepads():                    # (local multiplayer: one player per pad)
+    players[pad].move = left_stick(pad)
 ```
 
-input_axis() also follows the left stick and the d-pad, so keyboard games work with a pad.  
-Linux builds read the joystick device (/dev/input/js0), Windows builds XInput, web builds the  
+A controller keeps its number while it is plugged in (players stay who they are); one plugged  
+in later takes a free number. input_axis() also follows the sticks and d-pads, so keyboard  
+games work with a pad. Linux builds read the joystick devices (/dev/input/js0..7), Windows  
+builds XInput (four controllers: what Windows maps to the Xbox layout), web builds the  
 browser's Gamepad API.  
 
 ```gdscript
 enum PadButton: a, b, x, y, lb, rb, back, start, home, lstick, rstick, up, down, left, right
+const MAX_GAMEPADS = 8
+gamepads = () -> int[]    # the numbers of the gamepads connected
 gamepad_connected = () -> bool
-gamepad_axis = (i: int) -> f64    # axis value in -1..1 (triggers 0..1): 0 left x, 1 left y, 2 right x, 3 right y, 4 left trigger, 5 right trigger
+gamepad_connected = (pad: int) -> bool
+gamepad_name = (pad: int) -> str    # what the device calls itself ("" if it does not say)
+gamepad_down = (pad: int, b: PadButton) -> bool    # a button of pad, or (without a pad) of any gamepad
+gamepad_pressed = (pad: int, b: PadButton) -> bool
+gamepad_released = (pad: int, b: PadButton) -> bool
 gamepad_down = (b: PadButton) -> bool
 gamepad_pressed = (b: PadButton) -> bool
 gamepad_released = (b: PadButton) -> bool
-left_stick = () -> vec2
+gamepad_axis = (pad: int, i: int) -> f64    # axis value in -1..1 (triggers 0..1): 0 left x, 1 left y, 2 right x, 3 right y, 4 left trigger, 5 right trigger; without a pad, the gamepad that has it furthest from rest
+gamepad_axis = (i: int) -> f64
+left_stick = (pad: int) -> vec2
+right_stick = (pad: int) -> vec2
+left_stick = () -> vec2    # (without a pad: the one pushed furthest)
 right_stick = () -> vec2
+joystick_buttons = (pad: int) -> int    # any device's own buttons and axes, as it numbers them (a flight stick's hat and throttle, a wheel's pedals): how many it has, and their state
+joystick_axes = (pad: int) -> int
+joystick_button = (pad: int, i: int) -> bool
+joystick_pressed = (pad: int, i: int) -> bool
+joystick_axis = (pad: int, i: int) -> f64
 ```
 
 ### gameutil.jo
