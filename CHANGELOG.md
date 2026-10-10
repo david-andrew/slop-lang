@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The build block's `icon` is the window's icon on Linux too (X11); `PROGRAM_ICON` has its bytes.
 - **The interactive prompt on Windows** (`sloppy` with no file), as on Linux: an input that has
   errors, panics, crashes or is stopped with ctrl-c leaves everything as it was before it.
 - **Music that plays while it decodes**: `load_music` and `play_music` (Ogg Vorbis), for long

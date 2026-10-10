@@ -35,6 +35,7 @@ lf_abs: int[]                           # function (lfunc) -> its address in the
 ro_segs: (int, int, int)[]              # read-only data: (from, to) offsets and their address
 ro_shipped = 0
 repl_inited: {int: bool} = {}           # library globals initialized in the session
+repl_cabi_abs: {int: int} = {}          # (Windows) function -> its @cabi adapter's address
 repl_to = -1                            # pipes to and from the session (Windows: handles)
 repl_from = -1
 repl_pid = -1                           # (Windows: the session's process handle)
@@ -81,6 +82,7 @@ repl_start = () -> str:
         lf_abs.push(a)
     ro_segs.push((0, rodata.len(), img_ro_addr))
     ro_shipped = rodata.len()
+    loop lf, off in cabi_adapter: repl_cabi_abs[lf] = img_text_addr + off
     loop g in global_ids:
         if modules[int(globals[g].mod)].is_prelude and global_off.get(g) != none: repl_inited[g] = true
     when TARGET == "windows":
@@ -252,6 +254,7 @@ repl_compile = (text: str, n: int) -> ReplOut:
     call_fix = []
     data_fix = []
     stub_fix = []
+    cabi_fix = []
     elf_syms = []
     pinits: int[]
     i = lf0
@@ -307,6 +310,13 @@ repl_compile = (text: str, n: int) -> ReplOut:
         loop j in [ro_shipped..rodata.len()): code.push(rodata[j])
         ro_shipped = rodata.len()
     loop f in stub_fix: patch32(f.0, img_text_addr + stub_addr[f.1] - (addr + f.0 + 4))
+    # (Windows: a @cabi function's address is its adapter's)
+    loop lf in [lf0..lfuncs.len()):
+        if let off = cabi_adapter.get(lf): repl_cabi_abs[lf] = addr + off
+    loop f in cabi_fix:
+        t = repl_cabi_abs.get(f.1) ?? 0
+        if t == 0: ice("no adapter for {lfuncs[f.1].name}")
+        patch32(f.0, t - (addr + f.0 + 4))
     loop f in call_fix:
         t = lf_abs[f.1]
         if t == 0: ice("unresolved function {lfuncs[f.1].name}")

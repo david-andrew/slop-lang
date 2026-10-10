@@ -152,6 +152,7 @@ draw_fn = 0
 init_fns: int[]
 build_node = 0
 program_icon: u8[] = []         # the build block's icon (a PNG), for Windows programs and web pages
+icon_node = 0                   # PROGRAM_ICON's value: the icon's bytes (Linux windows show it)
 program_name = ""               # PROGRAM_NAME: the build block's name, else the main file's (set in check_program)
 global_ids: int[]
 
@@ -1896,6 +1897,7 @@ check_build_block = ():
             h = (int(b[20]) << 24) | (int(b[21]) << 16) | (int(b[22]) << 8) | int(b[23])
             if w != h or w > 256: fatal(nodes[v].pos, "the icon must be square and at most 256 pixels wide ('{path}' is {w}x{h})")
             program_icon = b
+            nodes[icon_node].sval = i32(intern(str_from_bytes(b)))
         else if key == "name":
             if nodes[v].kind != .str_lit or nodes[v].aux != 0 or len(word) == 0: fatal(nodes[v].pos, "build option 'name' is the program's name in quotes: name = \"Star Garden\"")
             loop c in word:
@@ -1942,7 +1944,11 @@ add_universe = ():
     if watch_build: nodes[wv].ival = 1
     pn = mk(.str_lit, 0)
     nodes[pn].sval = i32(intern(program_name))
-    consts = [("TARGET", tv, T_STR), ("DEBUG", tr, T_BOOL), ("BOOTSTRAP", fl, T_BOOL), ("WATCH", wv, T_BOOL), ("PROGRAM_NAME", pn, T_STR)]
+    # (the icon's bytes: set by check_build_block)
+    icon_node = mk(.str_lit, 0)
+    nodes[icon_node].sval = i32(intern(""))
+    consts = [("TARGET", tv, T_STR), ("DEBUG", tr, T_BOOL), ("BOOTSTRAP", fl, T_BOOL), ("WATCH", wv, T_BOOL), ("PROGRAM_NAME", pn, T_STR),
+        ("PROGRAM_ICON", icon_node, T_STR)]
     loop c in consts:
         nm = intern(c.0)
         globals.push(Global(name = i32(nm), is_const = true, init = i32(c.1), state = 2, type = i32(c.2)))

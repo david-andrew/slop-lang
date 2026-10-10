@@ -65,7 +65,8 @@ builds as an itch.io-ready zip (`-o game.zip`); program icons (`icon = "icon.png
 with `if r is SomeError: return r`) in the language reference.
 
 Left:
-- Linux window icons (X11's _NET_WM_ICON; Wayland desktops take icons from .desktop files).
+- Linux window icons: done on X11 (_NET_WM_ICON, from PROGRAM_ICON). Wayland: KDE takes them
+  through xdg-toplevel-icon-v1 (not done); GNOME only from a .desktop file matching the app id.
 - A whole asset directory embedded at once (`embed` takes one file).
 - A serializer (structs <-> text) for saves and settings, if hand-written formats keep recurring.
 - Sugar for passing errors on (a `try`), if code shows the two-line pattern is too much.

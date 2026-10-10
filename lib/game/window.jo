@@ -193,6 +193,46 @@ __program_name = () -> str:
     if len(PROGRAM_NAME) == 0: return "sloppy"
     PROGRAM_NAME
 
+# the program's icon (the build block's) as X11's _NET_WM_ICON has it: for each of a few sizes,
+# the width, the height, then the pixels (ARGB), at most max_words of them; empty without one
+__icon_argb = (max_words: int) -> int[]:
+    out: int[]
+    if len(PROGRAM_ICON) == 0: return out
+    img = load_png(bytes(PROGRAM_ICON)) ?? image(0, 0)
+    w = img.width
+    if w == 0 or img.height != w: return out
+    sizes: int[]
+    loop s in [min(w, 128), 64, 48, 32, 16]:
+        if s <= w and not sizes.contains(s): sizes.push(s)
+    loop s in sizes:
+        if out.len() + 2 + s * s > max_words: continue
+        out.push(s)
+        out.push(s)
+        # (each pixel the average of the ones it covers, weighed by their alpha)
+        loop y in [0..s):
+            y0 = y * w / s
+            y1 = max((y + 1) * w / s, y0 + 1)
+            loop x in [0..s):
+                x0 = x * w / s
+                x1 = max((x + 1) * w / s, x0 + 1)
+                r = 0
+                g = 0
+                b = 0
+                a = 0
+                loop yy in [y0..y1):
+                    loop xx in [x0..x1):
+                        i = (yy * w + xx) * 4
+                        pa = int(img.pixels[i + 3])
+                        r += int(img.pixels[i]) * pa
+                        g += int(img.pixels[i + 1]) * pa
+                        b += int(img.pixels[i + 2]) * pa
+                        a += pa
+                n = (y1 - y0) * (x1 - x0)
+                v = 0
+                if a > 0: v = ((a / n) << 24) | ((r / a) << 16) | ((g / a) << 8) | (b / a)
+                out.push(v)
+    out
+
 # Open the game window (called automatically when the program defines update/draw).
 window = (title: str = "", width: int = 1280, height: int = 720):
     __input_init()
@@ -863,7 +903,14 @@ else:
             # no Xlib: talk to the X server directly and render in software
             __soft = true
             why = __xp_open(__win_title, __win_w, __win_h)
-            if len(why) == 0: __xproto = true
+            if len(why) == 0:
+                __xproto = true
+                # (the request must fit in the server's longest)
+                icon = __icon_argb(__xp_maxreq - 8)
+                if icon.len() > 0:
+                    v: u8[]
+                    loop x in icon: __put32(v, x)
+                    __xp_property(__xp_intern("_NET_WM_ICON"), 6, 32, v)     # CARDINAL
             # a screenshot run can render without any display
             else if not headless: __need(false, "libX11 is not available and {why}")
             __sw_init_window(__win_w, __win_h)
@@ -877,6 +924,9 @@ else:
         root = XRootWindow(__xdpy, __xscr)
         __xwin = XCreateSimpleWindow(__xdpy, root, 0, 0, u32(__win_w), u32(__win_h), 0, 0, 0)
         XStoreName(__xdpy, __xwin, data(__zstr(__win_title)))
+        icon = __icon_argb(1 << 20)
+        # (Xlib takes 32-bit values as C longs: ints)
+        if icon.len() > 0: XChangeProperty(__xdpy, __xwin, XInternAtom(__xdpy, data("_NET_WM_ICON"), 0), 6, 32, 0, data(icon) as *u8, i32(icon.len()))
         # key, button, motion, structure and focus events
         XSelectInput(__xdpy, __xwin, 0x1 | 0x2 | 0x4 | 0x8 | 0x40 | 0x20000 | 0x200000)
         __wm_delete = XInternAtom(__xdpy, data("WM_DELETE_WINDOW"), 0)
