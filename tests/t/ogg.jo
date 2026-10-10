@@ -1,0 +1,21 @@
+# requires: sloppy
+# Ogg Vorbis: decoding (checked against ffmpeg's decoder when the file was made), load_ogg's
+# stereo at the mixer rate, and damaged files: an error or wrong sound, never a crash
+file = embed("data/sweep.ogg")
+d = __ogg_decode(file)
+energy = 0.0
+loop x in d.samples: energy += f64(x) * f64(x)
+print("{d.channels} channel, {d.rate} Hz, {d.samples.len()} samples, energy {energy:.3}")
+print(d.samples[1000], d.samples[12345])
+s = load_ogg(file)
+print("{frames(s)} frames at {MIX_RATE} Hz, {duration(s):.3} s")
+print(__ogg_decode([u8(1), 2, 3]).error)
+seed_random(7)
+loop round in [0..60):
+    f = file
+    loop j in [0..random_int(1, 12)):
+        p = random_int(0, min(f.len(), 3000))
+        f[p] = u8(random_int(0, 256))
+    if random() < 0.2: f.truncate(random_int(0, f.len()))
+    r = __ogg_decode(f)
+print("damaged files: no crash")

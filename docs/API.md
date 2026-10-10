@@ -1114,6 +1114,21 @@ quat_to_mat4 = (q: vec4) -> mat4
 slerp = (a: vec4, b0: vec4, t: f32) -> vec4
 ```
 
+### vorbis.jo
+
+OGG Vorbis: load_ogg decodes a whole .ogg file into a Sound. Vorbis is the usual format for  
+game music: about a tenth of the size of a WAV. (Written from the Vorbis I specification.)  
+
+```gdscript
+music = load_ogg(embed("music.ogg"))
+play(music, 0.6, looping = true)
+```
+
+```gdscript
+load_ogg = (file: u8[]) -> Sound    # a whole Ogg Vorbis file, at the mixer's rate, in stereo (mono is copied to both sides; files with more channels give their front left and right). A file it cannot read stops the program with a message saying why.
+struct OggAudio    # the samples as the file has them (interleaved, d.channels of them, at d.rate)
+```
+
 ### wayland.jo
 
 A Wayland client: a window from xdg-shell, GPU frames handed over as dma-bufs  

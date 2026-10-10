@@ -88,8 +88,11 @@ instancing, SDF text with a built-in font, menus (ui.jo). Done: sprite sheets an
 (grids, or Aseprite's JSON with its tags), tilemaps (from text, or Tiled's JSON with groups,
 objects and compressed layers) with drawing of what is on screen and box movement that stops at
 tiles (examples/tiles.jo), JSON (parse_json/to_json), base64. Missing:
-- Assets: OGG Vorbis (music), TTF/OTF fonts (into the SDF atlas), JPEG, glTF 2.0 meshes
-  (skinning later), Tiled's external tilesets (.tsj; embedded ones work).
+- Done: Ogg Vorbis (load_ogg; checked sample for sample against ffmpeg's decoder, and fuzzed with
+  damaged files). Next for it: streaming (a long track decodes in about 1 s in release builds,
+  3 s in debug; playing while decoding would remove the wait).
+- Assets: TTF/OTF fonts (into the SDF atlas), JPEG, glTF 2.0 meshes (skinning later), Tiled's
+  external tilesets (.tsj; embedded ones work).
 - 2D: slopes and one-way platforms in tilemaps, tweening, camera follow/shake helpers.
 - 3D: free/orbit camera controllers, frustum culling, skyboxes.
 - Debug panels (ui.jo has menus).
